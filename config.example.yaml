@@ -18,3 +18,22 @@ translated_queue_folder: "translated_queue"
 
 # If true, the script logs actions without altering files
 dry_run: false
+
+# Each locale has a 'code' and a human-readable 'name'
+supported_locales:
+  - code: "cs"
+    name: "Czech"
+  - code: "de"
+    name: "German"
+  - code: "es"
+    name: "Spanish"
+  - code: "it"
+    name: "Italian"
+  - code: "pt_BR"
+    name: "Brazilian Portuguese"
+  - code: "pcm"
+    name: "Nigerian Pidgin"
+  - code: "ru"
+    name: "Russian"
+  - code: "af_ZA"
+    name: "Afrikaans"
