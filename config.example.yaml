@@ -1,0 +1,20 @@
+# Configuration for Translate Java Property Files
+
+# Absolute path to the Git repository root
+target_project_root: "/path/to/your/git/repo"
+
+# Directory containing all .properties files
+input_folder: "/path/to/properties/files"
+
+# Path to glossary
+glossary_file_path: "glossary.json"
+
+# OpenAI model to use
+model_name: "gpt-4"
+
+# Translation queue folders
+translation_queue_folder: "translation_queue"
+translated_queue_folder: "translated_queue"
+
+# If true, the script logs actions without altering files
+dry_run: false
