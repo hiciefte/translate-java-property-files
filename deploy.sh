@@ -35,7 +35,7 @@ log "Current branch: $ORIGINAL_BRANCH"
 # Initialize and update submodules to make sure they're in a clean state
 log "Initializing and updating git submodules"
 git submodule init
-git submodule update
+git submodule update --recursive
 
 # Stash any changes including untracked files
 log "Stashing any changes including untracked files"
@@ -48,35 +48,15 @@ else
     log "No changes to stash"
 fi
 
-# Handling remaining untracked files that might conflict with checkout
-UNTRACKED_FILES=$(git ls-files --others --exclude-standard)
-if [ -n "$UNTRACKED_FILES" ]; then
-    log "Detected untracked files that might conflict with checkout"
-    # Ask user if they want to proceed with removing untracked files
-    read -p "Untracked files detected that may conflict with checkout. Do you want to clean them? (y/n): " CLEAN_RESPONSE
-    
-    if [[ $CLEAN_RESPONSE == "y" || $CLEAN_RESPONSE == "Y" ]]; then
-        log "Cleaning untracked files"
-        git clean -fd
-    else
-        log "User chose not to clean untracked files. Using force checkout"
-        USE_FORCE_CHECKOUT=1
-    fi
-fi
-
 # Step 1: Checkout the main branch and pull the latest changes
-log "Checking out main branch and pulling latest changes"
-if [ -n "$USE_FORCE_CHECKOUT" ]; then
-    git checkout --force main
-else
-    git checkout main
-fi
+log "Checking out main branch with force (to bypass untracked files conflicts)"
+git checkout --force main
 git pull origin main
 
 # Re-initialize and update submodules after checkout
 log "Re-initializing and updating git submodules after branch change"
 git submodule init
-git submodule update
+git submodule update --recursive
 
 # Step 2: Use Transifex CLI to pull the latest translations
 log "Pulling latest translations from Transifex"
@@ -133,16 +113,12 @@ if [ -n "$(git status --porcelain)" ]; then
     
     # Go back to original branch
     log "Returning to original branch: $ORIGINAL_BRANCH"
-    if [ -n "$USE_FORCE_CHECKOUT" ]; then
-        git checkout --force "$ORIGINAL_BRANCH"
-    else
-        git checkout "$ORIGINAL_BRANCH"
-    fi
+    git checkout --force "$ORIGINAL_BRANCH"
     
     # Re-initialize and update submodules after returning to original branch
     log "Re-initializing and updating git submodules after returning to original branch"
     git submodule init
-    git submodule update
+    git submodule update --recursive
     
     # Pop the stash if we stashed changes earlier
     if [ $STASH_NEEDED -eq 1 ]; then
@@ -157,16 +133,12 @@ else
     # Go back to original branch if we're not already on it
     if [ "$(git branch --show-current)" != "$ORIGINAL_BRANCH" ]; then
         log "Returning to original branch: $ORIGINAL_BRANCH"
-        if [ -n "$USE_FORCE_CHECKOUT" ]; then
-            git checkout --force "$ORIGINAL_BRANCH"
-        else
-            git checkout "$ORIGINAL_BRANCH"
-        fi
+        git checkout --force "$ORIGINAL_BRANCH"
         
         # Re-initialize and update submodules after returning to original branch
         log "Re-initializing and updating git submodules after returning to original branch"
         git submodule init
-        git submodule update
+        git submodule update --recursive
         
         # Pop the stash if we stashed changes earlier
         if [ $STASH_NEEDED -eq 1 ]; then
