@@ -32,6 +32,17 @@ log "Changed directory to target project root"
 ORIGINAL_BRANCH=$(git branch --show-current)
 log "Current branch: $ORIGINAL_BRANCH"
 
+# Stash any changes including untracked files
+log "Stashing any changes including untracked files"
+STASH_RESULT=$(git stash push -u -m "Auto-stashed by translation script")
+STASH_NEEDED=0
+if [[ $STASH_RESULT != "No local changes to save" ]]; then
+    STASH_NEEDED=1
+    log "Changes were stashed"
+else
+    log "No changes to stash"
+fi
+
 # Step 1: Checkout the main branch and pull the latest changes
 log "Checking out main branch and pulling latest changes"
 git checkout main
@@ -94,6 +105,12 @@ if [ -n "$(git status --porcelain)" ]; then
     log "Returning to original branch: $ORIGINAL_BRANCH"
     git checkout "$ORIGINAL_BRANCH"
     
+    # Pop the stash if we stashed changes earlier
+    if [ $STASH_NEEDED -eq 1 ]; then
+        log "Popping stashed changes"
+        git stash pop
+    fi
+    
     log "Pull request created successfully"
 else
     log "No changes to commit"
@@ -102,6 +119,12 @@ else
     if [ "$(git branch --show-current)" != "$ORIGINAL_BRANCH" ]; then
         log "Returning to original branch: $ORIGINAL_BRANCH"
         git checkout "$ORIGINAL_BRANCH"
+        
+        # Pop the stash if we stashed changes earlier
+        if [ $STASH_NEEDED -eq 1 ]; then
+            log "Popping stashed changes"
+            git stash pop
+        fi
     fi
 fi
 
