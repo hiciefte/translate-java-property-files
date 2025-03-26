@@ -1,0 +1,12 @@
+[Unit]
+Description=Run automated translation service daily
+Requires=translation-service.service
+
+[Timer]
+Unit=translation-service.service
+OnCalendar=*-*-* 02:00:00  # Run daily at 2 AM
+RandomizedDelaySec=1800    # Add a random delay of up to 30 minutes
+Persistent=true            # Run immediately if last run was missed
+
+[Install]
+WantedBy=timers.target 
