@@ -38,14 +38,24 @@ sudo apt update && sudo apt upgrade -y
 # Set up a firewall
 sudo ufw allow OpenSSH
 sudo ufw enable
+```
 
-# Disable password authentication (edit /etc/ssh/sshd_config)
+Disable password authentication for better security:
+```bash
+# Open SSH configuration file
 sudo nano /etc/ssh/sshd_config
-# Set PasswordAuthentication no
-# Set PubkeyAuthentication yes
+```
 
-# Restart SSH service
-sudo systemctl restart sshd
+Find these lines in the file and modify them:
+```
+PasswordAuthentication no
+PubkeyAuthentication yes
+```
+
+Then restart the SSH service (on Ubuntu, it's called ssh, not sshd):
+```bash
+# Restart SSH service 
+sudo systemctl restart ssh
 ```
 
 ### 3. Run the Setup Script
