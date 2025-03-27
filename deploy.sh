@@ -32,6 +32,47 @@ check_python_version() {
     $python_cmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
 }
 
+# Virtual environment directory
+VENV_DIR=".venv"
+
+# Function to setup and activate virtual environment
+setup_venv() {
+    local python_cmd="$1"
+    
+    # Check if venv module is available
+    if ! $python_cmd -c "import venv" 2>/dev/null; then
+        log "Python venv module not found. Installing python3-venv..."
+        # Try to install python3-venv package
+        if command_exists apt-get; then
+            sudo apt-get update && sudo apt-get install -y python3-venv || {
+                log "Failed to install python3-venv. Please install it manually: sudo apt-get install python3-venv"
+                exit 1
+            }
+        else
+            log "Cannot install python3-venv automatically. Please install it manually."
+            exit 1
+        fi
+    fi
+    
+    # Create virtual environment if it doesn't exist
+    if [ ! -d "$VENV_DIR" ]; then
+        log "Creating Python virtual environment in $VENV_DIR"
+        $python_cmd -m venv "$VENV_DIR"
+    fi
+    
+    # Activate virtual environment
+    log "Activating virtual environment"
+    # shellcheck source=/dev/null
+    source "$VENV_DIR/bin/activate"
+    
+    # Verify virtual environment is active
+    log "Using Python from: $(which python)"
+    
+    # Upgrade pip in the virtual environment
+    log "Upgrading pip in virtual environment"
+    python -m pip install --upgrade pip
+}
+
 # Load environment variables from .env file if it exists
 ENV_FILE=".env"
 if [ -f "$ENV_FILE" ]; then
@@ -56,44 +97,34 @@ if [ -z "$PYTHON_CMD" ]; then
     log "Error: Python is not installed. Please install Python 3."
     exit 1
 fi
-log "Using Python command: $PYTHON_CMD"
+log "Using system Python command: $PYTHON_CMD"
 
 # Check Python version
 PYTHON_VERSION=$(check_python_version "$PYTHON_CMD")
 log "Python version: $PYTHON_VERSION"
 
-# Ensure pip is installed
-if ! $PYTHON_CMD -m pip --version > /dev/null 2>&1; then
-    log "Error: pip is not installed. Please install pip for $PYTHON_CMD."
-    exit 1
-fi
+# Setup and activate virtual environment
+setup_venv "$PYTHON_CMD"
 
-# Check if requirements are installed
-log "Checking for required Python packages"
+# Install dependencies in virtual environment
+log "Installing Python dependencies in virtual environment"
 if [ -f "requirements.txt" ]; then
-    log "Installing Python dependencies from requirements.txt"
-    
-    # Try to install transifex-client directly first
-    log "Attempting to install transifex-client..."
-    $PYTHON_CMD -m pip install transifex-client || {
-        log "Warning: Could not install transifex-client via pip."
-        log "You may need to install it manually or through your system package manager."
-        log "For example: apt-get install transifex-client"
-    }
-    
-    # Then try the rest of the requirements
-    $PYTHON_CMD -m pip install -r requirements.txt --ignore-installed || {
+    log "Installing from requirements.txt"
+    python -m pip install -r requirements.txt || {
         log "Warning: Failed to install some Python dependencies. Some functionality may be limited."
     }
-fi
-
-# Make sure TX_TOKEN is available if transifex is installed
-if command_exists tx; then
-    log "Transifex CLI found. Checking token..."
-    if [ -z "$TX_TOKEN" ]; then
-        log "TX_TOKEN environment variable is not set."
-        log "Please add TX_TOKEN=your_token to your .env file."
-    fi
+    
+    # Try to install transifex-client directly
+    python -m pip install transifex-client || {
+        log "Warning: Failed to install transifex-client. Will try system package if available."
+        # Try to install with apt if on Ubuntu/Debian
+        if command_exists apt-get; then
+            log "Attempting to install transifex-client via apt..."
+            sudo apt-get update && sudo apt-get install -y transifex-client || {
+                log "Failed to install transifex-client via apt. Transifex operations will be skipped."
+            }
+        fi
+    }
 fi
 
 # Check if target project root exists
@@ -152,18 +183,17 @@ if command_exists tx; then
 else
     log "Warning: Transifex CLI not found. Skipping translation pull from Transifex."
     log "To install Transifex CLI, try one of these methods:"
-    log "1. $PYTHON_CMD -m pip install transifex-client"
-    log "2. apt-get install transifex-client (on Debian/Ubuntu)"
-    log "3. brew install transifex-client (on macOS with Homebrew)"
+    log "1. Inside virtual environment: python -m pip install transifex-client"
+    log "2. System-wide: sudo apt-get install transifex-client (on Debian/Ubuntu)"
 fi
 
 # Navigate back to the translation script directory
 cd - > /dev/null
 log "Returned to the translation script directory"
 
-# Step 3: Run the translation script
+# Step 3: Run the translation script with the virtual environment Python
 log "Running translation script"
-$PYTHON_CMD src/translate_localization_files.py || {
+python src/translate_localization_files.py || {
     log "Error: Failed to run translation script. Exiting."
     exit 1
 }
@@ -247,5 +277,8 @@ else
         fi
     fi
 fi
+
+log "Deactivating virtual environment"
+deactivate || true
 
 log "Deployment process completed successfully" 
