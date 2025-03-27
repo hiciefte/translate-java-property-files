@@ -37,6 +37,7 @@ VENV_DIR=".venv"
 
 # Function to setup and activate virtual environment
 setup_venv() {
+    # shellcheck disable=SC2034  # Unused variable warning
     local python_cmd="$1"
     
     # Check if venv module is available
@@ -62,7 +63,7 @@ setup_venv() {
     
     # Activate virtual environment
     log "Activating virtual environment"
-    # shellcheck source=/dev/null
+    # shellcheck disable=SC1091  # Not following: source
     source "$VENV_DIR/bin/activate"
     
     # Verify virtual environment is active
@@ -71,6 +72,10 @@ setup_venv() {
     # Upgrade pip in the virtual environment
     log "Upgrading pip in virtual environment"
     python -m pip install --upgrade pip
+    
+    # Install setuptools required for many packages
+    log "Installing setuptools in virtual environment"
+    python -m pip install setuptools wheel
 }
 
 # Load environment variables from .env file if it exists
@@ -108,23 +113,54 @@ setup_venv "$PYTHON_CMD"
 
 # Install dependencies in virtual environment
 log "Installing Python dependencies in virtual environment"
+
+# First install critical dependencies
+log "Installing core dependencies first"
+python -m pip install setuptools wheel six urllib3 PyYAML || {
+    log "Warning: Failed to install core dependencies. This may cause further issues."
+}
+
+# Install tiktoken directly first
+log "Installing tiktoken package"
+python -m pip install tiktoken || {
+    log "Warning: Failed to install tiktoken. This may cause issues with the translation script."
+}
+
+# Now install transifex client directly
+log "Installing transifex-client"
+python -m pip install transifex-client || {
+    log "Warning: Failed to install transifex-client. Will try system package if available."
+    # Try to install with apt if on Ubuntu/Debian
+    if command_exists apt-get; then
+        log "Attempting to install transifex-client via apt..."
+        sudo apt-get update && sudo apt-get install -y transifex-client || {
+            log "Failed to install transifex-client via apt. Transifex operations will be skipped."
+        }
+    fi
+}
+
+# Then install the rest of the requirements
 if [ -f "requirements.txt" ]; then
-    log "Installing from requirements.txt"
-    python -m pip install -r requirements.txt || {
+    log "Installing remaining dependencies from requirements.txt"
+    python -m pip install -r requirements.txt --ignore-installed || {
         log "Warning: Failed to install some Python dependencies. Some functionality may be limited."
     }
-    
-    # Try to install transifex-client directly
-    python -m pip install transifex-client || {
-        log "Warning: Failed to install transifex-client. Will try system package if available."
-        # Try to install with apt if on Ubuntu/Debian
-        if command_exists apt-get; then
-            log "Attempting to install transifex-client via apt..."
-            sudo apt-get update && sudo apt-get install -y transifex-client || {
-                log "Failed to install transifex-client via apt. Transifex operations will be skipped."
-            }
-        fi
+fi
+
+# Verify tiktoken installation
+if ! python -c "import tiktoken; print('tiktoken is installed')" > /dev/null 2>&1; then
+    log "Error: tiktoken module could not be imported despite installation attempt."
+    log "Trying alternative installation method..."
+    python -m pip install tiktoken --no-binary tiktoken || {
+        log "Warning: Alternative installation of tiktoken failed."
     }
+    
+    # Check again
+    if ! python -c "import tiktoken; print('tiktoken is installed')" > /dev/null 2>&1; then
+        log "Error: Could not install tiktoken. The translation script may fail."
+    else
+        log "Successfully installed tiktoken with alternative method."
+    fi
 fi
 
 # Check if target project root exists
