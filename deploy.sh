@@ -10,6 +10,20 @@ log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
 
+# Function to check if a command exists
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Load environment variables from .env file if it exists
+ENV_FILE=".env"
+if [ -f "$ENV_FILE" ]; then
+    log "Loading environment variables from $ENV_FILE"
+    set -a  # automatically export all variables
+    source "$ENV_FILE"
+    set +a  # disable auto-export
+fi
+
 # Load configuration from YAML file
 CONFIG_FILE="config.yaml"
 TARGET_PROJECT_ROOT=$(grep -oP 'target_project_root: \K.*' "$CONFIG_FILE" | tr -d "'" | tr -d '"')
@@ -59,11 +73,22 @@ git submodule init
 git submodule update --recursive
 
 # Step 2: Use Transifex CLI to pull the latest translations
-log "Pulling latest translations from Transifex"
-if [ -z "$TX_TOKEN" ]; then
-    log "Warning: TX_TOKEN environment variable is not set. Transifex pull may fail."
+log "Checking for Transifex CLI"
+if command_exists tx; then
+    log "Pulling latest translations from Transifex"
+    if [ -z "$TX_TOKEN" ]; then
+        log "Warning: TX_TOKEN environment variable is not set. Transifex pull may fail."
+        log "Make sure the TX_TOKEN is set in your .env file"
+    else
+        log "TX_TOKEN is set, proceeding with Transifex operations"
+    fi
+    # Export TX_TOKEN again just to be sure it's available for the tx command
+    export TX_TOKEN="$TX_TOKEN"
+    tx pull -t || log "Failed to pull translations from Transifex, continuing with script"
+else
+    log "Warning: Transifex CLI not found. Skipping translation pull from Transifex."
+    log "To install Transifex CLI, run: pip install transifex-client"
 fi
-tx pull -t
 
 # Navigate back to the translation script directory
 cd - > /dev/null
@@ -103,13 +128,20 @@ if [ -n "$(git status --porcelain)" ]; then
     log "Pushing branch to GitHub"
     git push origin "$BRANCH_NAME"
     
-    # Create a pull request
-    log "Creating pull request"
-    PR_TITLE="Update translations $(date +'%Y-%m-%d')"
-    PR_BODY="Automated translation update from $(date +'%Y-%m-%d')."
-    
-    # Using GitHub CLI to create PR
-    gh pr create --title "$PR_TITLE" --body "$PR_BODY" --base main
+    # Check for GitHub CLI
+    if command_exists gh; then
+        # Create a pull request
+        log "Creating pull request"
+        PR_TITLE="Update translations $(date +'%Y-%m-%d')"
+        PR_BODY="Automated translation update from $(date +'%Y-%m-%d')."
+        
+        # Using GitHub CLI to create PR
+        gh pr create --title "$PR_TITLE" --body "$PR_BODY" --base main
+        log "Pull request created successfully"
+    else
+        log "Warning: GitHub CLI not found. Pull request not created."
+        log "To create a PR manually, visit: https://github.com/hiciefte/bisq2/compare/main...$BRANCH_NAME"
+    fi
     
     # Go back to original branch
     log "Returning to original branch: $ORIGINAL_BRANCH"
@@ -125,8 +157,6 @@ if [ -n "$(git status --porcelain)" ]; then
         log "Popping stashed changes"
         git stash pop
     fi
-    
-    log "Pull request created successfully"
 else
     log "No changes to commit"
     
