@@ -15,11 +15,29 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Function to determine Python command to use
+get_python_cmd() {
+    if command_exists python3; then
+        echo "python3"
+    elif command_exists python; then
+        echo "python"
+    else
+        echo ""
+    fi
+}
+
+# Function to check Python version
+check_python_version() {
+    local python_cmd="$1"
+    $python_cmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
+}
+
 # Load environment variables from .env file if it exists
 ENV_FILE=".env"
 if [ -f "$ENV_FILE" ]; then
     log "Loading environment variables from $ENV_FILE"
     set -a  # automatically export all variables
+    # shellcheck source=./.env
     source "$ENV_FILE"
     set +a  # disable auto-export
 fi
@@ -31,6 +49,52 @@ INPUT_FOLDER=$(grep -oP 'input_folder: \K.*' "$CONFIG_FILE" | tr -d "'" | tr -d 
 
 log "Starting deployment process"
 log "Target project root: $TARGET_PROJECT_ROOT"
+
+# Check Python environment
+PYTHON_CMD=$(get_python_cmd)
+if [ -z "$PYTHON_CMD" ]; then
+    log "Error: Python is not installed. Please install Python 3."
+    exit 1
+fi
+log "Using Python command: $PYTHON_CMD"
+
+# Check Python version
+PYTHON_VERSION=$(check_python_version "$PYTHON_CMD")
+log "Python version: $PYTHON_VERSION"
+
+# Ensure pip is installed
+if ! $PYTHON_CMD -m pip --version > /dev/null 2>&1; then
+    log "Error: pip is not installed. Please install pip for $PYTHON_CMD."
+    exit 1
+fi
+
+# Check if requirements are installed
+log "Checking for required Python packages"
+if [ -f "requirements.txt" ]; then
+    log "Installing Python dependencies from requirements.txt"
+    
+    # Try to install transifex-client directly first
+    log "Attempting to install transifex-client..."
+    $PYTHON_CMD -m pip install transifex-client || {
+        log "Warning: Could not install transifex-client via pip."
+        log "You may need to install it manually or through your system package manager."
+        log "For example: apt-get install transifex-client"
+    }
+    
+    # Then try the rest of the requirements
+    $PYTHON_CMD -m pip install -r requirements.txt --ignore-installed || {
+        log "Warning: Failed to install some Python dependencies. Some functionality may be limited."
+    }
+fi
+
+# Make sure TX_TOKEN is available if transifex is installed
+if command_exists tx; then
+    log "Transifex CLI found. Checking token..."
+    if [ -z "$TX_TOKEN" ]; then
+        log "TX_TOKEN environment variable is not set."
+        log "Please add TX_TOKEN=your_token to your .env file."
+    fi
+fi
 
 # Check if target project root exists
 if [ ! -d "$TARGET_PROJECT_ROOT" ]; then
@@ -87,7 +151,10 @@ if command_exists tx; then
     tx pull -t || log "Failed to pull translations from Transifex, continuing with script"
 else
     log "Warning: Transifex CLI not found. Skipping translation pull from Transifex."
-    log "To install Transifex CLI, run: pip install transifex-client"
+    log "To install Transifex CLI, try one of these methods:"
+    log "1. $PYTHON_CMD -m pip install transifex-client"
+    log "2. apt-get install transifex-client (on Debian/Ubuntu)"
+    log "3. brew install transifex-client (on macOS with Homebrew)"
 fi
 
 # Navigate back to the translation script directory
@@ -96,7 +163,10 @@ log "Returned to the translation script directory"
 
 # Step 3: Run the translation script
 log "Running translation script"
-python src/translate_localization_files.py
+$PYTHON_CMD src/translate_localization_files.py || {
+    log "Error: Failed to run translation script. Exiting."
+    exit 1
+}
 
 # Step 4: Clean up archived translation files before committing
 log "Cleaning up archived translation files"

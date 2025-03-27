@@ -21,6 +21,7 @@ tiktoken==0.8.0
 tqdm==4.67.1
 typing_extensions==4.12.2
 urllib3==2.2.3
+transifex-client==0.14.4
 
 pytest
 pytest-asyncio
