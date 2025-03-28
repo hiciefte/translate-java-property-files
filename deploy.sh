@@ -113,20 +113,6 @@ if [ -z "$TX_TOKEN" ]; then
     exit 1
 fi
 
-# Create or update .transifexrc with the token
-log "Setting up Transifex configuration"
-cat > ~/.transifexrc << EOF
-[https://www.transifex.com]
-hostname = https://www.transifex.com
-username = api
-password = %(TX_TOKEN)s
-EOF
-log "Created/updated ~/.transifexrc"
-
-# Verify .transifexrc permissions
-chmod 600 ~/.transifexrc
-log "Set correct permissions on ~/.transifexrc"
-
 # Export TX_TOKEN explicitly for Transifex client
 export TX_TOKEN
 log "TX_TOKEN is set and exported"
@@ -260,13 +246,12 @@ if command_exists tx; then
     
     # Debug Transifex configuration
     log "Checking Transifex configuration"
-    if [ -f ~/.transifexrc ]; then
-        log "~/.transifexrc exists"
-        log "~/.transifexrc permissions: $(ls -l ~/.transifexrc)"
-        log "~/.transifexrc contents (without sensitive data):"
-        grep -v "password" ~/.transifexrc
+    if [ -f "$TARGET_PROJECT_ROOT/.tx/config" ]; then
+        log ".tx/config exists in project directory"
+        log ".tx/config contents (without sensitive data):"
+        grep -v "password" "$TARGET_PROJECT_ROOT/.tx/config"
     else
-        log "Warning: ~/.transifexrc does not exist"
+        log "Warning: .tx/config not found in project directory"
     fi
     
     # Pull translations with appropriate options for the version
