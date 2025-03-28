@@ -17,7 +17,9 @@ command_exists() {
 
 # Function to determine Python command to use
 get_python_cmd() {
-    if command_exists python3; then
+    if command_exists python3.9; then
+        echo "python3.9"
+    elif command_exists python3; then
         echo "python3"
     elif command_exists python; then
         echo "python"
@@ -45,12 +47,12 @@ setup_venv() {
         log "Python venv module not found. Installing python3-venv..."
         # Try to install python3-venv package
         if command_exists apt-get; then
-            sudo apt-get update && sudo apt-get install -y python3-venv || {
-                log "Failed to install python3-venv. Please install it manually: sudo apt-get install python3-venv"
+            sudo apt-get update && sudo apt-get install -y python3.9-venv || {
+                log "Failed to install python3.9-venv. Please install it manually: sudo apt-get install python3.9-venv"
                 exit 1
             }
         else
-            log "Cannot install python3-venv automatically. Please install it manually."
+            log "Cannot install python3.9-venv automatically. Please install it manually."
             exit 1
         fi
     fi
@@ -80,13 +82,54 @@ setup_venv() {
 
 # Load environment variables from .env file if it exists
 ENV_FILE=".env"
-if [ -f "$ENV_FILE" ]; then
+HOME_ENV_FILE="$HOME/.env"
+
+if [ -f "$HOME_ENV_FILE" ]; then
+    log "Loading environment variables from $HOME_ENV_FILE"
+    set -a  # automatically export all variables
+    # shellcheck source=~/.env
+    source "$HOME_ENV_FILE"
+    set +a  # disable auto-export
+    log "TX_TOKEN loaded from $HOME_ENV_FILE"
+elif [ -f "$ENV_FILE" ]; then
     log "Loading environment variables from $ENV_FILE"
     set -a  # automatically export all variables
     # shellcheck source=./.env
     source "$ENV_FILE"
     set +a  # disable auto-export
+    log "TX_TOKEN loaded from $ENV_FILE"
+else
+    log "Error: No .env file found in current directory or home directory"
+    log "Please create a .env file with your Transifex API token:"
+    log "echo 'TX_TOKEN=your_transifex_api_token' > ~/.env"
+    exit 1
 fi
+
+# Ensure TX_TOKEN is set and exported
+if [ -z "$TX_TOKEN" ]; then
+    log "Error: TX_TOKEN environment variable is not set"
+    log "Please create a .env file with your Transifex API token:"
+    log "echo 'TX_TOKEN=your_transifex_api_token' > ~/.env"
+    exit 1
+fi
+
+# Export TX_TOKEN explicitly
+export TX_TOKEN
+log "TX_TOKEN is set and exported"
+
+# Create or update .transifexrc with the token
+log "Setting up Transifex configuration"
+cat > ~/.transifexrc << EOF
+[https://www.transifex.com]
+hostname = https://www.transifex.com
+username = api
+password = $TX_TOKEN
+EOF
+log "Created/updated ~/.transifexrc"
+
+# Verify .transifexrc permissions
+chmod 600 ~/.transifexrc
+log "Set correct permissions on ~/.transifexrc"
 
 # Load configuration from YAML file
 CONFIG_FILE="config.yaml"
@@ -130,7 +173,7 @@ python -m pip install tiktoken || {
 log "Installing latest Transifex client from GitHub"
 python -m pip install git+https://github.com/transifex/transifex-client.git@master || {
     log "Warning: Failed to install latest Transifex client from GitHub. Trying PyPI version..."
-    python -m pip install transifex-client || {
+    python -m pip install "transifex-client<0.14.0" || {
         log "Warning: Failed to install transifex-client from PyPI. Will try system package if available."
         # Try to install with apt if on Ubuntu/Debian
         if command_exists apt-get; then
@@ -210,18 +253,20 @@ git submodule update --recursive
 log "Checking for Transifex CLI"
 if command_exists tx; then
     log "Pulling latest translations from Transifex"
-    if [ -z "$TX_TOKEN" ]; then
-        log "Warning: TX_TOKEN environment variable is not set. Transifex pull may fail."
-        log "Make sure the TX_TOKEN is set in your .env file"
-    else
-        log "TX_TOKEN is set, proceeding with Transifex operations"
-    fi
-    # Export TX_TOKEN again just to be sure it's available for the tx command
-    export TX_TOKEN="$TX_TOKEN"
+    log "Using Transifex token from environment"
     
     # Get transifex version to determine correct options
     TX_VERSION=$(tx --version 2>&1 | grep -oP 'transifex-client/\K[0-9.]+' || echo "unknown")
     log "Detected Transifex client version: $TX_VERSION"
+    
+    # Debug Transifex configuration
+    log "Checking Transifex configuration"
+    if [ -f ~/.transifexrc ]; then
+        log "~/.transifexrc exists"
+        log "~/.transifexrc permissions: $(ls -l ~/.transifexrc)"
+    else
+        log "Warning: ~/.transifexrc does not exist"
+    fi
     
     # Pull translations with appropriate options for the version
     if [[ "$TX_VERSION" == "unknown" ]]; then
@@ -240,7 +285,7 @@ if command_exists tx; then
 else
     log "Warning: Transifex CLI not found. Skipping translation pull from Transifex."
     log "To install Transifex CLI, try one of these methods:"
-    log "1. Inside virtual environment: python -m pip install git+https://github.com/transifex/transifex-client.git@master"
+    log "1. Inside virtual environment: python -m pip install 'transifex-client<0.14.0'"
     log "2. System-wide: sudo apt-get install transifex-client (on Debian/Ubuntu)"
 fi
 
