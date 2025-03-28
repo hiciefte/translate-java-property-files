@@ -126,17 +126,20 @@ python -m pip install tiktoken || {
     log "Warning: Failed to install tiktoken. This may cause issues with the translation script."
 }
 
-# Now install transifex client directly
-log "Installing transifex-client"
-python -m pip install transifex-client || {
-    log "Warning: Failed to install transifex-client. Will try system package if available."
-    # Try to install with apt if on Ubuntu/Debian
-    if command_exists apt-get; then
-        log "Attempting to install transifex-client via apt..."
-        sudo apt-get update && sudo apt-get install -y transifex-client || {
-            log "Failed to install transifex-client via apt. Transifex operations will be skipped."
-        }
-    fi
+# Now install the latest transifex client from GitHub
+log "Installing latest Transifex client from GitHub"
+python -m pip install git+https://github.com/transifex/transifex-client.git@master || {
+    log "Warning: Failed to install latest Transifex client from GitHub. Trying PyPI version..."
+    python -m pip install transifex-client || {
+        log "Warning: Failed to install transifex-client from PyPI. Will try system package if available."
+        # Try to install with apt if on Ubuntu/Debian
+        if command_exists apt-get; then
+            log "Attempting to install transifex-client via apt..."
+            sudo apt-get update && sudo apt-get install -y transifex-client || {
+                log "Failed to install transifex-client via apt. Transifex operations will be skipped."
+            }
+        fi
+    }
 }
 
 # Then install the rest of the requirements
@@ -215,11 +218,29 @@ if command_exists tx; then
     fi
     # Export TX_TOKEN again just to be sure it's available for the tx command
     export TX_TOKEN="$TX_TOKEN"
-    tx pull -t || log "Failed to pull translations from Transifex, continuing with script"
+    
+    # Get transifex version to determine correct options
+    TX_VERSION=$(tx --version 2>&1 | grep -oP 'transifex-client/\K[0-9.]+' || echo "unknown")
+    log "Detected Transifex client version: $TX_VERSION"
+    
+    # Pull translations with appropriate options for the version
+    if [[ "$TX_VERSION" == "unknown" ]]; then
+        # Try without options first
+        log "Using default pull command"
+        tx pull || log "Failed to pull translations from Transifex, continuing with script"
+    elif [[ $(printf '%s\n' "0.14.0" "$TX_VERSION" | sort -V | head -n1) == "0.14.0" ]]; then
+        # Version 0.14.0 or higher supports -t option
+        log "Using -t option for version $TX_VERSION"
+        tx pull -t || log "Failed to pull translations from Transifex, continuing with script"
+    else
+        # For older versions use --all
+        log "Using --all option for version $TX_VERSION"
+        tx pull --all || log "Failed to pull translations from Transifex, continuing with script"
+    fi
 else
     log "Warning: Transifex CLI not found. Skipping translation pull from Transifex."
     log "To install Transifex CLI, try one of these methods:"
-    log "1. Inside virtual environment: python -m pip install transifex-client"
+    log "1. Inside virtual environment: python -m pip install git+https://github.com/transifex/transifex-client.git@master"
     log "2. System-wide: sudo apt-get install transifex-client (on Debian/Ubuntu)"
 fi
 
