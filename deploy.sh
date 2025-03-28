@@ -113,23 +113,23 @@ if [ -z "$TX_TOKEN" ]; then
     exit 1
 fi
 
-# Export TX_TOKEN explicitly
-export TX_TOKEN
-log "TX_TOKEN is set and exported"
-
 # Create or update .transifexrc with the token
 log "Setting up Transifex configuration"
 cat > ~/.transifexrc << EOF
 [https://www.transifex.com]
 hostname = https://www.transifex.com
 username = api
-password = $TX_TOKEN
+password = %(TX_TOKEN)s
 EOF
 log "Created/updated ~/.transifexrc"
 
 # Verify .transifexrc permissions
 chmod 600 ~/.transifexrc
 log "Set correct permissions on ~/.transifexrc"
+
+# Export TX_TOKEN explicitly for Transifex client
+export TX_TOKEN
+log "TX_TOKEN is set and exported"
 
 # Load configuration from YAML file
 CONFIG_FILE="config.yaml"
@@ -169,12 +169,11 @@ python -m pip install tiktoken || {
     log "Warning: Failed to install tiktoken. This may cause issues with the translation script."
 }
 
-# Now install the latest transifex client from GitHub
-log "Installing latest Transifex client from GitHub"
-python -m pip install git+https://github.com/transifex/transifex-client.git@master || {
-    log "Warning: Failed to install latest Transifex client from GitHub. Trying PyPI version..."
-    python -m pip install "transifex-client<0.14.0" || {
-        log "Warning: Failed to install transifex-client from PyPI. Will try system package if available."
+# Install Transifex CLI using the official install script
+log "Installing Transifex CLI using official install script"
+if ! command_exists tx; then
+    curl -o- https://raw.githubusercontent.com/transifex/cli/master/install.sh | bash || {
+        log "Warning: Failed to install Transifex CLI via official script. Will try alternative methods..."
         # Try to install with apt if on Ubuntu/Debian
         if command_exists apt-get; then
             log "Attempting to install transifex-client via apt..."
@@ -183,7 +182,7 @@ python -m pip install git+https://github.com/transifex/transifex-client.git@mast
             }
         fi
     }
-}
+fi
 
 # Then install the rest of the requirements
 if [ -f "requirements.txt" ]; then
@@ -264,6 +263,8 @@ if command_exists tx; then
     if [ -f ~/.transifexrc ]; then
         log "~/.transifexrc exists"
         log "~/.transifexrc permissions: $(ls -l ~/.transifexrc)"
+        log "~/.transifexrc contents (without sensitive data):"
+        grep -v "password" ~/.transifexrc
     else
         log "Warning: ~/.transifexrc does not exist"
     fi
