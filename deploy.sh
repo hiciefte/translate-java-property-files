@@ -240,10 +240,6 @@ if command_exists tx; then
     log "Pulling latest translations from Transifex"
     log "Using Transifex token from environment"
     
-    # Get transifex version to determine correct options
-    TX_VERSION=$(tx --version 2>&1 | grep -oP 'transifex-client/\K[0-9.]+' || echo "unknown")
-    log "Detected Transifex client version: $TX_VERSION"
-    
     # Debug Transifex configuration
     log "Checking Transifex configuration"
     if [ -f "$TARGET_PROJECT_ROOT/.tx/config" ]; then
@@ -254,20 +250,9 @@ if command_exists tx; then
         log "Warning: .tx/config not found in project directory"
     fi
     
-    # Pull translations with appropriate options for the version
-    if [[ "$TX_VERSION" == "unknown" ]]; then
-        # Try without options first
-        log "Using default pull command"
-        tx pull || log "Failed to pull translations from Transifex, continuing with script"
-    elif [[ $(printf '%s\n' "0.14.0" "$TX_VERSION" | sort -V | head -n1) == "0.14.0" ]]; then
-        # Version 0.14.0 or higher supports -t option
-        log "Using -t option for version $TX_VERSION"
-        tx pull -t || log "Failed to pull translations from Transifex, continuing with script"
-    else
-        # For older versions use --all
-        log "Using --all option for version $TX_VERSION"
-        tx pull --all || log "Failed to pull translations from Transifex, continuing with script"
-    fi
+    # Pull translations with -t option
+    log "Using tx pull -t command"
+    tx pull -t || log "Failed to pull translations from Transifex, continuing with script"
 else
     log "Warning: Transifex CLI not found. Skipping translation pull from Transifex."
     log "To install Transifex CLI, try one of these methods:"
