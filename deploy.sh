@@ -149,26 +149,17 @@ python -m pip install setuptools wheel six urllib3 PyYAML || {
     log "Warning: Failed to install core dependencies. This may cause further issues."
 }
 
+# Uninstall any previous Transifex packages to avoid conflicts
+log "Uninstalling any previous Transifex packages"
+python -m pip uninstall -y transifex-client transifex || {
+    log "Note: No previous Transifex packages found to uninstall"
+}
+
 # Install tiktoken directly first
 log "Installing tiktoken package"
 python -m pip install tiktoken || {
     log "Warning: Failed to install tiktoken. This may cause issues with the translation script."
 }
-
-# Install Transifex CLI using the official install script
-log "Installing Transifex CLI using official install script"
-if ! command_exists tx; then
-    curl -o- https://raw.githubusercontent.com/transifex/cli/master/install.sh | bash || {
-        log "Warning: Failed to install Transifex CLI via official script. Will try alternative methods..."
-        # Try to install with apt if on Ubuntu/Debian
-        if command_exists apt-get; then
-            log "Attempting to install transifex-client via apt..."
-            sudo apt-get update && sudo apt-get install -y transifex-client || {
-                log "Failed to install transifex-client via apt. Transifex operations will be skipped."
-            }
-        fi
-    }
-fi
 
 # Then install the rest of the requirements
 if [ -f "requirements.txt" ]; then
@@ -254,10 +245,8 @@ if command_exists tx; then
     log "Using tx pull -t command"
     tx pull -t || log "Failed to pull translations from Transifex, continuing with script"
 else
-    log "Warning: Transifex CLI not found. Skipping translation pull from Transifex."
-    log "To install Transifex CLI, try one of these methods:"
-    log "1. Inside virtual environment: python -m pip install 'transifex-client<0.14.0'"
-    log "2. System-wide: sudo apt-get install transifex-client (on Debian/Ubuntu)"
+    log "Error: Transifex CLI not found. Please install it manually."
+    exit 1
 fi
 
 # Navigate back to the translation script directory
