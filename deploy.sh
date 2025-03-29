@@ -354,12 +354,16 @@ After=network.target
 Type=oneshot
 User=bisquser
 Environment=HOME=/home/bisquser
-Environment=PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:/home/bisquser/.local/bin
+Environment=PYTHONPATH=/home/bisquser/workspace/translate-java-property-files
 EnvironmentFile=/home/bisquser/.env
 WorkingDirectory=/home/bisquser/workspace/translate-java-property-files
-ExecStart=/bin/bash /home/bisquser/workspace/translate-java-property-files/deploy.sh
+ExecStartPre=/bin/bash -c 'echo "PATH=$PATH" >> /var/log/translation-service.log'
+ExecStartPre=/bin/bash -c 'which tx >> /var/log/translation-service.log 2>&1'
+ExecStart=/bin/bash -c 'source /home/bisquser/.bashrc && /home/bisquser/workspace/translate-java-property-files/deploy.sh'
 StandardOutput=append:/var/log/translation-service.log
 StandardError=append:/var/log/translation-service.error.log
+TimeoutStartSec=300
 
 [Install]
 WantedBy=multi-user.target
