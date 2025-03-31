@@ -129,17 +129,20 @@ sudo systemctl start translation-service.service translation-service.timer || {
 }
 
 # Verify service and timer are running
-if ! systemctl is-active translation-service.service >/dev/null 2>&1; then
-    log "Error: Service failed to start properly"
-    log "Service status:"
-    sudo systemctl status translation-service.service | cat
-    exit 1
-fi
-
 if ! systemctl is-active translation-service.timer >/dev/null 2>&1; then
     log "Error: Timer failed to start properly"
     log "Timer status:"
     sudo systemctl status translation-service.timer | cat
+    exit 1
+fi
+
+# Check service execution status
+if ! systemctl is-failed translation-service.service >/dev/null 2>&1; then
+    log "Service executed successfully"
+else
+    log "Error: Service execution failed"
+    log "Service status:"
+    sudo systemctl status translation-service.service | cat
     exit 1
 fi
 
