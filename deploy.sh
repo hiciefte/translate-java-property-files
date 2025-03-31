@@ -354,13 +354,30 @@ After=network.target
 Type=oneshot
 User=bisquser
 Environment=HOME=/home/bisquser
-Environment=PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:/home/bisquser/.local/bin
+Environment=PATH=/home/bisquser/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
 Environment=PYTHONPATH=/home/bisquser/workspace/translate-java-property-files
 EnvironmentFile=/home/bisquser/.env
 WorkingDirectory=/home/bisquser/workspace/translate-java-property-files
+
+# Debug environment
+ExecStartPre=/bin/bash -c 'echo "=== Environment Debug ===" >> /var/log/translation-service.log'
 ExecStartPre=/bin/bash -c 'echo "PATH=$PATH" >> /var/log/translation-service.log'
-ExecStartPre=/bin/bash -c 'which tx >> /var/log/translation-service.log 2>&1'
-ExecStart=/bin/bash -c 'source /home/bisquser/.bashrc && /home/bisquser/workspace/translate-java-property-files/deploy.sh'
+ExecStartPre=/bin/bash -c 'echo "Current directory: $(pwd)" >> /var/log/translation-service.log'
+ExecStartPre=/bin/bash -c 'echo "User: $(whoami)" >> /var/log/translation-service.log'
+ExecStartPre=/bin/bash -c 'echo "Home: $HOME" >> /var/log/translation-service.log'
+ExecStartPre=/bin/bash -c 'echo "Python path: $PYTHONPATH" >> /var/log/translation-service.log'
+ExecStartPre=/bin/bash -c 'echo "Shell: $SHELL" >> /var/log/translation-service.log'
+ExecStartPre=/bin/bash -c 'echo "=== End Environment Debug ===" >> /var/log/translation-service.log'
+
+# Check and install Transifex CLI if needed
+ExecStartPre=/bin/bash -c 'echo "=== Transifex CLI Check ===" >> /var/log/translation-service.log'
+ExecStartPre=/bin/bash -c 'if ! command -v tx &> /dev/null; then echo "Installing Transifex CLI..." >> /var/log/translation-service.log; curl -o- https://raw.githubusercontent.com/transifex/cli/master/install.sh | bash >> /var/log/translation-service.log 2>&1; fi'
+ExecStartPre=/bin/bash -c 'echo "tx command location: $(which tx)" >> /var/log/translation-service.log'
+ExecStartPre=/bin/bash -c 'echo "tx version: $(tx --version)" >> /var/log/translation-service.log'
+ExecStartPre=/bin/bash -c 'echo "=== End Transifex CLI Check ===" >> /var/log/translation-service.log'
+
+# Run the script with full shell initialization
+ExecStart=/bin/bash -c 'source /home/bisquser/.bashrc && source /home/bisquser/.profile && /home/bisquser/workspace/translate-java-property-files/deploy.sh'
 StandardOutput=append:/var/log/translation-service.log
 StandardError=append:/var/log/translation-service.error.log
 TimeoutStartSec=300
