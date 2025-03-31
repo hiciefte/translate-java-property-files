@@ -15,7 +15,8 @@ if sudo -u bisquser bash -c 'source ~/.bashrc && which tx' &> /dev/null; then
 else
     # Install Transifex CLI for bisquser
     log "Installing Transifex CLI for bisquser"
-    sudo -u bisquser bash -c 'cd /tmp && curl -o- https://raw.githubusercontent.com/transifex/cli/master/install.sh | bash'
+    sudo -u bisquser bash -c 'curl -o- https://raw.githubusercontent.com/transifex/cli/master/install.sh | bash'
+    
     if ! sudo -u bisquser bash -c 'source ~/.bashrc && which tx' &> /dev/null; then
         log "Error: Failed to install Transifex CLI"
         exit 1
