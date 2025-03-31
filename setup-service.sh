@@ -7,21 +7,36 @@ log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
 }
 
+# Function to check if tx is installed and get its version
+check_tx() {
+    sudo -u bisquser bash -c 'source ~/.bashrc && which tx' &> /dev/null
+}
+
+# Function to get tx version
+get_tx_version() {
+    sudo -u bisquser bash -c 'source ~/.bashrc && tx --version'
+}
+
 # Check if Transifex CLI is already installed
-if sudo -u bisquser bash -c 'source ~/.bashrc && which tx' &> /dev/null; then
+if check_tx; then
     log "Transifex CLI is already installed"
-    TX_VERSION=$(sudo -u bisquser bash -c 'source ~/.bashrc && tx --version')
+    TX_VERSION=$(get_tx_version)
     log "Current version: $TX_VERSION"
 else
     # Install Transifex CLI for bisquser
     log "Installing Transifex CLI for bisquser"
     sudo -u bisquser bash -c 'curl -o- https://raw.githubusercontent.com/transifex/cli/master/install.sh | bash'
     
-    if ! sudo -u bisquser bash -c 'source ~/.bashrc && which tx' &> /dev/null; then
+    # Source .bashrc to get the updated PATH
+    sudo -u bisquser bash -c 'source ~/.bashrc'
+    
+    # Check installation
+    if ! check_tx; then
         log "Error: Failed to install Transifex CLI"
         exit 1
     fi
-    TX_VERSION=$(sudo -u bisquser bash -c 'source ~/.bashrc && tx --version')
+    
+    TX_VERSION=$(get_tx_version)
     log "Transifex CLI installed successfully (version: $TX_VERSION)"
 fi
 
