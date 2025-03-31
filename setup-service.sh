@@ -36,7 +36,7 @@ After=network.target
 Type=oneshot
 User=bisquser
 Environment=HOME=/home/bisquser
-Environment=PATH=/home/bisquser/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
+Environment=PATH=/home/bisquser/workspace/translate-java-property-files:/home/bisquser/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin
 Environment=PYTHONPATH=/home/bisquser/workspace/translate-java-property-files
 EnvironmentFile=/home/bisquser/.env
 WorkingDirectory=/home/bisquser/workspace/translate-java-property-files
@@ -53,9 +53,9 @@ ExecStartPre=/bin/bash -c 'echo "=== End Environment Debug ===" >> /var/log/tran
 
 # Check and install Transifex CLI if needed
 ExecStartPre=/bin/bash -c 'echo "=== Transifex CLI Check ===" >> /var/log/translation-service.log'
-ExecStartPre=/bin/bash -c 'if ! command -v tx &> /dev/null; then echo "Error: Transifex CLI not found. Please install it manually using: curl -o- https://raw.githubusercontent.com/transifex/cli/master/install.sh | bash" >> /var/log/translation-service.error.log; exit 1; fi'
-ExecStartPre=/bin/bash -c 'echo "tx command location: $(which tx)" >> /var/log/translation-service.log'
-ExecStartPre=/bin/bash -c 'echo "tx version: $(tx --version)" >> /var/log/translation-service.log'
+ExecStartPre=/bin/bash -c 'if [ -f ./tx ]; then echo "Using local tx command" >> /var/log/translation-service.log; elif command -v tx &> /dev/null; then echo "Using system tx command" >> /var/log/translation-service.log; else echo "Error: Transifex CLI not found" >> /var/log/translation-service.error.log; exit 1; fi'
+ExecStartPre=/bin/bash -c 'echo "tx command location: $(which tx || echo ./tx)" >> /var/log/translation-service.log'
+ExecStartPre=/bin/bash -c 'echo "tx version: $((which tx || echo ./tx) --version)" >> /var/log/translation-service.log'
 ExecStartPre=/bin/bash -c 'echo "=== End Transifex CLI Check ===" >> /var/log/translation-service.log'
 
 # Run the script with full shell initialization
