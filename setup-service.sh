@@ -7,6 +7,15 @@ log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
 }
 
+# Install Transifex CLI for bisquser
+log "Installing Transifex CLI for bisquser"
+sudo -u bisquser bash -c 'curl -o- https://raw.githubusercontent.com/transifex/cli/master/install.sh | bash'
+if ! sudo -u bisquser which tx &> /dev/null; then
+    log "Error: Failed to install Transifex CLI"
+    exit 1
+fi
+log "Transifex CLI installed successfully"
+
 # Stop and remove existing service and timer
 log "Stopping and removing existing service and timer"
 sudo systemctl stop translation-service.service translation-service.timer || true
@@ -42,7 +51,7 @@ ExecStartPre=/bin/bash -c 'echo "=== End Environment Debug ===" >> /var/log/tran
 
 # Check and install Transifex CLI if needed
 ExecStartPre=/bin/bash -c 'echo "=== Transifex CLI Check ===" >> /var/log/translation-service.log'
-ExecStartPre=/bin/bash -c 'if ! command -v tx &> /dev/null; then echo "Installing Transifex CLI..." >> /var/log/translation-service.log; curl -o- https://raw.githubusercontent.com/transifex/cli/master/install.sh | bash >> /var/log/translation-service.log 2>&1; fi'
+ExecStartPre=/bin/bash -c 'if ! command -v tx &> /dev/null; then echo "Error: Transifex CLI not found. Please install it manually using: curl -o- https://raw.githubusercontent.com/transifex/cli/master/install.sh | bash" >> /var/log/translation-service.error.log; exit 1; fi'
 ExecStartPre=/bin/bash -c 'echo "tx command location: $(which tx)" >> /var/log/translation-service.log'
 ExecStartPre=/bin/bash -c 'echo "tx version: $(tx --version)" >> /var/log/translation-service.log'
 ExecStartPre=/bin/bash -c 'echo "=== End Transifex CLI Check ===" >> /var/log/translation-service.log'
