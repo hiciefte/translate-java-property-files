@@ -8,12 +8,14 @@ log() {
 }
 
 # Check if Transifex CLI is installed
-if ! sudo -u bisquser bash -c 'source ~/.bashrc && (which tx || [ -f ./tx ])' &> /dev/null; then
-    log "Error: Transifex CLI not found. Please install it using: curl -o- https://raw.githubusercontent.com/transifex/cli/master/install.sh | bash"
-    exit 1
+if ! command -v tx &> /dev/null; then
+    if ! [ -f ./tx ]; then
+        log "Error: Transifex CLI not found. Please install it using: curl -o- https://raw.githubusercontent.com/transifex/cli/master/install.sh | bash"
+        exit 1
+    fi
 fi
 
-TX_VERSION=$(sudo -u bisquser bash -c 'source ~/.bashrc && (which tx || ./tx) --version')
+TX_VERSION=$(tx --version || ./tx --version)
 log "Transifex CLI version: $TX_VERSION"
 
 # Stop and remove existing service and timer
