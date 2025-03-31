@@ -270,17 +270,21 @@ fi
 # Step 5: Check if there are any new translations to commit
 cd "$TARGET_PROJECT_ROOT"
 log "Checking for new translations to commit"
-if [ -n "$(git status --porcelain)" ]; then
-    # There are changes to commit
+
+# Check specifically for changes in translation files
+TRANSLATION_CHANGES=$(git status --porcelain | grep -E "\.properties$|\.po$|\.mo$" || true)
+
+if [ -n "$TRANSLATION_CHANGES" ]; then
+    # There are translation changes to commit
     BRANCH_NAME="translations-update-$(date +'%Y%m%d%H%M%S')"
     
     # Create a new branch
     log "Creating new branch: $BRANCH_NAME"
     git checkout -b "$BRANCH_NAME"
     
-    # Add all changes
+    # Add only translation files
     log "Adding translation files to git"
-    git add .
+    git add *.properties *.po *.mo
     
     # Commit changes with GPG signing
     log "Committing changes with GPG signing"
@@ -304,40 +308,23 @@ if [ -n "$(git status --porcelain)" ]; then
         log "Warning: GitHub CLI not found. Pull request not created."
         log "To create a PR manually, visit: https://github.com/hiciefte/bisq2/compare/main...$BRANCH_NAME"
     fi
-    
-    # Go back to original branch
-    log "Returning to original branch: $ORIGINAL_BRANCH"
-    git checkout --force "$ORIGINAL_BRANCH"
-    
-    # Re-initialize and update submodules after returning to original branch
-    log "Re-initializing and updating git submodules after returning to original branch"
-    git submodule init
-    git submodule update --recursive
-    
-    # Pop the stash if we stashed changes earlier
-    if [ $STASH_NEEDED -eq 1 ]; then
-        log "Popping stashed changes"
-        git stash pop
-    fi
 else
-    log "No changes to commit"
-    
-    # Go back to original branch if we're not already on it
-    if [ "$(git branch --show-current)" != "$ORIGINAL_BRANCH" ]; then
-        log "Returning to original branch: $ORIGINAL_BRANCH"
-        git checkout --force "$ORIGINAL_BRANCH"
-        
-        # Re-initialize and update submodules after returning to original branch
-        log "Re-initializing and updating git submodules after returning to original branch"
-        git submodule init
-        git submodule update --recursive
-        
-        # Pop the stash if we stashed changes earlier
-        if [ $STASH_NEEDED -eq 1 ]; then
-            log "Popping stashed changes"
-            git stash pop
-        fi
-    fi
+    log "No translation changes to commit"
+fi
+
+# Go back to original branch
+log "Returning to original branch: $ORIGINAL_BRANCH"
+git checkout --force "$ORIGINAL_BRANCH"
+
+# Re-initialize and update submodules after returning to original branch
+log "Re-initializing and updating git submodules after returning to original branch"
+git submodule init
+git submodule update --recursive
+
+# Pop the stash if we stashed changes earlier
+if [ $STASH_NEEDED -eq 1 ]; then
+    log "Popping stashed changes"
+    git stash pop
 fi
 
 log "Deactivating virtual environment"
