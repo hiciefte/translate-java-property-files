@@ -8,19 +8,20 @@ log() {
 }
 
 # Check if Transifex CLI is already installed
-if sudo -u bisquser which tx &> /dev/null; then
+if sudo -u bisquser bash -c 'source ~/.bashrc && which tx' &> /dev/null; then
     log "Transifex CLI is already installed"
-    TX_VERSION=$(sudo -u bisquser tx --version)
+    TX_VERSION=$(sudo -u bisquser bash -c 'source ~/.bashrc && tx --version')
     log "Current version: $TX_VERSION"
 else
     # Install Transifex CLI for bisquser
     log "Installing Transifex CLI for bisquser"
     sudo -u bisquser bash -c 'cd /tmp && curl -o- https://raw.githubusercontent.com/transifex/cli/master/install.sh | bash'
-    if ! sudo -u bisquser which tx &> /dev/null; then
+    if ! sudo -u bisquser bash -c 'source ~/.bashrc && which tx' &> /dev/null; then
         log "Error: Failed to install Transifex CLI"
         exit 1
     fi
-    log "Transifex CLI installed successfully"
+    TX_VERSION=$(sudo -u bisquser bash -c 'source ~/.bashrc && tx --version')
+    log "Transifex CLI installed successfully (version: $TX_VERSION)"
 fi
 
 # Stop and remove existing service and timer
