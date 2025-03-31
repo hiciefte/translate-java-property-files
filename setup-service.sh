@@ -25,6 +25,33 @@ sudo systemctl disable translation-service.service translation-service.timer || 
 sudo rm -f /etc/systemd/system/translation-service.service /etc/systemd/system/translation-service.timer
 sudo systemctl daemon-reload
 
+# Set proper permissions for log files
+log "Setting up log files"
+sudo touch /var/log/translation-service.log /var/log/translation-service.error.log
+sudo chown bisquser:bisquser /var/log/translation-service.log /var/log/translation-service.error.log
+sudo chmod 644 /var/log/translation-service.log /var/log/translation-service.error.log
+
+# Ensure update-translations.sh exists and has proper permissions
+log "Checking update-translations.sh script"
+if [ ! -f /home/bisquser/workspace/translate-java-property-files/update-translations.sh ]; then
+    log "Error: update-translations.sh not found"
+    exit 1
+fi
+
+sudo chown bisquser:bisquser /home/bisquser/workspace/translate-java-property-files/update-translations.sh
+sudo chmod +x /home/bisquser/workspace/translate-java-property-files/update-translations.sh
+
+# Reload systemd to pick up new service files
+log "Reloading systemd"
+sudo systemctl daemon-reload
+
+# Enable and start the service and timer
+log "Enabling and starting systemd service and timer"
+sudo systemctl enable translation-service.service translation-service.timer || {
+    log "Error: Failed to enable service and timer"
+    exit 1
+}
+
 # Create new service file
 log "Creating systemd service file"
 sudo tee /etc/systemd/system/translation-service.service > /dev/null << 'EOL'
@@ -58,8 +85,13 @@ ExecStartPre=/bin/bash -c 'echo "tx command location: $(which tx || echo ./tx)" 
 ExecStartPre=/bin/bash -c 'echo "tx version: $((which tx || echo ./tx) --version)" >> /var/log/translation-service.log'
 ExecStartPre=/bin/bash -c 'echo "=== End Transifex CLI Check ===" >> /var/log/translation-service.log'
 
+# Check script permissions
+ExecStartPre=/bin/bash -c 'echo "=== Script Check ===" >> /var/log/translation-service.log'
+ExecStartPre=/bin/bash -c 'ls -l /home/bisquser/workspace/translate-java-property-files/update-translations.sh >> /var/log/translation-service.log'
+ExecStartPre=/bin/bash -c 'echo "=== End Script Check ===" >> /var/log/translation-service.log'
+
 # Run the script with full shell initialization
-ExecStart=/bin/bash -c 'source /home/bisquser/.bashrc && source /home/bisquser/.profile && /home/bisquser/workspace/translate-java-property-files/update-translations.sh'
+ExecStart=/bin/bash -c 'cd /home/bisquser/workspace/translate-java-property-files && source /home/bisquser/.bashrc && source /home/bisquser/.profile && ./update-translations.sh'
 StandardOutput=append:/var/log/translation-service.log
 StandardError=append:/var/log/translation-service.error.log
 TimeoutStartSec=300
@@ -86,32 +118,6 @@ RandomizedDelaySec=1h
 WantedBy=timers.target
 EOL
 log "Timer file created"
-
-# Set proper permissions for log files
-log "Setting up log files"
-sudo touch /var/log/translation-service.log /var/log/translation-service.error.log
-sudo chown bisquser:bisquser /var/log/translation-service.log /var/log/translation-service.error.log
-sudo chmod 644 /var/log/translation-service.log /var/log/translation-service.error.log
-
-# Reload systemd to pick up new service files
-log "Reloading systemd"
-sudo systemctl daemon-reload
-
-# Enable and start the service and timer
-log "Enabling and starting systemd service and timer"
-sudo systemctl enable translation-service.service translation-service.timer || {
-    log "Error: Failed to enable service and timer"
-    exit 1
-}
-
-sudo systemctl start translation-service.service translation-service.timer || {
-    log "Error: Failed to start service and timer"
-    log "Checking service status for details:"
-    sudo systemctl status translation-service.service | cat
-    log "Checking journal logs for details:"
-    sudo journalctl -xeu translation-service.service | tail -n 50 | cat
-    exit 1
-}
 
 # Verify service and timer are running
 if ! systemctl is-active translation-service.service >/dev/null 2>&1; then
