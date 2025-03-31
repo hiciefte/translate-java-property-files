@@ -331,8 +331,12 @@ log "Deactivating virtual environment"
 deactivate || true
 
 # Create systemd service file with proper environment
-log "Creating systemd service file"
-sudo tee /etc/systemd/system/translation-service.service > /dev/null << 'EOL'
+log "Checking for existing systemd service files"
+
+# Check if service file exists
+if [ ! -f "/etc/systemd/system/translation-service.service" ]; then
+    log "Creating systemd service file"
+    sudo tee /etc/systemd/system/translation-service.service > /dev/null << 'EOL'
 [Unit]
 Description=Automated translation service for Java property files
 After=network.target
@@ -372,10 +376,15 @@ TimeoutStartSec=300
 [Install]
 WantedBy=multi-user.target
 EOL
+    log "Service file created"
+else
+    log "Service file already exists, skipping creation"
+fi
 
-# Create systemd timer file
-log "Creating systemd timer file"
-sudo tee /etc/systemd/system/translation-service.timer > /dev/null << 'EOL'
+# Check if timer file exists
+if [ ! -f "/etc/systemd/system/translation-service.timer" ]; then
+    log "Creating systemd timer file"
+    sudo tee /etc/systemd/system/translation-service.timer > /dev/null << 'EOL'
 [Unit]
 Description=Run translation service daily
 
@@ -386,6 +395,10 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOL
+    log "Timer file created"
+else
+    log "Timer file already exists, skipping creation"
+fi
 
 # Set proper permissions for log files
 log "Setting up log files"
@@ -393,56 +406,61 @@ sudo touch /var/log/translation-service.log /var/log/translation-service.error.l
 sudo chown bisquser:bisquser /var/log/translation-service.log /var/log/translation-service.error.log
 sudo chmod 644 /var/log/translation-service.log /var/log/translation-service.error.log
 
-# Reload systemd to pick up new service files
+# Reload systemd to pick up any new service files
 log "Reloading systemd"
 sudo systemctl daemon-reload
 
-# Enable and start systemd service and timer
-log "Enabling and starting systemd service and timer"
+# Only enable and start if the service files were just created
+if [ ! -f "/etc/systemd/system/translation-service.service" ] || [ ! -f "/etc/systemd/system/translation-service.timer" ]; then
+    # Enable and start systemd service and timer
+    log "Enabling and starting systemd service and timer"
 
-# Enable the service and timer
-log "Enabling translation service and timer"
-sudo systemctl enable translation-service.service || {
-    log "Error: Failed to enable translation service"
-    exit 1
-}
-sudo systemctl enable translation-service.timer || {
-    log "Error: Failed to enable translation timer"
-    exit 1
-}
+    # Enable the service and timer
+    log "Enabling translation service and timer"
+    sudo systemctl enable translation-service.service || {
+        log "Error: Failed to enable translation service"
+        exit 1
+    }
+    sudo systemctl enable translation-service.timer || {
+        log "Error: Failed to enable translation timer"
+        exit 1
+    }
 
-# Start the service and timer
-log "Starting translation service and timer"
-sudo systemctl start translation-service.service || {
-    log "Error: Failed to start translation service"
-    log "Checking service status for details:"
-    sudo systemctl status translation-service.service | cat
-    log "Checking journal logs for details:"
-    sudo journalctl -xeu translation-service.service | tail -n 50 | cat
-    exit 1
-}
+    # Start the service and timer
+    log "Starting translation service and timer"
+    sudo systemctl start translation-service.service || {
+        log "Error: Failed to start translation service"
+        log "Checking service status for details:"
+        sudo systemctl status translation-service.service | cat
+        log "Checking journal logs for details:"
+        sudo journalctl -xeu translation-service.service | tail -n 50 | cat
+        exit 1
+    }
 
-# Verify service is running
-if ! systemctl is-active translation-service.service >/dev/null 2>&1; then
-    log "Error: Service failed to start properly"
-    log "Service status:"
-    sudo systemctl status translation-service.service | cat
-    exit 1
-fi
+    # Verify service is running
+    if ! systemctl is-active translation-service.service >/dev/null 2>&1; then
+        log "Error: Service failed to start properly"
+        log "Service status:"
+        sudo systemctl status translation-service.service | cat
+        exit 1
+    fi
 
-sudo systemctl start translation-service.timer || {
-    log "Error: Failed to start translation timer"
-    log "Checking timer status for details:"
-    sudo systemctl status translation-service.timer | cat
-    exit 1
-}
+    sudo systemctl start translation-service.timer || {
+        log "Error: Failed to start translation timer"
+        log "Checking timer status for details:"
+        sudo systemctl status translation-service.timer | cat
+        exit 1
+    }
 
-# Verify timer is running
-if ! systemctl is-active translation-service.timer >/dev/null 2>&1; then
-    log "Error: Timer failed to start properly"
-    log "Timer status:"
-    sudo systemctl status translation-service.timer | cat
-    exit 1
+    # Verify timer is running
+    if ! systemctl is-active translation-service.timer >/dev/null 2>&1; then
+        log "Error: Timer failed to start properly"
+        log "Timer status:"
+        sudo systemctl status translation-service.timer | cat
+        exit 1
+    fi
+else
+    log "Service files already exist, skipping enable/start"
 fi
 
 # Verify systemd service and timer configuration
