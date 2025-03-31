@@ -41,17 +41,6 @@ fi
 sudo chown bisquser:bisquser /home/bisquser/workspace/translate-java-property-files/update-translations.sh
 sudo chmod +x /home/bisquser/workspace/translate-java-property-files/update-translations.sh
 
-# Reload systemd to pick up new service files
-log "Reloading systemd"
-sudo systemctl daemon-reload
-
-# Enable and start the service and timer
-log "Enabling and starting systemd service and timer"
-sudo systemctl enable translation-service.service translation-service.timer || {
-    log "Error: Failed to enable service and timer"
-    exit 1
-}
-
 # Create new service file
 log "Creating systemd service file"
 sudo tee /etc/systemd/system/translation-service.service > /dev/null << 'EOL'
@@ -118,6 +107,26 @@ RandomizedDelaySec=1h
 WantedBy=timers.target
 EOL
 log "Timer file created"
+
+# Reload systemd to pick up new service files
+log "Reloading systemd"
+sudo systemctl daemon-reload
+
+# Enable and start the service and timer
+log "Enabling and starting systemd service and timer"
+sudo systemctl enable translation-service.service translation-service.timer || {
+    log "Error: Failed to enable service and timer"
+    exit 1
+}
+
+sudo systemctl start translation-service.service translation-service.timer || {
+    log "Error: Failed to start service and timer"
+    log "Checking service status for details:"
+    sudo systemctl status translation-service.service | cat
+    log "Checking journal logs for details:"
+    sudo journalctl -xeu translation-service.service | tail -n 50 | cat
+    exit 1
+}
 
 # Verify service and timer are running
 if ! systemctl is-active translation-service.service >/dev/null 2>&1; then
