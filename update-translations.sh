@@ -308,6 +308,12 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
         log "Warning: GitHub CLI not found. Pull request not created."
         log "To create a PR manually, visit: https://github.com/hiciefte/bisq2/compare/main...$BRANCH_NAME"
     fi
+
+    # Push updated translations back to Transifex
+    log "Pushing updated translations to Transifex"
+    tx push -t || {
+        log "Warning: Failed to push translations to Transifex"
+    }
 else
     log "No translation changes to commit"
 fi
