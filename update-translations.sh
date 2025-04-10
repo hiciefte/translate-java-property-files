@@ -284,8 +284,9 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
     
     # Add only translation files
     log "Adding translation files to git"
-    git add *.properties *.po *.mo
-    
+    # Be specific about the path and ignore errors for optional types
+    git add i18n/src/main/resources/*.properties || log "Warning: No *.properties files found to add in i18n/src/main/resources/."
+
     # Commit changes with GPG signing
     log "Committing changes with GPG signing"
     git commit -S -m "Update translations $(date +'%Y-%m-%d')"
