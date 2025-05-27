@@ -113,8 +113,8 @@ gpg --full-generate-key
 # Use email: bisquser@not-existing-domain.com
 
 # Export the GPG public key to add to GitHub
-gpg --list-secret-keys --keyid-format LONG
-# Note the key ID after "sec rsa4096/[KEY_ID]"
+gpg --list-secret-keys --keyid-format=long
+# Note the key ID after "sec   rsa4096/[KEY_ID]" (it's the long string of hex characters)
 gpg --armor --export [KEY_ID] > ~/translation_bot_gpg.pub
 
 # Configure git to use the GPG key

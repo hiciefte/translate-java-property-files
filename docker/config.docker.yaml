@@ -1,0 +1,25 @@
+target_project_root: '/target_repo'
+# Mounted Git repository root
+input_folder: '/target_repo/i18n/src/main/resources' # Path relative to target_project_root
+glossary_file_path: 'glossary.json' # Mounted directly to /app/glossary.json
+model_name: 'gpt-4o-mini'
+translation_queue_folder: 'translation_queue' # Relative to /app
+translated_queue_folder: 'translated_queue' # Relative to /app
+dry_run: false
+supported_locales:
+  - code: "cs"
+    name: "Czech"
+  - code: "de"
+    name: "German"
+  - code: "es"
+    name: "Spanish"
+  - code: "it"
+    name: "Italian"
+  - code: "pt_BR"
+    name: "Brazilian Portuguese"
+  - code: "pcm"
+    name: "Nigerian Pidgin"
+  - code: "ru"
+    name: "Russian"
+  - code: "af_ZA"
+    name: "Afrikaans" 

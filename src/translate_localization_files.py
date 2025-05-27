@@ -24,12 +24,16 @@ from openai import AsyncOpenAI
 from tqdm.asyncio import tqdm_asyncio
 
 # Set up logging with timestamps and log levels, logging to both console and file
+LOG_FILE_PATH = "/app/logs/translation_log.log"
+# Ensure log directory exists
+os.makedirs(os.path.dirname(LOG_FILE_PATH), exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("translation_log.log")
+        logging.FileHandler(LOG_FILE_PATH)
     ]
 )
 
@@ -55,8 +59,18 @@ MODEL_NAME = config.get('model_name', 'gpt-4')
 MAX_MODEL_TOKENS = 4000  # You can modify this if needed
 
 # Define the translation queue folders
-TRANSLATION_QUEUE_FOLDER = config.get('translation_queue_folder', 'translation_queue')
-TRANSLATED_QUEUE_FOLDER = config.get('translated_queue_folder', 'translated_queue')
+# Get appuser's home directory, default to /home/appuser if not found (e.g., during testing outside container)
+APPUSER_HOME = os.path.expanduser("~") # This will be /home/appuser inside the container when run as appuser
+if not os.path.isdir(APPUSER_HOME) or APPUSER_HOME == '/': # Basic check if expanduser fails weirdly or returns root
+    APPUSER_HOME = "/home/appuser"
+
+
+_translation_queue_name = config.get('translation_queue_folder', 'translation_queue')
+_translated_queue_name = config.get('translated_queue_folder', 'translated_queue')
+
+TRANSLATION_QUEUE_FOLDER = os.path.join(APPUSER_HOME, _translation_queue_name)
+TRANSLATED_QUEUE_FOLDER = os.path.join(APPUSER_HOME, _translated_queue_name)
+
 
 # Dry run configuration (if True, files won't be moved/copied, etc.)
 DRY_RUN = config.get('dry_run', False)

@@ -1,0 +1,41 @@
+# Git
+.git
+.gitignore
+
+# Python
+venv/
+*.pyc
+__pycache__/
+.pytest_cache/
+*.egg-info/
+.env
+
+# IDE
+.idea/
+*.iml
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+logs/
+translation_log.log
+src/translation_log.log
+deployment_log.log
+setup_log.log
+
+# Build artifacts
+dist/
+build/
+
+# Local config
+config.yaml
+
+# Documentation & Tests (if not needed in image)
+# docs/
+# tests/
+
+# Other
+*.bak
+*.swp 
