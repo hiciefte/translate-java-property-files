@@ -135,12 +135,21 @@ setup_venv() {
 }
 
 # Load configuration from YAML file
-CONFIG_FILE="config.yaml"
-TARGET_PROJECT_ROOT=$(grep -oP 'target_project_root: \K.*' "$CONFIG_FILE" | tr -d "'" | tr -d '"')
-INPUT_FOLDER=$(grep -oP 'input_folder: \K.*' "$CONFIG_FILE" | tr -d "'" | tr -d '"')
+CONFIG_FILE="config.yaml" # This should be /app/config.yaml, which is config.docker.yaml mounted
+
+# Helper function to parse values from config.yaml robustly using awk
+get_config_value() {
+    local key="$1"
+    local config_file="$2"
+    awk -F': *| *#.*' -v k="^$key:" '$0 ~ k {gsub(/^[ \t'"'"'"]+|[ \t'"'"'"]+$/, "", $2); print $2; exit}' "$config_file"
+}
+
+TARGET_PROJECT_ROOT=$(get_config_value "target_project_root" "$CONFIG_FILE")
+INPUT_FOLDER=$(get_config_value "input_folder" "$CONFIG_FILE")
 
 log "Starting deployment process"
 log "Target project root: $TARGET_PROJECT_ROOT"
+log "Input folder: $INPUT_FOLDER" # Added log for input folder
 
 # Check Python environment
 PYTHON_CMD=$(get_python_cmd)
@@ -210,7 +219,11 @@ fi
 
 # Navigate to the target project root
 cd "$TARGET_PROJECT_ROOT"
-log "Changed directory to target project root"
+log "Changed directory to target project root: $(pwd)"
+log "Listing permissions for $TARGET_PROJECT_ROOT before stash:"
+ls -la "$TARGET_PROJECT_ROOT"
+log "Listing permissions for $TARGET_PROJECT_ROOT/.git before stash:"
+ls -la "$TARGET_PROJECT_ROOT/.git"
 log "Ensuring repository is in a clean state..."
 
 # Save the current branch (should be main as set by entrypoint)
@@ -268,6 +281,10 @@ if command_exists tx; then
     
     # Pull translations with -t option
     log "Using tx pull -t --use-git-timestamps command"
+    log "Listing permissions for current directory ($(pwd)) before tx pull:"
+    ls -la .
+    log "Listing permissions for ./i18n/src/main/resources before tx pull:"
+    ls -la ./i18n/src/main/resources
     tx pull -t --use-git-timestamps || log "Failed to pull translations from Transifex, continuing with script"
 else
     log "Error: Transifex CLI not found. Please install it manually."
@@ -287,14 +304,18 @@ python src/translate_localization_files.py || {
 
 # Step 4: Clean up archived translation files before committing
 log "Cleaning up archived translation files"
-if [ -d "$INPUT_FOLDER/archive" ]; then
+if [ -d "$INPUT_FOLDER/archive" ]; then # This now uses the cleaned INPUT_FOLDER
     rm -rf "$INPUT_FOLDER/archive"
     log "Deleted archived translation files"
 fi
 
 # Step 5: Check if there are any new translations to commit
 cd "$TARGET_PROJECT_ROOT"
-log "Checking for new translations to commit"
+log "Checking for new translations to commit in $(pwd)"
+log "Listing permissions for $TARGET_PROJECT_ROOT before git status:"
+ls -la "$TARGET_PROJECT_ROOT"
+log "Listing permissions for $TARGET_PROJECT_ROOT/.git before git status:"
+ls -la "$TARGET_PROJECT_ROOT/.git"
 
 # Check specifically for changes in translation files
 TRANSLATION_CHANGES=$(git status --porcelain | grep -E "\.properties$|\.po$|\.mo$" || true)
@@ -358,6 +379,8 @@ fi
 
 # Go back to original branch
 log "Returning to original branch: $ORIGINAL_BRANCH"
+log "Listing permissions for $TARGET_PROJECT_ROOT/.git before checkout $ORIGINAL_BRANCH:"
+ls -la "$TARGET_PROJECT_ROOT/.git"
 git checkout --force "$ORIGINAL_BRANCH"
 
 # Re-initialize and update submodules after returning to original branch

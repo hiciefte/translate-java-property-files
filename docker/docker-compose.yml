@@ -13,6 +13,13 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - TX_TOKEN=${TX_TOKEN}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - FORK_REPO_NAME=${FORK_REPO_NAME:-hiciefte/bisq2} # For entrypoint to set SSH remote
+      - HOST_UID=${HOST_UID:-1000}   # For runtime, ensures entrypoint uses correct UID
+      - HOST_GID=${HOST_GID:-1000}   # For runtime, ensures entrypoint uses correct GID
+      # Git configuration variables, to be set in .env file
+      - GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME:-Translation Bot}
+      - GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL:-}
+      - GIT_SIGNING_KEY=${GIT_SIGNING_KEY:-}
       # HOST_UID and HOST_GID for user creation are passed via build args from .env
       # Forcing UID/GID for debugging .env file issues
       # - HOST_UID=502

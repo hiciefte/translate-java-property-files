@@ -85,11 +85,12 @@ RUN \
     echo "Setting trust for GPG key E8853EDAEE23096C4DA77732BCE5D7390C470F3C..." && \
     su -s /bin/bash -c "echo 'E8853EDAEE23096C4DA77732BCE5D7390C470F3C:6:' | gpg --batch --import-ownertrust" appuser && \
     \
-    # Configure git for appuser
-    echo "Configuring git for appuser..." && \
-    su -s /bin/bash -c "git config --global user.name 'Translation Bot'" appuser && \
-    su -s /bin/bash -c "git config --global user.email 'translation-bot@github.com'" appuser && \
-    su -s /bin/bash -c "git config --global user.signingkey E8853EDAEE23096C4DA77732BCE5D7390C470F3C" appuser && \
+    # Git config will now be handled by the entrypoint at runtime using environment variables.
+    # su -s /bin/bash -c "git config --global user.name 'Translation Bot (via hiciefte)'" appuser && \
+    # su -s /bin/bash -c "git config --global user.email 'takahiro.nagasawa@proton.me'" appuser && \
+    # su -s /bin/bash -c "git config --global user.signingkey E8853EDAEE23096C4DA77732BCE5D7390C470F3C" appuser && \
+    # We can still enable GPG signing by default if a key is expected to be configured by entrypoint.
+    su -s /bin/bash -c "git config --global commit.gpgsign true" appuser && \
     \
     # Clean up
     echo "Cleaning up temporary GPG key files..." && \

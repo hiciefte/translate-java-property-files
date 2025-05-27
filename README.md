@@ -5,11 +5,11 @@ This project automates the translation of Java `.properties` files into multiple
 ## Features
 
 - **Automated Translation**: Uses OpenAI (e.g., GPT-4) to translate text.
-- **Git Integration**: Detects changed files in a target Git repository and commits new translations (GPG signed).
+- **Git Integration**: Detects changed files in a target Git repository and commits new translations (GPG signed and **Verified** on GitHub).
 - **Transifex Integration**: Pulls existing translations from Transifex and pushes updated translations back.
 - **GitHub Pull Requests**: Automatically creates pull requests for new translations.
 - **Glossary Support**: Ensures consistent terminology using a `glossary.json` file.
-- **Self-Contained GPG Signing**: Uses a dedicated GPG key built into the Docker image for signing commits.
+- **Self-Contained GPG Signing**: Uses a dedicated GPG key built into the Docker image for signing commits. Commits are configured to appear as "Verified" on GitHub.
 - **Dockerized Environment**: Runs as a Docker container for consistent and portable deployment.
 - **Scheduled Execution**: Utilizes an in-container cron job for daily automated runs.
 - **Comprehensive Logging**: Detailed logs for cron execution, script operations, and translation tasks.
@@ -76,6 +76,17 @@ OPENAI_API_KEY=your_openai_api_key_here
 TX_TOKEN=your_transifex_api_token_here
 GITHUB_TOKEN=your_github_personal_access_token_here
 
+# Git repository details for the entrypoint script
+FORK_REPO_URL="https://github.com/your-github-username/your-fork-repo-name.git" # e.g., https://github.com/hiciefte/bisq2.git
+UPSTREAM_REPO_URL="https://github.com/upstream-owner/upstream-repo-name.git" # e.g., https://github.com/bisq-network/bisq.git
+FORK_REPO_NAME="your-github-username/your-fork-repo-name" # e.g., hiciefte/bisq2 - used for setting SSH remote
+
+# Git commit author and GPG signing details (for "Verified" commits)
+# Use an email address that is verified on your GitHub account and associated with the bot's GPG key.
+GIT_AUTHOR_NAME="Your Name or Bot Name"
+GIT_AUTHOR_EMAIL="your-verified-github-email@example.com"
+GIT_SIGNING_KEY="YOUR_BOT_GPG_KEY_FINGERPRINT" # e.g., E8853EDAEE23096C4DA77732BCE5D7390C470F3C
+
 # For Docker file permissions on mounted volumes (logs) and appuser creation.
 # These MUST be numeric IDs.
 # On macOS/Linux, you can find your current UID/GID with: id -u and id -g
@@ -87,51 +98,112 @@ HOST_GID=20  # Example: 20 (staff group on macOS)
 
 ### 2. Bot GPG Key Setup (One-time)
 
-The Docker image includes a dedicated GPG key for the bot to sign commits. You need to generate this key pair once and store it locally. **These key files should NOT be committed to Git.**
+The Docker image includes a dedicated GPG key for the bot to sign commits. You need to generate this key pair once and store it locally. **These key files should NOT be committed to Git.** Commits made by the bot will appear as "Verified" on GitHub if configured correctly.
 
 1.  **Generate GPG Key Pair**:
-    On your local machine, run the following command. It will create a new GPG key pair without a passphrase, specifically for the bot.
+    On your local machine, run the following command. It will create a new GPG key pair without a passphrase.
     ```bash
     gpg --batch --gen-key <<EOF
     Key-Type: EDDSA
-    Curve: Ed25519
+    Key-Curve: Ed25519
     Subkey-Type: ECDH
     Subkey-Curve: Curve25519
     Name-Real: Translation Bot
-    Name-Email: translation-bot@example.com 
+    Name-Email: your-verified-github-email@example.com
     Expire-Date: 0
     %no-protection
     %commit
     EOF
     ```
-    (Feel free to change `Name-Real` and `Name-Email` if desired, but ensure the email matches what you configure in the Dockerfile if you change it there).
+    - **Important**: For `Name-Email`, use an email address that is **verified on your GitHub account**. This email will be used as the `GIT_AUTHOR_EMAIL` in your `.env` file and is crucial for getting "Verified" commits on GitHub.
+    - If you use a different `Name-Real`, update `GIT_AUTHOR_NAME` in `.env` accordingly.
 
-2.  **Identify Key Fingerprint**:
+2.  **Identify Key Fingerprint & Signing Key ID**:
     List your GPG keys to find the fingerprint of the newly created key:
     ```bash
-    gpg --list-secret-keys "Translation Bot"
+    gpg --list-secret-keys "your-verified-github-email@example.com"
     ```
-    Look for the `sec` line associated with "Translation Bot". The long hexadecimal string is the fingerprint (e.g., `E8853EDAEE23096C4DA77732BCE5D7390C470F3C`).
+    - Look for the `sec` line. The long hexadecimal string is the **fingerprint**.
+    - The **Signing Key ID** is typically the last 16 characters of the fingerprint (e.g., `BCE5D7390C470F3C`). You will use this for `GIT_SIGNING_KEY` in your `.env` file.
 
-3.  **Export Keys**:
+3.  **Add User ID to an Existing Key (Optional)**:
+    If you already have a bot GPG key and want to add or change its associated email for verified commits:
+    ```bash
+    gpg --edit-key YOUR_EXISTING_KEY_FINGERPRINT_OR_ID
+    ```
+    In the GPG prompt:
+    - Type `adduid`.
+    - Enter the `Real name` (e.g., Translation Bot).
+    - Enter the `Email address` (e.g., `your-verified-github-email@example.com`).
+    - Enter an optional `Comment`.
+    - Type `O` (Okay).
+    - If you want this new User ID to be the primary one, select it using `uid N` (where N is its number), then type `primary`.
+    - Type `trust`, choose `5` (ultimate trust), and confirm.
+    - Type `save` to save changes and exit.
+
+4.  **Export Keys**:
     Create a directory to store the keys and export them:
     ```bash
     mkdir -p secrets/gpg_bot_key
-    gpg --export -a "YOUR_BOT_KEY_FINGERPRINT" > secrets/gpg_bot_key/bot_public_key.asc
-    gpg --export-secret-key -a "YOUR_BOT_KEY_FINGERPRINT" > secrets/gpg_bot_key/bot_secret_key.asc
+    gpg --export -a "YOUR_BOT_KEY_FINGERPRINT_OR_ID" > secrets/gpg_bot_key/bot_public_key.asc
+    gpg --export-secret-key -a "YOUR_BOT_KEY_FINGERPRINT_OR_ID" > secrets/gpg_bot_key/bot_secret_key.asc
     ```
-    Replace `YOUR_BOT_KEY_FINGERPRINT` with the actual fingerprint from the previous step.
+    Replace `YOUR_BOT_KEY_FINGERPRINT_OR_ID` with the key's fingerprint or ID.
 
-4.  **Add to `.gitignore`**:
+5.  **Add Public GPG Key to GitHub**:
+    - Copy the content of `secrets/gpg_bot_key/bot_public_key.asc`.
+    - Go to your GitHub account settings -> SSH and GPG keys -> New GPG key.
+    - Paste the public key and add it.
+    - Ensure the email address used for the GPG key (`Name-Email` during generation, or added via `adduid`) is listed as a verified email address in your GitHub account's email settings.
+
+6.  **Add to `.gitignore`**:
     Ensure your project's `.gitignore` file contains a line to ignore the `secrets` directory:
     ```
     secrets/
     ```
     If `.gitignore` doesn't exist, create it in the project root.
 
-    The `Dockerfile` is already configured to copy these keys from `secrets/gpg_bot_key/` into the image during the build process and set up GPG and Git for the `appuser`.
+    The `Dockerfile` is already configured to copy these keys from `secrets/gpg_bot_key/` into the image during the build process. The `docker-entrypoint.sh` script then configures Git at runtime to use the GPG key ID specified by the `GIT_SIGNING_KEY` environment variable from your `.env` file.
 
-### 3. Application Configuration (`config.yaml` vs `docker/config.docker.yaml`)
+### 3. Dedicated SSH Key for GitHub Push (One-time)
+
+To allow the bot to push changes to your fork on GitHub via SSH without requiring interactive passphrase entry, you need to set up a dedicated, passphrase-less SSH key and configure it as a Deploy Key on your GitHub fork.
+
+1.  **Generate a New SSH Key Pair**:
+    On your local machine (where you run `docker compose`), generate a new ED25519 SSH key pair. When prompted for a passphrase, leave it empty:
+    ```bash
+    ssh-keygen -t ed25519 -C "translation_bot_github_$(date +%Y-%m-%d)" -f ~/.ssh/translation_bot_github_id_ed25519
+    # Press Enter for no passphrase, and Enter again to confirm.
+    ```
+    This creates `~/.ssh/translation_bot_github_id_ed25519` (private key) and `~/.ssh/translation_bot_github_id_ed25519.pub` (public key).
+
+2.  **Add Public Key as Deploy Key to Your GitHub Fork**:
+    - Copy the content of the public key file:
+      ```bash
+      cat ~/.ssh/translation_bot_github_id_ed25519.pub
+      ```
+    - Go to your forked repository on GitHub (e.g., `https://github.com/your-username/your-fork-repo-name`).
+    - Navigate to `Settings` -> `Deploy keys` -> `Add deploy key`.
+    - Give it a `Title` (e.g., "Translation Bot Docker").
+    - Paste the public key into the `Key` field.
+    - **Crucially, check `Allow write access`**. The bot needs this to push commits.
+    - Click `Add key`.
+
+3.  **Configure SSH to Use This Key for GitHub**:
+    Edit or create the file `~/.ssh/config` on your local machine (the Docker host) and add the following entry:
+    ```
+    Host github.com
+      HostName github.com
+      User git
+      IdentityFile ~/.ssh/translation_bot_github_id_ed25519
+      IdentitiesOnly yes
+    ```
+    - This configuration tells SSH to use your new dedicated key when connecting to `github.com`.
+    - `IdentitiesOnly yes` ensures that SSH only tries the specified `IdentityFile` and doesn't fall back to other keys that might require a passphrase.
+
+    The `docker-compose.yml` mounts your host's `~/.ssh` directory (read-only) into `/home/appuser/.ssh` in the container. This allows Git running inside the container to use this SSH configuration and the dedicated key for pushing changes.
+
+### 4. Application Configuration (`config.yaml` vs `docker/config.docker.yaml`)
 
 - **`config.yaml`**: This file in the project root is used if you run the Python script manually (see "Manual Setup"). It expects absolute paths for your local system.
 - **`docker/config.docker.yaml`**: This file is specifically for the Docker setup.
@@ -141,7 +213,7 @@ The Docker image includes a dedicated GPG key for the bot to sign commits. You n
   - `glossary_file_path` points to `/app/glossary.json` (mounted from the project root).
   - Queue folders are now created in `appuser`'s home directory within the container to avoid permission issues.
 
-### 4. Glossary (`glossary.json`)
+### 5. Glossary (`glossary.json`)
 
 Place your translation glossary in `glossary.json` in the project root. Example:
 ```json
@@ -151,7 +223,7 @@ Place your translation glossary in `glossary.json` in the project root. Example:
 }
 ```
 
-### 5. Transifex Project Configuration
+### 6. Transifex Project Configuration
 
 Ensure the target repository (e.g., `hiciefte/bisq2`, which is cloned into `/target_repo` in Docker) has a valid `.tx/config` file. Example structure:
 ```ini
@@ -188,8 +260,9 @@ This method encapsulates all dependencies (including GPG setup) and schedules th
 5.  **Build the Docker Image**:
     From the project root directory:
     ```bash
-    docker compose -f docker/docker-compose.yml build
+    docker compose -f docker/docker-compose.yml build --no-cache
     ```
+    Using `--no-cache` is recommended if you've updated scripts or keys in `secrets/`.
     This will copy the bot GPG keys into the image.
 
 6.  **Run the Service**:
@@ -248,46 +321,44 @@ To run this Dockerized application on a dedicated Linux server for continuous, a
 7.  **Build the Image on the Server**:
     Navigate to the project root on the server and build the image:
     ```bash
-    docker compose -f docker/docker-compose.yml build
+    docker compose -f docker/docker-compose.yml build --no-cache
     ```
-8.  **Manage with systemd (Recommended on Server)**:
-    Create a systemd service file (e.g., `/etc/systemd/system/translation-service-docker.service`) to manage the Docker Compose service.
-    **Important**: Ensure the `User=` and `Group=` in the systemd service file match the user who owns the SSH keys and the `./logs` directory for permission consistency.
+8.  **Start the Service on the Server**:
+    ```bash
+    docker compose -f docker/docker-compose.yml up -d
+    ```
+    The service will now run in the background, and the cron job will execute daily.
+
+9.  **Manage with systemd (Recommended on Server)**:
+    For better management (auto-start on boot, easy start/stop/status), create a systemd service file (e.g., `/etc/systemd/system/translator.service`):
     ```ini
     [Unit]
-    Description=Automated Translation Service (Docker)
+    Description=Translation Docker Service
     Requires=docker.service
     After=docker.service
 
     [Service]
-    Type=oneshot
-    RemainAfterExit=yes
-    # User and Group for running docker compose, should own ~/.ssh and ./logs
-    # User=your_server_user 
-    # Group=your_server_group
-
-    WorkingDirectory=/path/to/your/translate-java-property-files # Adjust this path
-    
-    # Pull latest image changes if you update the image elsewhere and push to a registry
-    # ExecStartPre=/usr/bin/docker compose -f docker/docker-compose.yml pull translator 
-    
-    ExecStart=/usr/bin/docker compose -f docker/docker-compose.yml up -d --remove-orphans --no-build
-    ExecStop=/usr/bin/docker compose -f docker/docker-compose.yml down
-    TimeoutStartSec=0
+    User=your_server_user # The user who owns the project files and runs docker compose
+    Group=your_server_group # The group of that user
+    WorkingDirectory=/path/to/translate-java-property-files # Project root on server
+    Restart=always
+    ExecStart=/usr/local/bin/docker-compose -f docker/docker-compose.yml up
+    ExecStop=/usr/local/bin/docker-compose -f docker/docker-compose.yml down
 
     [Install]
     WantedBy=multi-user.target
     ```
-    - Adjust `WorkingDirectory`.
-    - Uncomment and set `User` and `Group` if you need to run `docker compose` as a specific user (recommended).
-    - The `--no-build` flag in `ExecStart` assumes the image is already built on the server (Step 7). If you prefer to rebuild each time the service starts, remove `--no-build`.
-    - If you use a Docker registry, you can add an `ExecStartPre` to pull the latest image.
-    - Reload systemd: `sudo systemctl daemon-reload`
-    - Enable service: `sudo systemctl enable translation-service-docker.service`
-    - Start service: `sudo systemctl start translation-service-docker.service`
-    This setup ensures the container (with its internal cron scheduler) runs continuously and starts on boot.
+    - Replace `your_server_user`, `your_server_group`, and `/path/to/translate-java-property-files`.
+    - Ensure `docker-compose` path is correct (it might be `/usr/bin/docker-compose` or other).
+    - Then enable and start the service:
+      ```bash
+      sudo systemctl daemon-reload
+      sudo systemctl enable translator.service
+      sudo systemctl start translator.service
+      sudo systemctl status translator.service
+      ```
 
-## Manual Setup & Usage (Without Docker)
+## Manual Setup & Usage (Local Development/Testing - Not for Production)
 
 This method is primarily for development or debugging the core Python script. It does not use the Docker image's GPG setup.
 

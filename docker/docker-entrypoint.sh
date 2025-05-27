@@ -33,7 +33,8 @@ if [ "$(id -u)" -ne 0 ]; then
     chmod 700 "${XDG_RUNTIME_DIR}" "${XDG_RUNTIME_DIR}/gnupg"
 
     log_appuser_exec "Setting up GPG agent..."
-    export GPG_TTY=$(tty)
+    GPG_TTY_CMD_OUTPUT=$(tty)
+    export GPG_TTY="$GPG_TTY_CMD_OUTPUT"
     log_appuser_exec "GPG_TTY set to: $GPG_TTY"
 
     log_appuser_exec "Attempting to kill existing gpg-agent, dirmngr, keyboxd processes for user $(id -u)..."
@@ -69,6 +70,32 @@ if [ "$(id -u)" -ne 0 ]; then
         log_appuser_exec "Warning: GPG agent socket NOT found at $GPG_AGENT_SOCKET after setup attempts."
     fi
     
+    log_appuser_exec "Configuring git based on environment variables..."
+    if [ -n "$GIT_AUTHOR_NAME" ]; then
+        git config --global user.name "$GIT_AUTHOR_NAME"
+        log_appuser_exec "Set git user.name to '$GIT_AUTHOR_NAME'"
+    else
+        log_appuser_exec "Warning: GIT_AUTHOR_NAME not set. Git user.name may be unset or default."
+    fi
+
+    if [ -n "$GIT_AUTHOR_EMAIL" ]; then
+        git config --global user.email "$GIT_AUTHOR_EMAIL"
+        log_appuser_exec "Set git user.email to '$GIT_AUTHOR_EMAIL'"
+    else
+        log_appuser_exec "Warning: GIT_AUTHOR_EMAIL not set. Git user.email may be unset or default. GPG verification on GitHub will likely fail."
+    fi
+
+    if [ -n "$GIT_SIGNING_KEY" ]; then
+        git config --global user.signingkey "$GIT_SIGNING_KEY"
+        # Ensure commit.gpgsign is true if a key is provided; it might have been set in Dockerfile already
+        git config --global commit.gpgsign true 
+        log_appuser_exec "Set git user.signingkey to '$GIT_SIGNING_KEY' and ensured commit.gpgsign is true."
+    else
+        # If no signing key is provided, explicitly disable GPG signing for commits
+        git config --global commit.gpgsign false 
+        log_appuser_exec "Warning: GIT_SIGNING_KEY not set. Git commit signing (commit.gpgsign) explicitly set to false."
+    fi
+
     log_appuser_exec "Executing user command: $@"
     exec "$@"
 
@@ -146,6 +173,17 @@ else
         git submodule sync --recursive
         git submodule update --init --recursive
         log "Repository cloned, upstream configured, and main branch aligned with upstream/main."
+
+        # Change origin URL to SSH for appuser pushes
+        if [ -n "$FORK_REPO_NAME" ]; then
+            FORK_REPO_SSH_URL="git@github.com:${FORK_REPO_NAME}.git"
+            log "Changing origin remote URL to SSH: $FORK_REPO_SSH_URL for $TARGET_REPO_DIR"
+            (cd "$TARGET_REPO_DIR" && git remote set-url origin "$FORK_REPO_SSH_URL")
+            log "Origin remote URL set to SSH."
+        else
+            log "Warning: FORK_REPO_NAME not set in environment. Cannot change origin URL to SSH. Push will likely use HTTPS."
+        fi
+
     fi
 
     log "Setting up system-wide git safe.directory for /target_repo (for appuser)..."
@@ -156,7 +194,14 @@ else
     log "Setting ownership of $TARGET_REPO_DIR to appuser ($APPUSER_UID:$APPUSER_GID)..."
     chown -R "$APPUSER_UID":"$APPUSER_GID" "$TARGET_REPO_DIR"
     if [ $? -ne 0 ]; then
-        log "Warning: Failed to chown $TARGET_REPO_DIR to appuser."
+        log "Warning: Failed to chown $TARGET_REPO_DIR to appuser. This is likely the cause of permission issues."
+    else
+        log "chown completed on $TARGET_REPO_DIR."
+        # Add diagnostic ls -la
+        log "Permissions in $TARGET_REPO_DIR after chown by root:"
+        ls -la "$TARGET_REPO_DIR"
+        log "Permissions in $TARGET_REPO_DIR/.git after chown by root:"
+        ls -la "$TARGET_REPO_DIR/.git"
     fi
 
     XDG_DIR_APPUSER_SETUP_BY_ROOT="/run/user/${APPUSER_UID}" # Used for root setup
