@@ -356,23 +356,32 @@ This PR is from branch \`$BRANCH_NAME\` on the \`$FORK_REPO_NAME\` fork and targ
         else
             # Create pull request using gh cli
             log "Attempting to create PR: $FORK_REPO_NAME:$BRANCH_NAME -> $UPSTREAM_REPO_NAME:$TARGET_BRANCH_FOR_PR"
-            gh pr create \
+            
+            PR_URL=$(gh pr create \
                 --title "$PR_TITLE" \
                 --body "$PR_BODY" \
                 --repo "$UPSTREAM_REPO_NAME" \
                 --base "$TARGET_BRANCH_FOR_PR" \
-                --head "$(echo $FORK_REPO_NAME | cut -d'/' -f1):$BRANCH_NAME" || \
-                log "Error: Failed to create pull request. Please check gh cli authentication, GITHUB_TOKEN permissions, and repository settings."
+                --head "$(echo $FORK_REPO_NAME | cut -d'/' -f1):$BRANCH_NAME")
+            
+            PR_CREATE_EXIT_CODE=$?
+
+            if [ $PR_CREATE_EXIT_CODE -eq 0 ]; then
+                log "Successfully created pull request: $PR_URL"
+                # Push updated translations back to Transifex ONLY if PR was successful
+                log "Pushing updated translations to Transifex"
+                tx push -t || {
+                    log "Warning: Failed to push translations to Transifex despite successful PR."
+                }
+            else
+                log "Error: Failed to create pull request (Exit Code: $PR_CREATE_EXIT_CODE). Please check gh cli authentication, GITHUB_TOKEN permissions, and repository settings."
+                log "Skipping push to Transifex due to PR creation failure."
+            fi
         fi
     else
         log "Error: GitHub CLI (gh) not found. Cannot create pull request."
+        log "Skipping push to Transifex due to missing GitHub CLI."
     fi
-
-    # Push updated translations back to Transifex
-    log "Pushing updated translations to Transifex"
-    tx push -t || {
-        log "Warning: Failed to push translations to Transifex"
-    }
 else
     log "No translation changes to commit"
 fi

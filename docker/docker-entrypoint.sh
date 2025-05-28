@@ -104,14 +104,18 @@ else
     log "Starting initial entrypoint setup as root..."
 
     TARGET_REPO_DIR="/target_repo"
-    FORK_REPO_URL="https://github.com/hiciefte/bisq2.git"
-    UPSTREAM_REPO_URL="https://github.com/bisq-network/bisq2.git"
+    FORK_REPO_URL="${FORK_REPO_URL:-https://github.com/hiciefte/bisq2.git}" 
+    UPSTREAM_REPO_URL="${UPSTREAM_REPO_URL:-https://github.com/bisq-network/bisq2.git}"
+    FORK_REPO_NAME="${FORK_REPO_NAME:-hiciefte/bisq2}" # Used for setting SSH remote URL
 
-    APPUSER_UID=${HOST_UID:-1000} # From docker-compose build/env
-    APPUSER_GID=${HOST_GID:-1000} # From docker-compose build/env
+    APPUSER_UID=${HOST_UID:-1000}
+    APPUSER_GID=${HOST_GID:-1000}
 
     log "Container running as $(id -u):$(id -g) (expected root)."
     log "Target appuser UID: $APPUSER_UID, GID: $APPUSER_GID (from HOST_UID/HOST_GID env vars)."
+    log "Fork Repo URL: $FORK_REPO_URL"
+    log "Upstream Repo URL: $UPSTREAM_REPO_URL"
+    log "Fork Repo Name for SSH: $FORK_REPO_NAME"
 
     mkdir -p "$TARGET_REPO_DIR"
 
@@ -120,14 +124,18 @@ else
         cd "$TARGET_REPO_DIR"
         git config --global --add safe.directory "$TARGET_REPO_DIR" || log "Warning: Failed to add safe.directory to root's global git config."
 
-        if git remote get-url origin 2>/dev/null | grep -q "$FORK_REPO_URL"; then
+        current_origin_url=$(git remote get-url origin 2>/dev/null || echo "")
+        if [ "$current_origin_url" = "$FORK_REPO_URL" ]; then
             log "Origin remote already correctly set to $FORK_REPO_URL"
+        elif [ "$current_origin_url" = "git@github.com:${FORK_REPO_NAME}.git" ]; then
+            log "Origin remote already correctly set to SSH URL git@github.com:${FORK_REPO_NAME}.git"
         else
-            log "Setting origin remote to $FORK_REPO_URL"
+            log "Setting origin remote to $FORK_REPO_URL (will be changed to SSH later if cloning)"
             git remote set-url origin "$FORK_REPO_URL" || git remote add origin "$FORK_REPO_URL"
         fi
-
-        if git remote get-url upstream 2>/dev/null | grep -q "$UPSTREAM_REPO_URL"; then
+        
+        current_upstream_url=$(git remote get-url upstream 2>/dev/null || echo "")
+        if [ "$current_upstream_url" = "$UPSTREAM_REPO_URL" ]; then
             log "Upstream remote already correctly set to $UPSTREAM_REPO_URL"
         else
             log "Setting upstream remote to $UPSTREAM_REPO_URL"
@@ -139,15 +147,28 @@ else
         git fetch upstream --prune || log "Warning: Git fetch upstream failed."
 
         log "Checking out main branch and resetting to upstream/main..."
-        current_branch=$(git branch --show-current)
+        current_branch=$(git branch --show-current || echo "")
         if [ "$current_branch" != "main" ]; then
-            git checkout main || git checkout -b main origin/main # Ensure main exists and tracks origin/main initially
+            git checkout main || git checkout -b main origin/main
         fi
         git reset --hard upstream/main || log "Warning: Failed to reset main to upstream/main."
         
         log "Updating submodules based on upstream/main..."
         git submodule sync --recursive || log "Warning: git submodule sync failed."
         git submodule update --init --recursive || log "Warning: git submodule update failed."
+
+        # Ensure origin URL is SSH for appuser pushes, even if it was an existing repo
+        if [ -n "$FORK_REPO_NAME" ]; then
+            FORK_REPO_SSH_URL="git@github.com:${FORK_REPO_NAME}.git"
+            if [ "$(git remote get-url origin)" != "$FORK_REPO_SSH_URL" ]; then
+                log "Changing origin remote URL to SSH: $FORK_REPO_SSH_URL for existing $TARGET_REPO_DIR"
+                git remote set-url origin "$FORK_REPO_SSH_URL"
+                log "Origin remote URL set to SSH."
+            fi
+        else
+            log "Warning: FORK_REPO_NAME not set. Cannot ensure origin URL is SSH for existing repo. Push might fail for appuser."
+        fi
+
     else
         log "Target directory $TARGET_REPO_DIR is empty or not a git repository. Cloning $FORK_REPO_URL as origin..."
         git clone --recurse-submodules "$FORK_REPO_URL" "$TARGET_REPO_DIR"
@@ -165,7 +186,7 @@ else
         fi
         log "Fetching upstream and setting local main to upstream/main..."
         git fetch upstream --prune
-        current_branch=$(git branch --show-current)
+        current_branch=$(git branch --show-current || echo "")
         if [ "$current_branch" != "main" ]; then
             git checkout main || git checkout -b main origin/main
         fi
@@ -174,16 +195,14 @@ else
         git submodule update --init --recursive
         log "Repository cloned, upstream configured, and main branch aligned with upstream/main."
 
-        # Change origin URL to SSH for appuser pushes
         if [ -n "$FORK_REPO_NAME" ]; then
             FORK_REPO_SSH_URL="git@github.com:${FORK_REPO_NAME}.git"
             log "Changing origin remote URL to SSH: $FORK_REPO_SSH_URL for $TARGET_REPO_DIR"
-            (cd "$TARGET_REPO_DIR" && git remote set-url origin "$FORK_REPO_SSH_URL")
+            git remote set-url origin "$FORK_REPO_SSH_URL"
             log "Origin remote URL set to SSH."
         else
             log "Warning: FORK_REPO_NAME not set in environment. Cannot change origin URL to SSH. Push will likely use HTTPS."
         fi
-
     fi
 
     log "Setting up system-wide git safe.directory for /target_repo (for appuser)..."
@@ -197,7 +216,6 @@ else
         log "Warning: Failed to chown $TARGET_REPO_DIR to appuser. This is likely the cause of permission issues."
     else
         log "chown completed on $TARGET_REPO_DIR."
-        # Add diagnostic ls -la
         log "Permissions in $TARGET_REPO_DIR after chown by root:"
         ls -la "$TARGET_REPO_DIR"
         log "Permissions in $TARGET_REPO_DIR/.git after chown by root:"
@@ -213,8 +231,7 @@ else
     ls -ld "${XDG_DIR_APPUSER_SETUP_BY_ROOT}" "${XDG_DIR_APPUSER_SETUP_BY_ROOT}/gnupg"
 
     log "GPG key import is now handled during Docker image build. Skipping GPG data copy from host."
-
-    log "Git user.name, user.email, and signingkey are configured for appuser during Docker image build."
+    log "Git user.name, user.email, and signingkey are configured for appuser by this script if run as appuser, or by Dockerfile build args."
 
     CRON_PID_FILE="/var/run/crond.pid"
     log "Checking cron daemon status..."

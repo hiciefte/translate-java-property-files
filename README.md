@@ -61,7 +61,7 @@ translate-java-property-files/
 - **API Keys**:
   - **OpenAI API Key**: For accessing OpenAI translation models.
   - **Transifex API Token**: For interacting with your Transifex project.
-  - **GitHub Personal Access Token**: With `repo` and `workflow` (or `public_repo` if applicable, and permissions to create PRs) scopes, for creating pull requests via `gh` CLI.
+  - **GitHub Personal Access Token**: A **Classic Personal Access Token** with the full `repo` scope is required. This token is used by the `gh` CLI to create pull requests. Fine-grained tokens may not work due to issues selecting repositories not directly owned by your account.
 - **Target Project Setup**: The target Java project (e.g., `hiciefte/bisq2`) should have a `.tx/config` file configured for Transifex.
 
 ## Configuration
@@ -402,8 +402,8 @@ The daily cron job inside the Docker container executes `/app/docker/docker-entr
     - Uses `docker/config.docker.yaml` (mounted as `/app/config.yaml`).
     - Translates, writes updated files to `/target_repo`.
 6.  **Commit & Push Changes**: `update-translations.sh` creates a new branch, adds, commits (GPG signed using the bot's key built into the image), and pushes changes to GitHub (using host's SSH key).
-7.  **Create GitHub PR**: Uses `gh` CLI.
-8.  **Transifex Push**: Pushes updates to Transifex.
+7.  **Create GitHub PR**: Uses `gh` CLI to create a pull request for the changes.
+8.  **Transifex Push**: If the pull request was created successfully in the previous step, the script then pushes the updated source translations to Transifex. This step is skipped if PR creation fails.
 9.  **Cleanup**.
 
 ## Troubleshooting
