@@ -2,6 +2,7 @@ FROM ubuntu:24.04
 
 ARG HOST_UID
 ARG HOST_GID
+ARG GPG_KEY_FINGERPRINT_FOR_TRUST
 
 ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
@@ -77,17 +78,17 @@ RUN \
     # Import keys as appuser. This will populate /home/appuser/.gnupg
     # Ensure .gnupg dir exists and has correct ownership/permissions (done during useradd)
     echo "Importing GPG keys for appuser..." && \
-    su -s /bin/bash -c "gpg --batch --import /tmp/bot_public_key.asc" appuser && \
-    su -s /bin/bash -c "gpg --batch --import /tmp/bot_secret_key.asc" appuser && \
+    su - appuser -c "gpg --batch --import /tmp/bot_public_key.asc" && \
+    su - appuser -c "gpg --batch --import /tmp/bot_secret_key.asc" && \
     \
     # Set trust for the imported key to ultimate so it can be used for signing without manual intervention.
-    # The fingerprint must match the key you generated.
-    echo "Setting trust for GPG key E8853EDAEE23096C4DA77732BCE5D7390C470F3C..." && \
-    su -s /bin/bash -c "echo 'E8853EDAEE23096C4DA77732BCE5D7390C470F3C:6:' | gpg --batch --import-ownertrust" appuser && \
+    # The fingerprint is passed as a build argument.
+    echo "Setting trust for GPG key ${GPG_KEY_FINGERPRINT_FOR_TRUST}..." && \
+    su - appuser -c "echo \"${GPG_KEY_FINGERPRINT_FOR_TRUST:?GPG_KEY_FINGERPRINT_FOR_TRUST build argument is not set or empty}:6:\" | gpg --batch --import-ownertrust" && \
     \
     # Git config will now be handled by the entrypoint at runtime using environment variables.
     # We can still enable GPG signing by default if a key is expected to be configured by entrypoint.
-    su -s /bin/bash -c "git config --global commit.gpgsign true" appuser && \
+    su - appuser -c "git config --global commit.gpgsign true" && \
     \
     # Clean up
     echo "Cleaning up temporary GPG key files..." && \

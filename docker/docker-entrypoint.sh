@@ -17,6 +17,10 @@ if [ "$(id -u)" -ne 0 ]; then
     # This block runs if the script is executed by a non-root user (e.g., appuser).
     # It prepares the environment for commands like update-translations.sh.
 
+    # Explicitly set HOME for appuser context, ensuring GPG and other tools find their config correctly.
+    # While often set correctly by su/cron, being explicit is safer.
+    export HOME="/home/appuser"
+
     APPUSER_UID_FOR_XDG_SETUP=$(id -u) # Current user's UID
     APPUSER_LOGIN_NAME=$(id -un)
 
@@ -25,7 +29,15 @@ if [ "$(id -u)" -ne 0 ]; then
         echo "[$(date +'%Y-%m-%d %H:%M:%S')] [Entrypoint/appuser-exec ($APPUSER_LOGIN_NAME)] $1"
     }
 
-    log_appuser_exec "Running as appuser ($(id -u):$(id -g)). Preparing to execute: '$@'."
+    log_appuser_exec "Running as appuser ($(id -u):$(id -g)). Preparing to execute command."
+    if [ "$#" -gt 0 ]; then
+        log_appuser_exec "Command and arguments to execute:"
+        for arg in "$@"; do
+            log_appuser_exec "  $arg"
+        done
+    else
+        log_appuser_exec "No command/arguments provided to execute."
+    fi
 
     export XDG_RUNTIME_DIR="/run/user/${APPUSER_UID_FOR_XDG_SETUP}"
     log_appuser_exec "XDG_RUNTIME_DIR set to: $XDG_RUNTIME_DIR"
@@ -96,7 +108,15 @@ if [ "$(id -u)" -ne 0 ]; then
         log_appuser_exec "Warning: GIT_SIGNING_KEY not set. Git commit signing (commit.gpgsign) explicitly set to false."
     fi
 
-    log_appuser_exec "Executing user command: $@"
+    log_appuser_exec "Executing user command..."
+    if [ "$#" -gt 0 ]; then
+        log_appuser_exec "Command and arguments being executed:"
+        for arg in "$@"; do
+            log_appuser_exec "  $arg"
+        done
+    else
+        log_appuser_exec "No command/arguments to execute via exec."
+    fi
     exec "$@"
 
 else
@@ -257,8 +277,12 @@ else
         fi
     fi
 
-    log "Root setup complete. Handing over to CMD: $@"
+    log "Root setup complete. Determining CMD to hand over to."
     if [ "$#" -gt 0 ]; then
+        log "CMD from Docker/compose and arguments:"
+        for arg in "$@"; do
+            log "  $arg"
+        done
         exec "$@"
     else
         log "No specific command provided to entrypoint. Defaulting to 'sleep infinity'."

@@ -1,7 +1,6 @@
 #!/bin/bash
 
 set -e  # Exit immediately if a command exits with a non-zero status
-set -x  # Enable debug output
 
 # Repository Configuration
 FORK_REPO_NAME="hiciefte/bisq2" # Your fork
