@@ -1,15 +1,20 @@
 # Translate Java Property Files
 
-This project automates the translation of Java `.properties` files into multiple languages using OpenAI's GPT-based APIs. It integrates with Git to detect changes in a target project, pulls translations from Transifex, manages a translation workflow, and then pushes new translations back to Git (creating a pull request) and Transifex. The entire process is designed to be run automatically via a daily scheduled job within a Docker container.
+This project automates the translation of Java `.properties` files into multiple languages using OpenAI's GPT-based
+APIs. It integrates with Git to detect changes in a target project, pulls translations from Transifex, manages a
+translation workflow, and then pushes new translations back to Git (creating a pull request) and Transifex. The entire
+process is designed to be run automatically via a daily scheduled job within a Docker container.
 
 ## Features
 
 - **Automated Translation**: Uses OpenAI (e.g., GPT-4) to translate text.
-- **Git Integration**: Detects changed files in a target Git repository and commits new translations (GPG signed and **Verified** on GitHub).
+- **Git Integration**: Detects changed files in a target Git repository and commits new translations (GPG signed and *
+  *Verified** on GitHub).
 - **Transifex Integration**: Pulls existing translations from Transifex and pushes updated translations back.
 - **GitHub Pull Requests**: Automatically creates pull requests for new translations.
 - **Glossary Support**: Ensures consistent terminology using a `glossary.json` file.
-- **Self-Contained GPG Signing**: Uses a dedicated GPG key built into the Docker image for signing commits. Commits are configured to appear as "Verified" on GitHub.
+- **Self-Contained GPG Signing**: Uses a dedicated GPG key built into the Docker image for signing commits. Commits are
+  configured to appear as "Verified" on GitHub.
 - **Dockerized Environment**: Runs as a Docker container for consistent and portable deployment.
 - **Scheduled Execution**: Utilizes an in-container cron job for daily automated runs.
 - **Comprehensive Logging**: Detailed logs for cron execution, script operations, and translation tasks.
@@ -40,35 +45,49 @@ translate-java-property-files/
 ```
 
 - **`docker/`**: Contains all files needed to build and run the application with Docker.
-  - `Dockerfile`: Builds the image with Python, Git, CLIs (Transifex, GitHub), cron, and imports the dedicated GPG bot key.
-  - `docker-compose.yml`: Defines the `translator` service, manages environment variables, and volume mounts.
-  - `config.docker.yaml`: A version of `config.yaml` with paths set for the Docker environment (points to /target_repo).
-  - `translator-cron`: Defines the daily cron job that runs the translation process.
-  - `docker-entrypoint.sh`: Script executed on container start. Clones/updates the target Bisq repository (e.g., `hiciefte/bisq2`) into `/target_repo` inside the container, sets up the GPG agent, then calls `update-translations.sh`.
-- **`src/translate_localization_files.py`**: The core Python script handling `.properties` file parsing, OpenAI API calls, glossary application, and file manipulation.
-- **`secrets/gpg_bot_key/`**: This directory (which **must be added to your `.gitignore` file**) holds the GPG public and secret keys for the bot. These keys are copied into the Docker image during build.
-- **`update-translations.sh`**: Orchestrates the entire translation workflow: Git operations, Transifex pulls/pushes, running the Python translation script, creating GitHub PRs. This is the script executed by the cron job within Docker.
+    - `Dockerfile`: Builds the image with Python, Git, CLIs (Transifex, GitHub), cron, and imports the dedicated GPG bot
+      key.
+    - `docker-compose.yml`: Defines the `translator` service, manages environment variables, and volume mounts.
+    - `config.docker.yaml`: A version of `config.yaml` with paths set for the Docker environment (points to
+      /target_repo).
+    - `translator-cron`: Defines the daily cron job that runs the translation process.
+    - `docker-entrypoint.sh`: Script executed on container start. Clones/updates the target Bisq repository (e.g.,
+      `hiciefte/bisq2`) into `/target_repo` inside the container, sets up the GPG agent, then calls
+      `update-translations.sh`.
+- **`src/translate_localization_files.py`**: The core Python script handling `.properties` file parsing, OpenAI API
+  calls, glossary application, and file manipulation.
+- **`secrets/gpg_bot_key/`**: This directory (which **must be added to your `.gitignore` file**) holds the GPG public
+  and secret keys for the bot. These keys are copied into the Docker image during build.
+- **`update-translations.sh`**: Orchestrates the entire translation workflow: Git operations, Transifex pulls/pushes,
+  running the Python translation script, creating GitHub PRs. This is the script executed by the cron job within Docker.
 - **`config.yaml`**: Configuration for paths, OpenAI model, etc., when running manually (not in Docker).
-- **`docker/config.docker.yaml`**: Used by the Docker setup, with paths like `/target_repo` (where the Bisq project is cloned by the entrypoint script) and `/app/glossary.json`.
-- **`.env` (user-created)**: Stores sensitive API keys and Docker host UID/GID. **This file is crucial and must be created by the user.**
+- **`docker/config.docker.yaml`**: Used by the Docker setup, with paths like `/target_repo` (where the Bisq project is
+  cloned by the entrypoint script) and `/app/glossary.json`.
+- **`.env` (user-created)**: Stores sensitive API keys and Docker host UID/GID. **This file is crucial and must be
+  created by the user.**
 - **`glossary.json`**: Defines term-specific translations for different languages.
 
 ## Prerequisites
 
-- **Docker & Docker Compose**: Required to build and run the application using the recommended Docker setup. Download from [Docker's website](https://www.docker.com/products/docker-desktop/).
+- **Docker & Docker Compose**: Required to build and run the application using the recommended Docker setup. Download
+  from [Docker's website](https://www.docker.com/products/docker-desktop/).
 - **Git**: Must be installed on your local machine.
 - **GnuPG (GPG)**: Required on your local machine to generate the bot's GPG key pair.
 - **API Keys**:
-  - **OpenAI API Key**: For accessing OpenAI translation models.
-  - **Transifex API Token**: For interacting with your Transifex project.
-  - **GitHub Personal Access Token**: A **Classic Personal Access Token** with the full `repo` scope is required. This token is used by the `gh` CLI to create pull requests. Fine-grained tokens may not work due to issues selecting repositories not directly owned by your account.
-- **Target Project Setup**: The target Java project (e.g., `hiciefte/bisq2`) should have a `.tx/config` file configured for Transifex.
+    - **OpenAI API Key**: For accessing OpenAI translation models.
+    - **Transifex API Token**: For interacting with your Transifex project.
+    - **GitHub Personal Access Token**: A **Classic Personal Access Token** with the full `repo` scope is required. This
+      token is used by the `gh` CLI to create pull requests. Fine-grained tokens may not work due to issues selecting
+      repositories not directly owned by your account.
+- **Target Project Setup**: The target Java project (e.g., `hiciefte/bisq2`) should have a `.tx/config` file configured
+  for Transifex.
 
 ## Configuration
 
 ### 1. Environment Variables (`.env` file)
 
-Create a `.env` file in the **root directory of this project** (`translate-java-property-files/.env`). This file is read by Docker Compose for build arguments and container environment variables.
+Create a `.env` file in the **root directory of this project** (`translate-java-property-files/.env`). This file is read
+by Docker Compose for build arguments and container environment variables.
 
 ```env
 # .env
@@ -98,16 +117,21 @@ GIT_SIGNING_KEY="YOUR_BOT_GPG_KEY_FINGERPRINT" # e.g., E8853EDAEE23096C4DA77732B
 HOST_UID=501 # Example: 501
 HOST_GID=20  # Example: 20 (staff group on macOS)
 ```
+
 - Replace placeholders with your actual keys/tokens and your numeric UID/GID.
-- `HOST_UID` and `HOST_GID` are used during the Docker build to create an `appuser` with matching IDs, ensuring correct file ownership for mounted volumes (like logs) on your host.
+- `HOST_UID` and `HOST_GID` are used during the Docker build to create an `appuser` with matching IDs, ensuring correct
+  file ownership for mounted volumes (like logs) on your host.
 
 ### 2. Bot GPG Key Setup (One-time)
 
-The Docker image includes a dedicated GPG key for the bot to sign commits. You need to generate this key pair once and store it locally. **These key files should NOT be committed to Git.** Commits made by the bot will appear as "Verified" on GitHub if configured correctly.
+The Docker image includes a dedicated GPG key for the bot to sign commits. You need to generate this key pair once and
+store it locally. **These key files should NOT be committed to Git.** Commits made by the bot will appear as "Verified"
+on GitHub if configured correctly.
 
-1.  **Generate GPG Key Pair**:
-    On your local machine, run the following command. It will create a new GPG key pair without a passphrase.
-    ```bash
+1. **Generate GPG Key Pair**:
+   On your local machine, run the following command. It will create a new GPG key pair without a passphrase.
+
+   ```bash
     gpg --batch --gen-key <<EOF
     Key-Type: EDDSA
     Key-Curve: Ed25519
@@ -125,7 +149,7 @@ The Docker image includes a dedicated GPG key for the bot to sign commits. You n
 
 2.  **Identify Key Fingerprint & Signing Key ID**:
     List your GPG keys to find the fingerprint of the newly created key:
-    ```bash
+   ```bash
     gpg --list-secret-keys "your-verified-github-email@example.com"
     ```
     - Look for the `sec` line. The long hexadecimal string is the **fingerprint**.
@@ -148,7 +172,7 @@ The Docker image includes a dedicated GPG key for the bot to sign commits. You n
 
 4.  **Export Keys**:
     Create a directory to store the keys and export them:
-    ```bash
+   ```bash
     mkdir -p secrets/gpg_bot_key
     gpg --export -a "YOUR_BOT_KEY_FINGERPRINT_OR_ID" > secrets/gpg_bot_key/bot_public_key.asc
     gpg --export-secret-key -a "YOUR_BOT_KEY_FINGERPRINT_OR_ID" > secrets/gpg_bot_key/bot_secret_key.asc
@@ -163,7 +187,8 @@ The Docker image includes a dedicated GPG key for the bot to sign commits. You n
 
 6.  **Add to `.gitignore`**:
     Ensure your project's `.gitignore` file contains a line to ignore the `secrets` directory:
-    ```
+   ```
+
     secrets/
     ```
     If `.gitignore` doesn't exist, create it in the project root.
@@ -172,11 +197,14 @@ The Docker image includes a dedicated GPG key for the bot to sign commits. You n
 
 ### 3. Dedicated SSH Key for GitHub Push (One-time)
 
-To allow the bot to push changes to your fork on GitHub via SSH without requiring interactive passphrase entry, you need to set up a dedicated, passphrase-less SSH key and configure it as a Deploy Key on your GitHub fork.
+To allow the bot to push changes to your fork on GitHub via SSH without requiring interactive passphrase entry, you need
+to set up a dedicated, passphrase-less SSH key and configure it as a Deploy Key on your GitHub fork.
 
-1.  **Generate a New SSH Key Pair**:
-    On your local machine (where you run `docker compose`), generate a new ED25519 SSH key pair. When prompted for a passphrase, leave it empty:
-    ```bash
+1. **Generate a New SSH Key Pair**:
+   On your local machine (where you run `docker compose`), generate a new ED25519 SSH key pair. When prompted for a
+   passphrase, leave it empty:
+
+```bash
     ssh-keygen -t ed25519 -C "translation_bot_github_$(date +%Y-%m-%d)" -f ~/.ssh/translation_bot_github_id_ed25519
     # Press Enter for no passphrase, and Enter again to confirm.
     ```
@@ -230,7 +258,9 @@ Place your translation glossary in `glossary.json` in the project root. Example:
 
 ### 6. Transifex Project Configuration
 
-Ensure the target repository (e.g., `hiciefte/bisq2`, which is cloned into `/target_repo` in Docker) has a valid `.tx/config` file. Example structure:
+Ensure the target repository (e.g., `hiciefte/bisq2`, which is cloned into `/target_repo` in Docker) has a valid
+`.tx/config` file. Example structure:
+
 ```ini
 [main]
 host = https://www.transifex.com
@@ -241,118 +271,136 @@ source_file = i18n/src/main/resources/app.properties   # Path to source (English
 source_lang = en
 type = PROPERTIES
 ```
+
 The `update-translations.sh` script uses the `TX_TOKEN` from the `.env` file to authenticate with Transifex.
 
 ## Running with Docker (Recommended)
 
-This method encapsulates all dependencies (including GPG setup) and schedules the translation job using an in-container cron.
+This method encapsulates all dependencies (including GPG setup) and schedules the translation job using an in-container
+cron.
 
-1.  **Clone this Repository**:
-    ```bash
-    git clone https://github.com/your-username/translate-java-property-files.git
-    cd translate-java-property-files
-    ```
+1. **Clone this Repository**:
+   ```bash
+   git clone https://github.com/your-username/translate-java-property-files.git
+   cd translate-java-property-files
+   ```
 
-2.  **Create and Populate `.env` File**:
-    As described in "Configuration" (Section 1) above. Ensure `HOST_UID` and `HOST_GID` are your numeric local user/group IDs.
+2. **Create and Populate `.env` File**:
+   As described in "Configuration" (Section 1) above. Ensure `HOST_UID` and `HOST_GID` are your numeric local user/group
+   IDs.
 
-3.  **Generate and Export Bot GPG Key**:
-    Follow the steps in "Configuration" (Section 2: Bot GPG Key Setup) to generate and export the bot's GPG keys into the `secrets/gpg_bot_key/` directory. Ensure `secrets/` is in your `.gitignore`.
+3. **Generate and Export Bot GPG Key**:
+   Follow the steps in "Configuration" (Section 2: Bot GPG Key Setup) to generate and export the bot's GPG keys into the
+   `secrets/gpg_bot_key/` directory. Ensure `secrets/` is in your `.gitignore`.
 
-4.  **SSH Keys (for Git Push)**:
-    The `docker-compose.yml` mounts your local `~/.ssh` directory into the container (read-only). This allows the script to use your SSH identity for `git push` operations to GitHub. Ensure your SSH keys are correctly configured on your host machine and loaded in your SSH agent if they are passphrase protected.
+4. **SSH Keys (for Git Push)**:
+   The `docker-compose.yml` mounts your local `~/.ssh` directory into the container (read-only). This allows the script
+   to use your SSH identity for `git push` operations to GitHub. Ensure your SSH keys are correctly configured on your
+   host machine and loaded in your SSH agent if they are passphrase protected.
 
-5.  **Build the Docker Image**:
-    From the project root directory:
-    ```bash
-    docker compose -f docker/docker-compose.yml build --no-cache
-    ```
-    Using `--no-cache` is recommended if you've updated scripts or keys in `secrets/`.
-    This will copy the bot GPG keys into the image.
+5. **Build the Docker Image**:
+   From the project root directory:
+   ```bash
+   docker compose -f docker/docker-compose.yml build --no-cache
+   ```
+   Using `--no-cache` is recommended if you've updated scripts or keys in `secrets/`.
+   This will copy the bot GPG keys into the image.
 
-6.  **Run the Service**:
-    ```bash
-    docker compose -f docker/docker-compose.yml up
-    ```
-    To run in detached mode (in the background):
-    ```bash
-    docker compose -f docker/docker-compose.yml up -d
-    ```
-    This starts the container. The `docker-entrypoint.sh` will first clone/update the target Git repository into `/target_repo`. The main container process `sleep infinity` (or `cron -f` if you change the CMD), and the `translator-cron` file defines the daily job.
+6. **Run the Service**:
+   ```bash
+   docker compose -f docker/docker-compose.yml up
+   ```
+   To run in detached mode (in the background):
+   ```bash
+   docker compose -f docker/docker-compose.yml up -d
+   ```
+   This starts the container. The `docker-entrypoint.sh` will first clone/update the target Git repository into
+   `/target_repo`. The main container process `sleep infinity` (or `cron -f` if you change the CMD), and the
+   `translator-cron` file defines the daily job.
 
-7.  **Checking Logs**:
-    Logs are written to the `./logs/` directory in your project root (mounted from `/app/logs/` in the container):
+7. **Checking Logs**:
+   Logs are written to the `./logs/` directory in your project root (mounted from `/app/logs/` in the container):
     - `./logs/cron_job.log`: Output from the cron job execution itself.
     - `./logs/deployment_log.log`: Detailed logs from `update-translations.sh`.
     - `./logs/translation_log.log`: Logs from the Python script `src/translate_localization_files.py`.
-    You can also view live logs from the running container:
-    ```bash
-    docker compose -f docker/docker-compose.yml logs -f
-    ```
+      You can also view live logs from the running container:
+   ```bash
+   docker compose -f docker/docker-compose.yml logs -f
+   ```
 
-8.  **Manually Triggering the Translation Job (for testing)**:
-    If you don't want to wait for the scheduled cron time, you can execute the job manually inside the running container:
-    ```bash
-    docker exec -it translation_service_runner su -s /bin/bash appuser -c "/app/docker/docker-entrypoint.sh /app/update-translations.sh"
-    ```
-    (Replace `translation_service_runner` if your container name is different; check with `docker ps`).
+8. **Manually Triggering the Translation Job (for testing)**:
+   If you don't want to wait for the scheduled cron time, you can execute the job manually inside the running container:
+   ```bash
+   docker exec -it translation_service_runner su -s /bin/bash appuser -c "/app/docker/docker-entrypoint.sh /app/update-translations.sh"
+   ```
+   (Replace `translation_service_runner` if your container name is different; check with `docker ps`).
 
-9.  **Stopping the Service**:
-    If running in the foreground, press `Ctrl+C`. If detached, or from another terminal:
-    ```bash
-    docker compose -f docker/docker-compose.yml down
-    ```
+9. **Stopping the Service**:
+   If running in the foreground, press `Ctrl+C`. If detached, or from another terminal:
+   ```bash
+   docker compose -f docker/docker-compose.yml down
+   ```
 
 ## Server Setup for Automated Docker Deployment
 
 To run this Dockerized application on a dedicated Linux server for continuous, automated daily translations:
 
-1.  **Provision Server**: A Linux server (e.g., Ubuntu on Digital Ocean) with Docker and Docker Compose installed. Ensure GnuPG is also installed on the server if you need to manage GPG keys there, though it's not strictly needed for just running the pre-built image.
-2.  **User Account**: It's recommended to run Docker commands as a non-root user who is part of the `docker` group.
-3.  **Clone Repository**: Clone this `translate-java-property-files` repository onto the server.
-    ```bash
-    git clone https://github.com/your-username/translate-java-property-files.git
-    cd translate-java-property-files
-    ```
-4.  **Configure `.env` File**:
-    Create the `.env` file in the project root on the server.
+1. **Provision Server**: A Linux server (e.g., Ubuntu on Digital Ocean) with Docker and Docker Compose installed. Ensure
+   GnuPG is also installed on the server if you need to manage GPG keys there, though it's not strictly needed for just
+   running the pre-built image.
+2. **User Account**: It's recommended to run Docker commands as a non-root user who is part of the `docker` group.
+3. **Clone Repository**: Clone this `translate-java-property-files` repository onto the server.
+   ```bash
+   git clone https://github.com/your-username/translate-java-property-files.git
+   cd translate-java-property-files
+   ```
+4. **Configure `.env` File**:
+   Create the `.env` file in the project root on the server.
     - Fill in your production API keys (`OPENAI_API_KEY`, `TX_TOKEN`, `GITHUB_TOKEN`).
-    - Set `HOST_UID` and `HOST_GID` to the numeric UID and GID of the user account on the server that will own the `./logs` directory (and potentially other mounted files if you add more). You can find these with `id -u` and `id -g` for that user. This ensures correct permissions for files written by the container to mounted volumes.
-5.  **Bot GPG Keys (`secrets/` directory)**:
-    Copy the `secrets/` directory (containing `gpg_bot_key/bot_public_key.asc` and `gpg_bot_key/bot_secret_key.asc`) from your local machine to the project root on the server. This is needed for the `docker compose build` step on the server.
-    Ensure `secrets/` is in your server's `.gitignore` if you initialize a new Git repo there for some reason, though typically you'd pull from your main repo which should already have `secrets/` ignored.
-6.  **Host SSH Keys**:
-    The container uses your host's SSH keys (mounted from `~/.ssh` of the user running `docker compose`) to push to GitHub. Ensure the user account that will run `docker compose` on the server has its SSH keys configured and authorized with GitHub for the target repository.
-7.  **Build the Image on the Server**:
-    Navigate to the project root on the server and build the image:
-    ```bash
-    docker compose -f docker/docker-compose.yml build --no-cache
-    ```
-8.  **Start the Service on the Server**:
-    ```bash
-    docker compose -f docker/docker-compose.yml up -d
-    ```
-    The service will now run in the background, and the cron job will execute daily.
+    - Set `HOST_UID` and `HOST_GID` to the numeric UID and GID of the user account on the server that will own the
+      `./logs` directory (and potentially other mounted files if you add more). You can find these with `id -u` and
+      `id -g` for that user. This ensures correct permissions for files written by the container to mounted volumes.
+5. **Bot GPG Keys (`secrets/` directory)**:
+   Copy the `secrets/` directory (containing `gpg_bot_key/bot_public_key.asc` and `gpg_bot_key/bot_secret_key.asc`) from
+   your local machine to the project root on the server. This is needed for the `docker compose build` step on the
+   server.
+   Ensure `secrets/` is in your server's `.gitignore` if you initialize a new Git repo there for some reason, though
+   typically you'd pull from your main repo which should already have `secrets/` ignored.
+6. **Host SSH Keys**:
+   The container uses your host's SSH keys (mounted from `~/.ssh` of the user running `docker compose`) to push to
+   GitHub. Ensure the user account that will run `docker compose` on the server has its SSH keys configured and
+   authorized with GitHub for the target repository.
+7. **Build the Image on the Server**:
+   Navigate to the project root on the server and build the image:
+   ```bash
+   docker compose -f docker/docker-compose.yml build --no-cache
+   ```
+8. **Start the Service on the Server**:
+   ```bash
+   docker compose -f docker/docker-compose.yml up -d
+   ```
+   The service will now run in the background, and the cron job will execute daily.
 
-9.  **Manage with systemd (Recommended on Server)**:
-    For better management (auto-start on boot, easy start/stop/status), create a systemd service file (e.g., `/etc/systemd/system/translator.service`):
-    ```ini
-    [Unit]
-    Description=Translation Docker Service
-    Requires=docker.service
-    After=docker.service
+9. **Manage with systemd (Recommended on Server)**:
+   For better management (auto-start on boot, easy start/stop/status), create a systemd service file (e.g.,
+   `/etc/systemd/system/translator.service`):
+   ```ini
+   [Unit]
+   Description=Translation Docker Service
+   Requires=docker.service
+   After=docker.service
 
-    [Service]
-    User=your_server_user # The user who owns the project files and runs docker compose
-    Group=your_server_group # The group of that user
-    WorkingDirectory=/path/to/translate-java-property-files # Project root on server
-    Restart=always
-    ExecStart=/usr/local/bin/docker-compose -f docker/docker-compose.yml up
-    ExecStop=/usr/local/bin/docker-compose -f docker/docker-compose.yml down
+   [Service]
+   User=your_server_user # The user who owns the project files and runs docker compose
+   Group=your_server_group # The group of that user
+   WorkingDirectory=/path/to/translate-java-property-files # Project root on server
+   Restart=always
+   ExecStart=/usr/local/bin/docker-compose -f docker/docker-compose.yml up
+   ExecStop=/usr/local/bin/docker-compose -f docker/docker-compose.yml down
 
-    [Install]
-    WantedBy=multi-user.target
-    ```
+   [Install]
+   WantedBy=multi-user.target
+   ```
     - Replace `your_server_user`, `your_server_group`, and `/path/to/translate-java-property-files`.
     - Ensure `docker-compose` path is correct (it might be `/usr/bin/docker-compose` or other).
     - Then enable and start the service:
@@ -365,22 +413,24 @@ To run this Dockerized application on a dedicated Linux server for continuous, a
 
 ## Manual Setup & Usage (Local Development/Testing - Not for Production)
 
-This method is primarily for development or debugging the core Python script. It does not use the Docker image's GPG setup.
+This method is primarily for development or debugging the core Python script. It does not use the Docker image's GPG
+setup.
 
-1.  **Prerequisites**: Python 3.9+, Git, GnuPG.
-2.  **Clone this Repository**.
-3.  **Create Virtual Environment**:
-    ```bash
-    python3 -m venv venv
-    source venv/bin/activate  # On Windows: venv\Scripts\activate
-    ```
-4.  **Install Dependencies**:
-    ```bash
-    pip install -r requirements.txt
-    ```
-5.  **Set Environment Variables**:
-    Export your API keys.
-    ```bash
+1. **Prerequisites**: Python 3.9+, Git, GnuPG.
+2. **Clone this Repository**.
+3. **Create Virtual Environment**:
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+4. **Install Dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+5. **Set Environment Variables**:
+   Export your API keys.
+
+   ```bash
     export OPENAI_API_KEY="your_openai_key"
     export TX_TOKEN="your_transifex_token"
     # GITHUB_TOKEN would be used by update-translations.sh if run manually
@@ -390,7 +440,7 @@ This method is primarily for development or debugging the core Python script. It
 7.  **GPG Setup for Manual Commits**:
     Ensure your local Git and GPG are configured to use your desired GPG key for signing if you run `update-translations.sh` manually.
 8.  **Run the Python Script**:
-    ```bash
+   ```bash
     python src/translate_localization_files.py
     ```
     Note: This only runs Python translation. The full workflow is handled by `update-translations.sh`.

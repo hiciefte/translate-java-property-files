@@ -8,6 +8,7 @@ services:
       args:
         HOST_UID: ${HOST_UID:-1000}
         HOST_GID: ${HOST_GID:-1000}
+        GPG_KEY_FINGERPRINT_FOR_TRUST: ${GPG_KEY_FINGERPRINT_FOR_TRUST:-}
     container_name: translation_service_runner
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
