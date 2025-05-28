@@ -115,9 +115,7 @@ COPY docker/translator-cron /etc/cron.d/translator-cron
 
 # Give execution rights on the cron job and proper permissions
 RUN chmod 0644 /etc/cron.d/translator-cron && \
-    crontab /etc/cron.d/translator-cron # && \
-    # Ensure scripts are executable
-    # chmod +x /app/docker/gpg_test_script.sh
+    crontab /etc/cron.d/translator-cron
 
 # Ensure scripts are executable and logs directory exists
 # Create /target_repo and give appuser ownership

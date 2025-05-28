@@ -164,10 +164,16 @@ if [ -z "$INPUT_FOLDER" ]; then
     exit 1
 fi
 
-# Construct the absolute path for INPUT_FOLDER relative to TARGET_PROJECT_ROOT
-ABSOLUTE_INPUT_FOLDER="$TARGET_PROJECT_ROOT/$INPUT_FOLDER"
-# Remove any double slashes that might occur if INPUT_FOLDER starts with /
-ABSOLUTE_INPUT_FOLDER=$(echo "$ABSOLUTE_INPUT_FOLDER" | sed 's_//_/_g') 
+# Construct the absolute path for INPUT_FOLDER
+# If INPUT_FOLDER starts with /, it's considered absolute (within the container context)
+# Otherwise, it's relative to TARGET_PROJECT_ROOT
+if [[ "$INPUT_FOLDER" == /* ]]; then
+    ABSOLUTE_INPUT_FOLDER="$INPUT_FOLDER"
+else
+    ABSOLUTE_INPUT_FOLDER="$TARGET_PROJECT_ROOT/$INPUT_FOLDER"
+fi
+# Remove any double slashes that might occur
+ABSOLUTE_INPUT_FOLDER=$(echo "$ABSOLUTE_INPUT_FOLDER" | sed 's_//_/_g')
 
 log "Absolute input folder: \"$ABSOLUTE_INPUT_FOLDER\""
 
