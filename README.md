@@ -76,10 +76,15 @@ OPENAI_API_KEY=your_openai_api_key_here
 TX_TOKEN=your_transifex_api_token_here
 GITHUB_TOKEN=your_github_personal_access_token_here
 
-# Git repository details for the entrypoint script
-FORK_REPO_URL="https://github.com/your-github-username/your-fork-repo-name.git" # e.g., https://github.com/hiciefte/bisq2.git
-UPSTREAM_REPO_URL="https://github.com/upstream-owner/upstream-repo-name.git" # e.g., https://github.com/bisq-network/bisq.git
-FORK_REPO_NAME="your-github-username/your-fork-repo-name" # e.g., hiciefte/bisq2 - used for setting SSH remote
+# Git repository details for the entrypoint script and update-translations.sh
+FORK_REPO_URL="https://github.com/your-github-username/your-fork-repo-name.git" # e.g., https://github.com/hiciefte/bisq2.git (Used by entrypoint to clone)
+UPSTREAM_REPO_URL="https://github.com/upstream-owner/upstream-repo-name.git" # e.g., https://github.com/bisq-network/bisq.git (Used by entrypoint to set upstream remote)
+
+# These are used by update-translations.sh for creating PRs and by entrypoint.sh for setting SSH remote.
+# If not set, update-translations.sh uses defaults: hiciefte/bisq2, bisq-network/bisq2, main respectively.
+FORK_REPO_NAME="your-github-username/your-fork-repo-name" # e.g., hiciefte/bisq2
+UPSTREAM_REPO_NAME="upstream-owner/upstream-repo-name" # e.g., bisq-network/bisq2 (Target for PRs)
+TARGET_BRANCH_FOR_PR="main" # e.g., main (Target branch in UPSTREAM_REPO_NAME for PRs)
 
 # Git commit author and GPG signing details (for "Verified" commits)
 # Use an email address that is verified on your GitHub account and associated with the bot's GPG key.

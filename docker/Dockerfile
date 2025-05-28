@@ -122,8 +122,7 @@ RUN chmod 0644 /etc/cron.d/translator-cron && \
 # Ensure scripts are executable and logs directory exists
 # Create /target_repo and give appuser ownership
 # docker-entrypoint.sh should be in docker/ as well now
-RUN touch /app/update-translations.sh /app/docker/docker-entrypoint.sh && \
-    chmod +x /app/update-translations.sh /app/docker/docker-entrypoint.sh && \
+RUN chmod +x /app/update-translations.sh /app/docker/docker-entrypoint.sh && \
     echo "Listing permissions for /app and /app/docker:" && \
     ls -la /app && \
     ls -la /app/docker && \

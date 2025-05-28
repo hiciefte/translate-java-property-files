@@ -88,7 +88,7 @@ Rapid revocation is key if a credential is compromised.
 -   Enable branch protection for the `main` (or target) branch of the *upstream* repository.
 -   Require pull requests for changes.
 -   Require reviews before merging.
--   Require status checks to pass (if applicable).
+-   Ensure status checks pass (if applicable).
 
 ## Monitoring and Auditing
 

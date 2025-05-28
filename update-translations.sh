@@ -2,10 +2,10 @@
 
 set -e  # Exit immediately if a command exits with a non-zero status
 
-# Repository Configuration
-FORK_REPO_NAME="hiciefte/bisq2" # Your fork
-UPSTREAM_REPO_NAME="bisq-network/bisq2" # The main repository to PR against
-TARGET_BRANCH_FOR_PR="main" # Or whichever branch PRs should target in UPSTREAM_REPO_NAME
+# Repository Configuration - Read from environment variables with fallbacks
+FORK_REPO_NAME=${FORK_REPO_NAME:-hiciefte/bisq2} 
+UPSTREAM_REPO_NAME=${UPSTREAM_REPO_NAME:-bisq-network/bisq2} 
+TARGET_BRANCH_FOR_PR=${TARGET_BRANCH_FOR_PR:-main}
 
 # Log file
 LOG_DIR="/app/logs"
@@ -146,6 +146,36 @@ get_config_value() {
 TARGET_PROJECT_ROOT=$(get_config_value "target_project_root" "$CONFIG_FILE")
 INPUT_FOLDER=$(get_config_value "input_folder" "$CONFIG_FILE")
 
+log "Target project root from config: \"$TARGET_PROJECT_ROOT\""
+log "Input folder from config: \"$INPUT_FOLDER\""
+
+if [ -z "$TARGET_PROJECT_ROOT" ]; then
+    log "Error: TARGET_PROJECT_ROOT is not set in $CONFIG_FILE or is empty."
+    exit 1
+fi
+
+if [ ! -d "$TARGET_PROJECT_ROOT" ]; then
+    log "Error: Target project root directory does not exist or is not a directory: $TARGET_PROJECT_ROOT"
+    exit 1
+fi
+
+if [ -z "$INPUT_FOLDER" ]; then
+    log "Error: INPUT_FOLDER is not set in $CONFIG_FILE or is empty."
+    exit 1
+fi
+
+# Construct the absolute path for INPUT_FOLDER relative to TARGET_PROJECT_ROOT
+ABSOLUTE_INPUT_FOLDER="$TARGET_PROJECT_ROOT/$INPUT_FOLDER"
+# Remove any double slashes that might occur if INPUT_FOLDER starts with /
+ABSOLUTE_INPUT_FOLDER=$(echo "$ABSOLUTE_INPUT_FOLDER" | sed 's_//_/_g') 
+
+log "Absolute input folder: \"$ABSOLUTE_INPUT_FOLDER\""
+
+if [ ! -d "$ABSOLUTE_INPUT_FOLDER" ]; then
+    log "Error: Input folder does not exist or is not a directory: $ABSOLUTE_INPUT_FOLDER (derived from $TARGET_PROJECT_ROOT and $INPUT_FOLDER)"
+    exit 1
+fi
+
 log "Starting deployment process"
 log "Target project root: $TARGET_PROJECT_ROOT"
 log "Input folder: $INPUT_FOLDER" # Added log for input folder
@@ -235,18 +265,18 @@ fi
 
 # Stash any unexpected local changes (though entrypoint should have left it clean)
 log "Stashing any lingering changes to ensure a clean state..."
-echo "[DEBUG] Before stash command"
+log "DEBUG: Before stash command"
 set +e
 STASH_RESULT=$(git stash push -u -m "Auto-stashed by update-translations.sh" 2>&1)
 STASH_EXIT_CODE=$?
-echo "[DEBUG] After stash command"
+log "DEBUG: After stash command"
 set -e
-echo "[DEBUG] git stash exit code: $STASH_EXIT_CODE"
-echo "[DEBUG] git stash output: $STASH_RESULT"
+log "DEBUG: git stash exit code: $STASH_EXIT_CODE"
+log "DEBUG: git stash output: $STASH_RESULT"
 if [[ $STASH_EXIT_CODE -ne 0 ]]; then
     log "Warning: git stash failed with exit code $STASH_EXIT_CODE. Output: $STASH_RESULT"
 fi
-echo "[DEBUG] After stash result logic"
+log "DEBUG: After stash result logic"
 STASH_NEEDED=0
 if [[ $STASH_RESULT != "No local changes to save" ]]; then
     STASH_NEEDED=1
