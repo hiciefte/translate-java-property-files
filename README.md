@@ -82,19 +82,19 @@ This completes the quick setup. The service will now run according to its cron s
 
 ## Features
 
--   **Automated Translation**: Uses OpenAI (e.g., GPT-4) to translate text.
--   **Git Integration**: Detects changed files in a target Git repository and commits new translations (GPG signed and **Verified** on GitHub).
--   **Transifex Integration**: Pulls existing translations from Transifex and pushes updated translations back.
--   **GitHub Pull Requests**: Automatically creates pull requests for new translations.
--   **Glossary Support**: Ensures consistent terminology using a `glossary.json` file.
--   **Self-Contained GPG Signing**: Uses a dedicated GPG key built into the Docker image for signing commits.
--   **Dockerized Environment**: Runs as a Docker container for consistent and portable deployment.
--   **Scheduled Execution**: Utilizes an in-container cron job for daily automated runs.
--   **Comprehensive Logging**: Detailed logs for cron execution, script operations, and translation tasks.
+*   **Automated Translation**: Uses OpenAI (e.g., GPT-4) to translate text.
+*   **Git Integration**: Detects changed files in a target Git repository and commits new translations (GPG signed and **Verified** on GitHub).
+*   **Transifex Integration**: Pulls existing translations from Transifex and pushes updated translations back.
+*   **GitHub Pull Requests**: Automatically creates pull requests for new translations.
+*   **Glossary Support**: Ensures consistent terminology using a `glossary.json` file.
+*   **Self-Contained GPG Signing**: Uses a dedicated GPG key built into the Docker image for signing commits.
+*   **Dockerized Environment**: Runs as a Docker container for consistent and portable deployment.
+*   **Scheduled Execution**: Utilizes an in-container cron job for daily automated runs.
+*   **Comprehensive Logging**: Detailed logs for cron execution, script operations, and translation tasks.
 
 ## Project Structure
 
-```
+```text
 translate-java-property-files/
 ├── docker/                       # Docker-specific files
 │   ├── Dockerfile                # Defines the Docker image
@@ -115,7 +115,9 @@ translate-java-property-files/
 ├── README.md                     # This file
 └── .gitignore
 ```
-*(Key files are described in more detail in relevant setup sections.)*
+
+## Key Files
+Key files are described in more detail in relevant setup sections.
 
 ## Prerequisites
 

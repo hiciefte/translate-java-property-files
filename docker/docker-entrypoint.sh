@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # Log function for this script
 log() {
@@ -68,11 +68,19 @@ if [ "$(id -u)" -ne 0 ]; then
     # For now, pkill of keyboxd and socket removal should be primary.
 
     log_appuser_exec "Ensuring GPG agent is started using 'gpg-connect-agent /bye'..."
-    if gpg-connect-agent /bye &> /dev/null; then
-        log_appuser_exec "gpg-connect-agent /bye successful. Agent is running."
+    gpg_connect_agent_exit_code=0
+    gpg-connect-agent /bye &> /dev/null || gpg_connect_agent_exit_code=$?
+    if [ $gpg_connect_agent_exit_code -eq 0 ]; then
+        log_appuser_exec "gpg-connect-agent /bye successful (Exit Code: $gpg_connect_agent_exit_code). Agent is running."
     else
-        log_appuser_exec "gpg-connect-agent /bye returned non-zero. Attempting to start agent explicitly."
-        gpg-agent --homedir ~/.gnupg --daemon --quiet --allow-preset-passphrase || log_appuser_exec "gpg-agent --daemon also returned non-zero; agent might be running or failed."
+        log_appuser_exec "gpg-connect-agent /bye failed (Exit Code: $gpg_connect_agent_exit_code). Attempting to start agent explicitly."
+        gpg_agent_daemon_exit_code=0
+        gpg-agent --homedir ~/.gnupg --daemon --quiet --allow-preset-passphrase || gpg_agent_daemon_exit_code=$?
+        if [ $gpg_agent_daemon_exit_code -eq 0 ]; then
+            log_appuser_exec "gpg-agent --daemon successful (Exit Code: $gpg_agent_daemon_exit_code)."
+        else
+            log_appuser_exec "gpg-agent --daemon also failed (Exit Code: $gpg_agent_daemon_exit_code); agent might be running or truly failed."
+        fi
     fi
 
     GPG_AGENT_SOCKET="${XDG_RUNTIME_DIR}/gnupg/S.gpg-agent"
@@ -163,7 +171,8 @@ else
     if [ -d "$TARGET_REPO_DIR/.git" ]; then
         log "Target directory $TARGET_REPO_DIR already contains a .git folder. Configuring remotes and updating..."
         cd "$TARGET_REPO_DIR"
-        git config --global --add safe.directory "$TARGET_REPO_DIR" || log "Warning: Failed to add safe.directory to root's global git config."
+        # (global call removed in favor of system-wide configuration below)
+        # git config --global --add safe.directory "$TARGET_REPO_DIR" || log "Warning: Failed to add safe.directory to root's global git config."
 
         # Use the FORK_REPO_URL from .env (expected to be SSH) for an existing repo check
         # or the FORK_REPO_NAME to construct the SSH URL.
@@ -227,7 +236,8 @@ else
             exit 1
         fi
         cd "$TARGET_REPO_DIR"
-        git config --global --add safe.directory "$TARGET_REPO_DIR" || log "Warning: Failed to add safe.directory to root's global git config."
+        # (global call removed in favor of system-wide configuration below)
+        # git config --global --add safe.directory "$TARGET_REPO_DIR" || log "Warning: Failed to add safe.directory to root's global git config."
 
         log "Adding upstream remote $ACTUAL_UPSTREAM_URL_FOR_ROOT..."
         git remote add upstream "$ACTUAL_UPSTREAM_URL_FOR_ROOT"
