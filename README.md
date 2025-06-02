@@ -41,13 +41,14 @@ This guide provides the fastest way to deploy the translation service on a new c
       below).*
 
 4. **Configure Environment (`.env` file)**:
-    * Copy the example and edit it:
+    * Copy the example and edit it. Note: The `.env` file should be located in the `docker/` subdirectory.
       ```bash
-      cp .env.example .env
-      nano .env
+      cp .env.example docker/.env
+      cp docker/.env.example docker/.env
+      nano docker/.env
       ```
     * Fill in all required API keys, repository names, GPG key ID, and user/group IDs for `translationbot` (
-      `HOST_UID=$(id -u)`, `HOST_GID=$(id -g)`). Refer to comments in `.env.example` and the 'Environment Variables'
+      `HOST_UID=$(id -u)`, `HOST_GID=$(id -g)`). Refer to comments in `docker/.env.example` and the 'Environment Variables'
       section under 'Detailed Setup'.
 
 5. **Set Up Bot's GPG Key**:
@@ -114,7 +115,8 @@ translate-java-property-files/
 │   └── gpg_bot_key/
 │       ├── bot_public_key.asc
 │       └── bot_secret_key.asc
-├── .env.example                  # Example environment file
+├── .env.example                  # Example environment file -> NOW MOVED TO docker/.env.example
+├── docker/.env.example           # Example environment file
 ├── glossary.json                 # Glossary for translations
 ├── requirements.txt              # Python dependencies
 ├── update-translations.sh        # Main orchestration script
@@ -144,19 +146,19 @@ This section provides detailed steps for each configuration aspect, referenced b
 
 ### 1. Environment Variables (`.env` file)
 
-The service is configured primarily through environment variables defined in a `.env` file located in the project root (
-`/opt/translate-java-property-files/.env`).
+The service is configured primarily through environment variables defined in a `.env` file. This file should be located at `docker/.env` relative to the project root (e.g., `/opt/translate-java-property-files/docker/.env`).
 
-1. **Create `.env` from Example**:
-   As the `translationbot` user on your server:
+1. **Create `docker/.env` from Example**:
+   The example file `docker/.env.example` is located in the `docker/` directory.
+   As the `translationbot` user on your server, navigate to the project root and run:
    ```bash
-   cp .env.example .env
+   cp .env.example docker/.env
    ```
-2. **Edit `.env`**:
+2. **Edit `docker/.env`**:
    ```bash
-   nano .env
+   nano docker/.env
    ```
-   Update all placeholder values with your actual secrets and configuration:
+   Update all placeholder values with your actual secrets and configuration. Refer to `docker/.env.example` for details on each variable.
     * `OPENAI_API_KEY`, `TX_TOKEN`, `GITHUB_TOKEN`.
     * `FORK_REPO_URL`: SSH URL of your fork of the target repository (e.g.,
       `git@github.com:translationbot/target-repo.git`). The bot needs write access here.
