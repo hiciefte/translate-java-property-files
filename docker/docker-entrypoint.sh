@@ -45,7 +45,7 @@ if [ "$(id -u)" -ne 0 ]; then
     chmod 700 "${XDG_RUNTIME_DIR}" "${XDG_RUNTIME_DIR}/gnupg"
 
     log_appuser_exec "Setting up GPG agent..."
-    GPG_TTY_CMD_OUTPUT=$(tty)
+    GPG_TTY_CMD_OUTPUT=$(tty 2>/dev/null || echo "") # Handle non-tty environments
     export GPG_TTY="$GPG_TTY_CMD_OUTPUT"
     log_appuser_exec "GPG_TTY set to: $GPG_TTY"
 
@@ -230,11 +230,20 @@ else
         # If FORK_REPO_URL is *not* set, then the HTTPS default FORK_REPO_URL_FOR_ROOT_CLONE is used.
         ACTUAL_CLONE_URL="${FORK_REPO_URL:-$FORK_REPO_URL_FOR_ROOT_CLONE}"
         log "Target directory $TARGET_REPO_DIR is empty or not a git repository. Cloning $ACTUAL_CLONE_URL as origin..."
-        git clone --recurse-submodules "$ACTUAL_CLONE_URL" "$TARGET_REPO_DIR"
-        if [ $? -ne 0 ]; then
-            log "Error: Failed to clone repository $ACTUAL_CLONE_URL into $TARGET_REPO_DIR."
-            exit 1
+        
+        # Capture output and exit status of git clone
+        clone_output=""
+        clone_exit_code=0
+        if ! clone_output=$(git clone --recurse-submodules "$ACTUAL_CLONE_URL" "$TARGET_REPO_DIR" 2>&1); then
+            clone_exit_code=$?
+            log "Error: Failed to clone repository $ACTUAL_CLONE_URL into $TARGET_REPO_DIR (Exit Code: $clone_exit_code)."
+            log "Clone command output was:"
+            echo "$clone_output"
+            exit $clone_exit_code
         fi
+        log "Clone successful. Output:"
+        echo "$clone_output"
+
         cd "$TARGET_REPO_DIR"
         # (global call removed in favor of system-wide configuration below)
         # git config --global --add safe.directory "$TARGET_REPO_DIR" || log "Warning: Failed to add safe.directory to root's global git config."
