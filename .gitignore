@@ -7,3 +7,4 @@ logs/
 .idea
 .env
 /config.yaml
+secrets/

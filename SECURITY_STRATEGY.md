@@ -1,153 +1,128 @@
-# Security Strategy for Translation Service
+# Security Strategy for the Dockerized Translation Service
 
-This document outlines the security strategy for the automated translation service, focusing particularly on mitigating risks associated with compromised credentials.
+This document outlines the security strategy for the automated translation service, focusing on the Dockerized environment and mitigating risks associated with compromised credentials.
 
-## Secure Credential Management
+## Core Principles
 
-### Server-side Security
+1.  **Least Privilege**: Components (Docker container, `appuser` within the container, API tokens) are granted only the permissions necessary for their function.
+2.  **Dedicated Credentials**: Separate, dedicated credentials (SSH keys, GPG keys, API tokens) are used for different purposes to limit the blast radius of a compromise.
+3.  **Secure Storage & Handling**: Sensitive information (API keys, private keys) is handled securely, primarily through environment variables and controlled access to files on the host.
 
-1. **Dedicated User Account**: The service runs under the `bisquser` account with appropriate permissions.
-2. **Environment File Protection**: Sensitive API keys are stored in a protected `.env` file with strict permissions (600).
-3. **No Hardcoded Credentials**: No credentials are hardcoded in any scripts or configuration files.
-4. **Restricted Access**: The server should use SSH key-based authentication only, with password authentication disabled.
+## Credential Management
+
+### 1. Host Machine Security (Machine running `docker compose`)
+
+-   **`.env` File Protection**: Sensitive API keys (`OPENAI_API_KEY`, `TX_TOKEN`, `GITHUB_TOKEN`) and Git/GPG configuration (`GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_SIGNING_KEY`, `FORK_REPO_NAME`, etc.) are stored in a `.env` file in the project root on the host. This file **must**:
+    -   Be protected with strict file permissions (e.g., `chmod 600 .env`).
+    -   **NEVER** be committed to Git (ensure it's in `.gitignore`).
+-   **Host SSH Key (`~/.ssh/translation_bot_github_id_ed25519`)**: The private SSH key used for Git push authentication to the fork is stored on the host. Its permissions should be strict (e.g., `chmod 600`).
+-   **Docker Daemon Access**: Access to the Docker daemon on the host should be restricted to authorized users.
+
+### 2. Docker Image and Container Security
+
+-   **No Hardcoded Credentials in Image (except GPG key)**:
+    -   API tokens and most Git configuration are passed as environment variables at runtime via `docker-compose.yml` from the host's `.env` file.
+    -   **Exception**: The bot's GPG private key (`bot_secret_key.asc`) is copied into the Docker image during the build process from the `secrets/gpg_bot_key/` directory. This makes the security of the build environment and the Docker image itself (if pushed to a registry) critical.
+-   **`appuser` within Container**: Operations within the container are performed by a non-root user (`appuser`) created with specific UID/GID matching the host (for volume permission handling).
+-   **Volume Mounts**:
+    -   `~/.ssh` (host) is mounted read-only into `appuser`'s home for Git push.
+    -   `docker/config.docker.yaml` is mounted as `/app/config.yaml`.
+    -   `glossary.json` is mounted.
+    -   `logs/` directory is mounted for persistent logging.
 
 ## Git Authentication and Signing Security Strategy
 
-### Separated Authentication and Signing Keys
+This strategy separates authentication (pushing to Git) and signing (verifying commit authorship).
 
-For enhanced security, we implement a strategy that separates authentication and signing concerns:
+1.  **Committer Identity (for "Verified" Commits on GitHub)**:
+    -   A specific GitHub account (e.g., `takahiro.nagasawa@proton.me`) is designated as the committer.
+    -   The email for this account (`GIT_AUTHOR_EMAIL` in `.env`) must be verified on GitHub.
+    -   The bot's GPG public key must be uploaded to this GitHub account.
 
-1. **GitHub Account**:
-   - Use the GitHub account (takahiro.nagasawa@proton.me) for translations
-   - This account should have the minimum required permissions to the repository
-   - Configure the local git identity with appropriate user name and email
+2.  **Authentication (Git Push to Fork via SSH)**:
+    -   A dedicated, passphrase-less SSH key pair (e.g., `~/.ssh/translation_bot_github_id_ed25519` on the host) is used.
+    -   The public SSH key is added as a **Deploy Key** with **write access** to the *forked* GitHub repository (e.g., `hiciefte/bisq2`).
+    -   The host's `~/.ssh/config` is configured to use this specific key for `github.com`.
+    -   The `docker-entrypoint.sh` script ensures the Git remote `origin` in the container points to the SSH URL of the fork.
 
-2. **Dedicated Authentication Key**:
-   - Generate a dedicated SSH key for repository authentication
-   - Register this key with the GitHub account with write access
-   - Store the private key securely on the server with appropriate permissions
+3.  **Signing (GPG Signed Commits)**:
+    -   A dedicated GPG key pair is generated for the bot. The public and secret key files (`bot_public_key.asc`, `bot_secret_key.asc`) are stored in `secrets/gpg_bot_key/` in the project on the host.
+    -   These keys are copied into the Docker image during build and imported for `appuser`.
+    -   The `docker-entrypoint.sh` configures Git at runtime for `appuser` to use this GPG key (specified by `GIT_SIGNING_KEY` from `.env`) and the committer email (`GIT_AUTHOR_EMAIL`).
 
-3. **Dedicated Signing Key**:
-   - Generate a separate GPG key for commit signing
-   - Register this key with the GitHub account
-   - Configure git to use this key for commit signing
-   - Store the private key securely on the server
+## Key Revocation Plan
 
-### Key Revocation Plan
+Rapid revocation is key if a credential is compromised.
 
-The primary advantage of using dedicated keys is the ability to quickly revoke compromised credentials without affecting other operations:
+1.  **SSH Deploy Key Compromise (for Git Push)**:
+    1.  Immediately revoke/delete the Deploy Key from the fork's settings on GitHub.
+    2.  Delete the compromised SSH key pair from the host.
+    3.  Generate a new SSH key pair on the host.
+    4.  Add the new public key as a Deploy Key (with write access) to the fork.
+    5.  Update the host's `~/.ssh/config` if the filename changed.
+    6.  No container restart is strictly necessary if the `~/.ssh` mount and `~/.ssh/config` point to the new key correctly, but a restart ensures a clean state.
 
-1. **Authentication Key Compromise**:
-   - If the SSH authentication key is compromised:
-     1. Immediately revoke the key on GitHub
-     2. Generate a new SSH key
-     3. Register the new key with GitHub
-     4. Update the server configuration
+2.  **GPG Signing Key Compromise (Key built into the image)**:
+    1.  Generate a GPG revocation certificate for the compromised key (if you have one). Use it if possible.
+    2.  Remove the compromised GPG public key from the committer's GitHub account.
+    3.  Generate a new GPG key pair locally.
+    4.  Replace `bot_public_key.asc` and `bot_secret_key.asc` in the host's `secrets/gpg_bot_key/` directory with the new keys.
+    5.  Update `GIT_SIGNING_KEY` in the host's `.env` file with the new key ID.
+    6.  **Rebuild the Docker image**: `docker compose -f docker/docker-compose.yml build --no-cache translator`
+    7.  **Redeploy/Restart the service**: `docker compose -f docker/docker-compose.yml up -d --force-recreate`
+    8.  Add the new GPG public key to the committer's GitHub account.
 
-2. **Signing Key Compromise**:
-   - If the GPG signing key is compromised:
-     1. Revoke the key using GPG revocation certificate
-     2. Remove the key from GitHub
-     3. Generate a new GPG key
-     4. Register the new key with GitHub
-     5. Update the git configuration on the server
-
-3. **GitHub Token Compromise**:
-   - If the GitHub token is compromised:
-     1. Immediately revoke the token on GitHub
-     2. Generate a new token with the same permissions
-     3. Update the `.env` file on the server
+3.  **API Token Compromise (`OPENAI_API_KEY`, `TX_TOKEN`, `GITHUB_TOKEN`)**:
+    1.  Immediately revoke the compromised token on the respective platform (OpenAI, Transifex, GitHub).
+    2.  Generate a new token with the same (or least necessary) permissions.
+    3.  Update the token in the host's `.env` file.
+    4.  Restart the Docker service to pick up the new environment variable: `docker compose -f docker/docker-compose.yml restart translator` or `docker compose -f docker/docker-compose.yml up -d --force-recreate`.
 
 ## Access Control
 
-### Repository Access
+### GitHub Repository Access
+-   **GitHub Token (`GITHUB_TOKEN`)**: Use a Classic Personal Access Token with the `repo` scope for the account that will create Pull Requests (this token is used by `gh pr create`).
+-   **SSH Deploy Key**: Has write access *only* to the specific forked repository it's installed on. This is more secure than using a user's general SSH key with broader access.
 
-1. **Limited Repository Access**:
-   - The GitHub account should have access only to the specific repositories needed
-   - Use repository-specific deploy keys when possible instead of account-wide SSH keys
-
-2. **Branch Protection Rules**:
-   - Enable branch protection for the main branch
-   - Require pull requests for changes to main
-   - Require code review before merging
-   - Require status checks to pass before merging
+### Branch Protection Rules (Recommended for Upstream Repository)
+-   Enable branch protection for the `main` (or target) branch of the *upstream* repository.
+-   Require pull requests for changes.
+-   Require reviews before merging.
+-   Ensure status checks pass (if applicable).
 
 ## Monitoring and Auditing
 
-1. **Commit Verification**:
-   - All commits should be signed with GPG
-   - GitHub shows a "Verified" badge for signed commits
-
-2. **Activity Monitoring**:
-   - Monitor GitHub activity for the account
-   - Set up notifications for suspicious activity
-
-3. **Audit Logging**:
-   - Maintain comprehensive logs of all operations
-   - Review logs regularly for unusual patterns
+1.  **Commit Verification**: GPG-signed commits result in a "Verified" badge on GitHub, providing a visual audit trail.
+2.  **GitHub Activity Monitoring**: Monitor activity for the committer account and deploy key actions.
+3.  **Application Logging**: The service produces logs in the `logs/` directory (mounted from the host) for cron jobs, `update-translations.sh`, and `translate_localization_files.py`. Review these logs regularly.
 
 ## Regular Security Review
 
-1. **Key Rotation**:
-   - Rotate all keys (SSH, GPG, API tokens) at least every 6 months
-   - Document the rotation process and schedule
+1.  **Key Rotation Schedule**:
+    -   SSH Deploy Key: Annually.
+    -   GPG Signing Key: Annually (requires image rebuild).
+    -   API Tokens: Every 6-12 months or per provider recommendations.
+    -   Document the rotation process and track renewal dates.
+2.  **Access Review**: Regularly review permissions for API tokens and the Deploy Key. Ensure they adhere to the principle of least privilege.
+3.  **Dependency Vulnerability Scanning**: Periodically scan Python dependencies (`requirements.txt`) and the base Docker image for known vulnerabilities.
 
-2. **Access Review**:
-   - Regularly review access permissions
-   - Remove unnecessary permissions
+## Implementation Summary (Current Dockerized Setup)
 
-## Implementation Instructions
+This summarizes the setup; detailed steps are in `README.md`.
 
-### Setting Up Dedicated SSH and GPG Keys
+1.  **Host Preparation**:
+    -   Create `.env` file with API keys, Git/GPG config, and host UID/GID.
+    -   Generate a dedicated, passphrase-less SSH key (e.g., `~/.ssh/translation_bot_github_id_ed25519`).
+    -   Configure host `~/.ssh/config` to use this key for `github.com`.
+    -   Generate a dedicated GPG key pair for the bot, placing `bot_public_key.asc` and `bot_secret_key.asc` into `secrets/gpg_bot_key/`.
 
-```bash
-# Log in as the bisquser
-su - bisquser
+2.  **GitHub Configuration**:
+    -   Add the SSH public key (`translation_bot_github_id_ed25519.pub`) as a **Deploy Key** (with write access) to your *forked* repository.
+    -   Add the GPG public key (`bot_public_key.asc`) to the GitHub account that will be the committer (e.g., `takahiro.nagasawa@proton.me`), ensuring the email used in `GIT_AUTHOR_EMAIL` is verified for that account and associated with the GPG key.
 
-# Generate a dedicated SSH key for GitHub authentication
-ssh-keygen -t ed25519 -C "bisquser@not-existing-domain.com" -f ~/.ssh/github_translation_bot
+3.  **Docker Build & Run**:
+    -   `docker compose -f docker/docker-compose.yml build --no-cache translator` (builds image, embedding GPG key).
+    -   `docker compose -f docker/docker-compose.yml up -d` (runs service).
+    -   The `docker-entrypoint.sh` and `update-translations.sh` scripts handle the rest internally using the provided environment variables and built-in/mounted credentials.
 
-# Generate a GPG key for signing
-gpg --full-generate-key
-# (Choose RSA and RSA, 4096 bits, 0 expiration for simplicity)
-# Use email: bisquser@not-existing-domain.com
-
-# Export the GPG public key to add to GitHub
-gpg --list-secret-keys --keyid-format LONG
-# Note the key ID after "sec rsa4096/[KEY_ID]"
-gpg --armor --export [KEY_ID] > ~/translation_bot_gpg.pub
-
-# Configure git to use the GPG key
-git config --global user.signingkey [KEY_ID]
-git config --global commit.gpgsign true
-
-# Configure git to use the bot identity
-git config --global user.name "Bisq Translation Bot"
-git config --global user.email "bisquser@not-existing-domain.com"
-
-# Create a GPG revocation certificate for emergency use
-gpg --output ~/revocation-certificate.asc --gen-revoke [KEY_ID]
-chmod 600 ~/revocation-certificate.asc
-```
-
-### Adding Keys to GitHub
-
-1. Add the SSH public key (`~/.ssh/github_translation_bot.pub`) to the GitHub account (takahiro.nagasawa@proton.me)
-2. Add the GPG public key (`~/translation_bot_gpg.pub`) to the same GitHub account
-3. Generate a GitHub personal access token with appropriate permissions and add it to the `.env` file
-
-### Using the Dedicated SSH Key
-
-Configure SSH to use the dedicated key for GitHub:
-
-```bash
-# Create or edit the SSH config file
-nano ~/.ssh/config
-
-# Add the following entry
-Host github.com
-  IdentityFile ~/.ssh/github_translation_bot
-  User git
-```
-
-This strategy provides a strong security posture while maintaining the ability to recover quickly from credential compromise. 
+This strategy aims to provide a robust security posture for the automated translation service by leveraging dedicated credentials, Docker's isolation, and clear revocation procedures. 

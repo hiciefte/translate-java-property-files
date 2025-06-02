@@ -7,7 +7,7 @@ import re
 import shutil
 import subprocess
 import uuid
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Union
 
 import tiktoken
 import yaml
@@ -21,15 +21,25 @@ from openai import (
     OpenAIError
 )
 from openai import AsyncOpenAI
+from openai.types.chat import (
+    ChatCompletionSystemMessageParam,
+    ChatCompletionUserMessageParam,
+    ChatCompletionAssistantMessageParam,
+    ChatCompletionMessageParam
+)
 from tqdm.asyncio import tqdm_asyncio
 
 # Set up logging with timestamps and log levels, logging to both console and file
+LOG_FILE_PATH = "/app/logs/translation_log.log"
+# Ensure log directory exists
+os.makedirs(os.path.dirname(LOG_FILE_PATH), exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("translation_log.log")
+        logging.FileHandler(LOG_FILE_PATH)
     ]
 )
 
@@ -55,8 +65,18 @@ MODEL_NAME = config.get('model_name', 'gpt-4')
 MAX_MODEL_TOKENS = 4000  # You can modify this if needed
 
 # Define the translation queue folders
-TRANSLATION_QUEUE_FOLDER = config.get('translation_queue_folder', 'translation_queue')
-TRANSLATED_QUEUE_FOLDER = config.get('translated_queue_folder', 'translated_queue')
+# Get appuser's home directory, default to /home/appuser if not found (e.g., during testing outside container)
+APPUSER_HOME = os.path.expanduser("~") # This will be /home/appuser inside the container when run as appuser
+if not os.path.isdir(APPUSER_HOME) or APPUSER_HOME == '/': # Basic check if expanduser fails weirdly or returns root
+    APPUSER_HOME = "/home/appuser"
+
+
+_translation_queue_name = config.get('translation_queue_folder', 'translation_queue')
+_translated_queue_name = config.get('translated_queue_folder', 'translated_queue')
+
+TRANSLATION_QUEUE_FOLDER = os.path.join(APPUSER_HOME, _translation_queue_name)
+TRANSLATED_QUEUE_FOLDER = os.path.join(APPUSER_HOME, _translated_queue_name)
+
 
 # Dry run configuration (if True, files won't be moved/copied, etc.)
 DRY_RUN = config.get('dry_run', False)
@@ -398,7 +418,7 @@ def extract_placeholders(text: str) -> Tuple[str, Dict[str, str]]:
         raise ValueError("Input text must be a string.")
 
     # Pattern to match placeholders and tags
-    pattern = re.compile(r'(<[^<>]+>)|(\{[^{}]+\})')
+    pattern = re.compile(r'(<[^<>]+>)|(\\{[^{}]+\\})')  # type: ignore
     placeholder_mapping = {}
 
     def replace_placeholder(match):
@@ -407,7 +427,7 @@ def extract_placeholders(text: str) -> Tuple[str, Dict[str, str]]:
         placeholder_mapping[placeholder_token] = full_match
         return placeholder_token
 
-    processed_text = pattern.sub(replace_placeholder, text)
+    processed_text = pattern.sub(replace_placeholder, text)  # type: ignore
     return processed_text, placeholder_mapping
 
 
@@ -579,11 +599,8 @@ Provide the translation **of the Value only**, following the instructions above.
                 response = await client.chat.completions.create(
                     model=MODEL_NAME,
                     messages=[
-                        {
-                            "role": "system",
-                            "content": system_prompt
-                        },
-                        {"role": "user", "content": prompt}
+                        ChatCompletionSystemMessageParam(role="system", content=system_prompt),
+                        ChatCompletionUserMessageParam(role="user", content=prompt)
                     ],
                     temperature=0.3,
                 )
@@ -637,7 +654,7 @@ def integrate_translations(
         value = translations[idx]
         if translation_idx < len(parsed_lines):
             # Update existing entry
-            parsed_lines[translation_idx]['value'] = value
+            parsed_lines[translation_idx]['value'] = value  # type: ignore
         else:
             # Add new entry
             parsed_lines.append({
@@ -938,8 +955,8 @@ async def process_translation_queue(
             results.append((index, result))
 
         # Sort results by index to ensure correct order
-        results.sort(key=lambda x: x[0])
-        translations = [result for _, result in results]
+        results.sort(key=lambda x: x[0])  # type: ignore
+        translations = [result for _, result in results]  # type: ignore
 
         # Integrate translations into the parsed lines
         updated_lines = integrate_translations(parsed_lines, translations, indices, keys_to_translate)

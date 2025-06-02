@@ -2,13 +2,64 @@
 
 set -e  # Exit immediately if a command exits with a non-zero status
 
+# Repository Configuration - Read from environment variables with fallbacks
+FORK_REPO_NAME=${FORK_REPO_NAME:-hiciefte/bisq2} 
+UPSTREAM_REPO_NAME=${UPSTREAM_REPO_NAME:-bisq-network/bisq2} 
+TARGET_BRANCH_FOR_PR=${TARGET_BRANCH_FOR_PR:-main}
+
 # Log file
-LOG_FILE="deployment_log.log"
+LOG_DIR="/app/logs"
+LOG_FILE="$LOG_DIR/deployment_log.log"
+
+# Ensure log directory exists
+mkdir -p "$LOG_DIR"
 
 # Function to log messages
 log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
 }
+
+log "Update script started. Checking for TX_TOKEN..."
+
+# Check if TX_TOKEN is already set in the environment
+if [ -n "$TX_TOKEN" ]; then
+    log "TX_TOKEN is already set in the environment."
+else
+    log "TX_TOKEN not found in environment. Attempting to load from .env files..."
+    # Load environment variables from .env file if it exists
+    ENV_FILE=".env"
+    HOME_ENV_FILE="$HOME/.env"
+
+    if [ -f "$HOME_ENV_FILE" ]; then
+        log "Loading environment variables from $HOME_ENV_FILE"
+        set -a  # automatically export all variables
+        # shellcheck source=~/.env
+        source "$HOME_ENV_FILE"
+        set +a  # disable auto-export
+        log "Environment variables potentially loaded from $HOME_ENV_FILE."
+    elif [ -f "$ENV_FILE" ]; then
+        log "Loading environment variables from $ENV_FILE (in PWD: $(pwd))"
+        set -a  # automatically export all variables
+        # shellcheck source=./.env
+        source "$ENV_FILE"
+        set +a  # disable auto-export
+        log "Environment variables potentially loaded from $ENV_FILE."
+    else
+        log "No .env file found in current directory or home directory."
+    fi
+fi
+
+# Ensure TX_TOKEN is set now (either from initial env or sourced from file)
+if [ -z "$TX_TOKEN" ]; then
+    log "Error: TX_TOKEN environment variable is not set and could not be loaded from .env files."
+    log "Please ensure TX_TOKEN is available as an environment variable or in a .env file."
+    log "For Docker, ensure it's passed via docker-compose.yml environment section from your host's .env file."
+    exit 1
+fi
+
+# Export TX_TOKEN explicitly to be absolutely sure (though set -a during source should do it)
+export TX_TOKEN
+log "TX_TOKEN is confirmed set and exported."
 
 # Function to check if a command exists
 command_exists() {
@@ -34,8 +85,10 @@ check_python_version() {
     $python_cmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
 }
 
-# Virtual environment directory
-VENV_DIR=".venv"
+# Virtual environment directory - use appuser's home directory
+# Ensure HOME is set; it should be /home/appuser for the appuser
+APPUSER_HOME=${HOME:-/home/appuser} # Default to /home/appuser if HOME isn't robustly set
+VENV_DIR="$APPUSER_HOME/.venv"
 
 # Function to setup and activate virtual environment
 setup_venv() {
@@ -80,50 +133,58 @@ setup_venv() {
     python -m pip install setuptools wheel
 }
 
-# Load environment variables from .env file if it exists
-ENV_FILE=".env"
-HOME_ENV_FILE="$HOME/.env"
-
-if [ -f "$HOME_ENV_FILE" ]; then
-    log "Loading environment variables from $HOME_ENV_FILE"
-    set -a  # automatically export all variables
-    # shellcheck source=~/.env
-    source "$HOME_ENV_FILE"
-    set +a  # disable auto-export
-    log "TX_TOKEN loaded from $HOME_ENV_FILE"
-elif [ -f "$ENV_FILE" ]; then
-    log "Loading environment variables from $ENV_FILE"
-    set -a  # automatically export all variables
-    # shellcheck source=./.env
-    source "$ENV_FILE"
-    set +a  # disable auto-export
-    log "TX_TOKEN loaded from $ENV_FILE"
-else
-    log "Error: No .env file found in current directory or home directory"
-    log "Please create a .env file with your Transifex API token:"
-    log "echo 'TX_TOKEN=your_transifex_api_token' > ~/.env"
-    exit 1
-fi
-
-# Ensure TX_TOKEN is set and exported
-if [ -z "$TX_TOKEN" ]; then
-    log "Error: TX_TOKEN environment variable is not set"
-    log "Please create a .env file with your Transifex API token:"
-    log "echo 'TX_TOKEN=your_transifex_api_token' > ~/.env"
-    exit 1
-fi
-
-# Export TX_TOKEN explicitly for Transifex client
-export TX_TOKEN
-log "TX_TOKEN is set and exported"
-
 # Load configuration from YAML file
-CONFIG_FILE="config.yaml"
-TARGET_PROJECT_ROOT=$(grep -oP 'target_project_root: \K.*' "$CONFIG_FILE" | tr -d "'" | tr -d '"')
-INPUT_FOLDER=$(grep -oP 'input_folder: \K.*' "$CONFIG_FILE" | tr -d "'" | tr -d '"')
+CONFIG_FILE="config.yaml" # This should be /app/config.yaml, which is config.docker.yaml mounted
+
+# Helper function to parse values from config.yaml robustly using awk
+get_config_value() {
+    local key="$1"
+    local config_file="$2"
+    awk -F': *| *#.*' -v k="^$key:" '$0 ~ k {gsub(/^[ \t'"'"'"]+|[ \t'"'"'"]+$/, "", $2); print $2; exit}' "$config_file"
+}
+
+TARGET_PROJECT_ROOT=$(get_config_value "target_project_root" "$CONFIG_FILE")
+INPUT_FOLDER=$(get_config_value "input_folder" "$CONFIG_FILE")
+
+log "Target project root from config: \"$TARGET_PROJECT_ROOT\""
+log "Input folder from config: \"$INPUT_FOLDER\""
+
+if [ -z "$TARGET_PROJECT_ROOT" ]; then
+    log "Error: TARGET_PROJECT_ROOT is not set in $CONFIG_FILE or is empty."
+    exit 1
+fi
+
+if [ ! -d "$TARGET_PROJECT_ROOT" ]; then
+    log "Error: Target project root directory does not exist or is not a directory: $TARGET_PROJECT_ROOT"
+    exit 1
+fi
+
+if [ -z "$INPUT_FOLDER" ]; then
+    log "Error: INPUT_FOLDER is not set in $CONFIG_FILE or is empty."
+    exit 1
+fi
+
+# Construct the absolute path for INPUT_FOLDER
+# If INPUT_FOLDER starts with /, it's considered absolute (within the container context)
+# Otherwise, it's relative to TARGET_PROJECT_ROOT
+if [[ "$INPUT_FOLDER" == /* ]]; then
+    ABSOLUTE_INPUT_FOLDER="$INPUT_FOLDER"
+else
+    ABSOLUTE_INPUT_FOLDER="$TARGET_PROJECT_ROOT/$INPUT_FOLDER"
+fi
+# Remove any double slashes that might occur
+ABSOLUTE_INPUT_FOLDER=$(echo "$ABSOLUTE_INPUT_FOLDER" | sed 's_//_/_g')
+
+log "Absolute input folder: \"$ABSOLUTE_INPUT_FOLDER\""
+
+if [ ! -d "$ABSOLUTE_INPUT_FOLDER" ]; then
+    log "Error: Input folder does not exist or is not a directory: $ABSOLUTE_INPUT_FOLDER (derived from $TARGET_PROJECT_ROOT and $INPUT_FOLDER)"
+    exit 1
+fi
 
 log "Starting deployment process"
 log "Target project root: $TARGET_PROJECT_ROOT"
+log "Input folder: $INPUT_FOLDER" # Added log for input folder
 
 # Check Python environment
 PYTHON_CMD=$(get_python_cmd)
@@ -193,40 +254,52 @@ fi
 
 # Navigate to the target project root
 cd "$TARGET_PROJECT_ROOT"
-log "Changed directory to target project root"
+log "Changed directory to target project root: $(pwd)"
+log "Listing permissions for $TARGET_PROJECT_ROOT before stash:"
+ls -la "$TARGET_PROJECT_ROOT"
+log "Listing permissions for $TARGET_PROJECT_ROOT/.git before stash:"
+ls -la "$TARGET_PROJECT_ROOT/.git"
+log "Ensuring repository is in a clean state..."
 
-# Save the current branch to restore it later
+# Save the current branch (should be main as set by entrypoint)
 ORIGINAL_BRANCH=$(git branch --show-current)
-log "Current branch: $ORIGINAL_BRANCH"
+log "Current branch (should be main): $ORIGINAL_BRANCH"
+if [ "$ORIGINAL_BRANCH" != "main" ]; then
+    log "Warning: Expected to be on main branch, but on $ORIGINAL_BRANCH. Checking out main."
+    git checkout main
+fi
 
-# Initialize and update submodules to make sure they're in a clean state
-log "Initializing and updating git submodules"
-git submodule init
-git submodule update --recursive
-
-# Stash any changes including untracked files
-log "Stashing any changes including untracked files"
-STASH_RESULT=$(git stash push -u -m "Auto-stashed by translation script")
+# Stash any unexpected local changes (though entrypoint should have left it clean)
+log "Stashing any lingering changes to ensure a clean state..."
+log "DEBUG: Before stash command"
+set +e
+STASH_RESULT=$(git stash push -u -m "Auto-stashed by update-translations.sh" 2>&1)
+STASH_EXIT_CODE=$?
+log "DEBUG: After stash command"
+set -e
+log "DEBUG: git stash exit code: $STASH_EXIT_CODE"
+log "DEBUG: git stash output: $STASH_RESULT"
+if [[ $STASH_EXIT_CODE -ne 0 ]]; then
+    log "Warning: git stash failed with exit code $STASH_EXIT_CODE. Output: $STASH_RESULT"
+fi
+log "DEBUG: After stash result logic"
 STASH_NEEDED=0
 if [[ $STASH_RESULT != "No local changes to save" ]]; then
     STASH_NEEDED=1
-    log "Changes were stashed"
+    log "Lingering changes were stashed."
 else
-    log "No changes to stash"
+    log "No lingering changes to stash; repository is clean."
 fi
 
-# Step 1: Checkout the main branch and pull the latest changes
-log "Checking out main branch with force (to bypass untracked files conflicts)"
-git checkout --force main
-git pull origin main
-
-# Re-initialize and update submodules after checkout
-log "Re-initializing and updating git submodules after branch change"
-git submodule init
-git submodule update --recursive
+# The entrypoint script already reset main to upstream/main and updated submodules.
+# No further git pull or submodule init/update should be necessary here before tx pull.
+log "Proceeding with Transifex operations. Current HEAD:"
+git log -1 --pretty=%H
 
 # Step 2: Use Transifex CLI to pull the latest translations
 log "Checking for Transifex CLI"
+log "Current PATH: $PATH"
+log "Which tx: $(which tx || echo 'tx not found in path')"
 if command_exists tx; then
     log "Pulling latest translations from Transifex"
     log "Using Transifex token from environment"
@@ -242,8 +315,12 @@ if command_exists tx; then
     fi
     
     # Pull translations with -t option
-    log "Using tx pull -t command"
-    tx pull -t || log "Failed to pull translations from Transifex, continuing with script"
+    log "Using tx pull -t --use-git-timestamps command"
+    log "Listing permissions for current directory ($(pwd)) before tx pull:"
+    ls -la .
+    log "Listing permissions for ./i18n/src/main/resources before tx pull:"
+    ls -la ./i18n/src/main/resources
+    tx pull -t --use-git-timestamps || log "Failed to pull translations from Transifex, continuing with script"
 else
     log "Error: Transifex CLI not found. Please install it manually."
     exit 1
@@ -262,21 +339,25 @@ python src/translate_localization_files.py || {
 
 # Step 4: Clean up archived translation files before committing
 log "Cleaning up archived translation files"
-if [ -d "$INPUT_FOLDER/archive" ]; then
+if [ -d "$INPUT_FOLDER/archive" ]; then # This now uses the cleaned INPUT_FOLDER
     rm -rf "$INPUT_FOLDER/archive"
     log "Deleted archived translation files"
 fi
 
 # Step 5: Check if there are any new translations to commit
 cd "$TARGET_PROJECT_ROOT"
-log "Checking for new translations to commit"
+log "Checking for new translations to commit in $(pwd)"
+log "Listing permissions for $TARGET_PROJECT_ROOT before git status:"
+ls -la "$TARGET_PROJECT_ROOT"
+log "Listing permissions for $TARGET_PROJECT_ROOT/.git before git status:"
+ls -la "$TARGET_PROJECT_ROOT/.git"
 
 # Check specifically for changes in translation files
 TRANSLATION_CHANGES=$(git status --porcelain | grep -E "\.properties$|\.po$|\.mo$" || true)
 
 if [ -n "$TRANSLATION_CHANGES" ]; then
     # There are translation changes to commit
-    BRANCH_NAME="translations-update-$(date +'%Y%m%d%H%M%S')"
+    BRANCH_NAME="translation-update-$(date +'%Y%m%d-%H%M%S')"
     
     # Create a new branch
     log "Creating new branch: $BRANCH_NAME"
@@ -289,38 +370,61 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
 
     # Commit changes with GPG signing
     log "Committing changes with GPG signing"
-    git commit -S -m "Update translations $(date +'%Y-%m-%d')"
+    git commit -S -m "Automated translation update"
     
     # Push the branch to GitHub
-    log "Pushing branch to GitHub"
+    log "Pushing changes to origin ($FORK_REPO_NAME)"
     git push origin "$BRANCH_NAME"
     
-    # Check for GitHub CLI
-    if command_exists gh; then
-        # Create a pull request
-        log "Creating pull request"
-        PR_TITLE="Update translations $(date +'%Y-%m-%d')"
-        PR_BODY="Automated translation update from $(date +'%Y-%m-%d')."
-        
-        # Using GitHub CLI to create PR
-        gh pr create --title "$PR_TITLE" --body "$PR_BODY" --base main
-        log "Pull request created successfully"
-    else
-        log "Warning: GitHub CLI not found. Pull request not created."
-        log "To create a PR manually, visit: https://github.com/hiciefte/bisq2/compare/main...$BRANCH_NAME"
-    fi
+    # Step 5: Create a GitHub pull request
+    log "Creating GitHub pull request to $UPSTREAM_REPO_NAME"
+    PR_TITLE="Automated Translation Update - $(date +'%Y-%m-%d %H:%M:%S')"
+    PR_BODY="This pull request was automatically generated by the translation script and contains the latest translation updates from Transifex and OpenAI.
 
-    # Push updated translations back to Transifex
-    log "Pushing updated translations to Transifex"
-    tx push -t || {
-        log "Warning: Failed to push translations to Transifex"
-    }
+This PR is from branch \`$BRANCH_NAME\` on the \`$FORK_REPO_NAME\` fork and targets the \`$TARGET_BRANCH_FOR_PR\` branch on \`$UPSTREAM_REPO_NAME\`."
+
+    # Check if gh cli is installed
+    if command_exists gh; then
+        # Check if GITHUB_TOKEN is set
+        if [ -z "$GITHUB_TOKEN" ]; then
+            log "Error: GITHUB_TOKEN is not set. Cannot create pull request."
+        else
+            # Create pull request using gh cli
+            log "Attempting to create PR: $FORK_REPO_NAME:$BRANCH_NAME -> $UPSTREAM_REPO_NAME:$TARGET_BRANCH_FOR_PR"
+            
+            PR_URL=$(gh pr create \
+                --title "$PR_TITLE" \
+                --body "$PR_BODY" \
+                --repo "$UPSTREAM_REPO_NAME" \
+                --base "$TARGET_BRANCH_FOR_PR" \
+                --head "$(echo $FORK_REPO_NAME | cut -d'/' -f1):$BRANCH_NAME")
+            
+            PR_CREATE_EXIT_CODE=$?
+
+            if [ $PR_CREATE_EXIT_CODE -eq 0 ]; then
+                log "Successfully created pull request: $PR_URL"
+                # Push updated translations back to Transifex ONLY if PR was successful
+                log "Pushing updated translations to Transifex"
+                tx push -t || {
+                    log "Warning: Failed to push translations to Transifex despite successful PR."
+                }
+            else
+                log "Error: Failed to create pull request (Exit Code: $PR_CREATE_EXIT_CODE). Please check gh cli authentication, GITHUB_TOKEN permissions, and repository settings."
+                log "Skipping push to Transifex due to PR creation failure."
+            fi
+        fi
+    else
+        log "Error: GitHub CLI (gh) not found. Cannot create pull request."
+        log "Skipping push to Transifex due to missing GitHub CLI."
+    fi
 else
     log "No translation changes to commit"
 fi
 
 # Go back to original branch
 log "Returning to original branch: $ORIGINAL_BRANCH"
+log "Listing permissions for $TARGET_PROJECT_ROOT/.git before checkout $ORIGINAL_BRANCH:"
+ls -la "$TARGET_PROJECT_ROOT/.git"
 git checkout --force "$ORIGINAL_BRANCH"
 
 # Re-initialize and update submodules after returning to original branch
