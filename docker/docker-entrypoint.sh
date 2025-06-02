@@ -168,10 +168,16 @@ else
     chmod 600 /root/.ssh/config
     log "SSH configured for root."
 
+    # System-wide configuration to trust the target repository directory, done by root.
+    # This should be done *before* any git operations are attempted in that directory by root.
+    log "Adding $TARGET_REPO_DIR to system-wide Git safe.directory configuration..."
+    git config --system --add safe.directory "$TARGET_REPO_DIR"
+    log "System-wide Git safe.directory configuration updated."
+
     if [ -d "$TARGET_REPO_DIR/.git" ]; then
         log "Target directory $TARGET_REPO_DIR already contains a .git folder. Configuring remotes and updating..."
         cd "$TARGET_REPO_DIR"
-        # (global call removed in favor of system-wide configuration below)
+        # (global call removed in favor of system-wide configuration above)
         # git config --global --add safe.directory "$TARGET_REPO_DIR" || log "Warning: Failed to add safe.directory to root's global git config."
 
         # Use the FORK_REPO_URL from .env (expected to be SSH) for an existing repo check
@@ -245,7 +251,7 @@ else
         echo "$clone_output"
 
         cd "$TARGET_REPO_DIR"
-        # (global call removed in favor of system-wide configuration below)
+        # (global call removed in favor of system-wide configuration above)
         # git config --global --add safe.directory "$TARGET_REPO_DIR" || log "Warning: Failed to add safe.directory to root's global git config."
 
         log "Adding upstream remote $ACTUAL_UPSTREAM_URL_FOR_ROOT..."
@@ -275,12 +281,12 @@ else
         fi
     fi
 
-    log "Setting up system-wide git safe.directory for /target_repo (for appuser)..."
-    git config --system --add safe.directory /target_repo || log "Warning: Failed to set system-wide git safe.directory."
+    log "Final check and setting of system-wide Git safe.directory for $TARGET_REPO_DIR (if not already caught above)"
+    git config --system --get safe.directory | grep -qF "$TARGET_REPO_DIR" || git config --system --add safe.directory "$TARGET_REPO_DIR"
 
     cd /app
 
-    log "Setting ownership of $TARGET_REPO_DIR to appuser ($APPUSER_UID:$APPUSER_GID)..."
+    log "Changing ownership of $TARGET_REPO_DIR to $APPUSER_UID:$APPUSER_GID..."
     chown -R "$APPUSER_UID":"$APPUSER_GID" "$TARGET_REPO_DIR"
     if [ $? -ne 0 ]; then
         log "Warning: Failed to chown $TARGET_REPO_DIR to appuser. This is likely the cause of permission issues."
@@ -303,6 +309,7 @@ else
     log "GPG key import is now handled during Docker image build. Skipping GPG data copy from host."
     log "Git user.name, user.email, and signingkey are configured for appuser by this script if run as appuser, or by Dockerfile build args."
 
+    # Ensure cron daemon is started
     CRON_PID_FILE="/var/run/cron.pid" # Corrected PID file for Debian/Ubuntu
     log "Checking cron daemon status (PID file: $CRON_PID_FILE)..."
     if [ -f "$CRON_PID_FILE" ]; then

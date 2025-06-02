@@ -8,3 +8,6 @@ logs/
 .env
 /config.yaml
 secrets/
+
+# Environment variables
+docker/.env

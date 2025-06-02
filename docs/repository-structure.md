@@ -8,12 +8,14 @@ This document outlines the structure and purpose of the files and directories wi
 - **`.github/`**: (If present) Contains GitHub-specific files like workflows or issue templates.
 - **`docker/`**: Contains all files for building and running the Dockerized application.
   - **`Dockerfile`**: Defines the Docker image, installs dependencies (Python, Git, GPG, CLIs), sets up `appuser`, and imports the bot GPG key.
-  - **`docker-compose.yml`**: Configures the Docker service (`translator`), manages environment variables (from `.env`), and volume mounts.
+  - **`docker-compose.yml`**: Configures the Docker service (`translator`), manages environment variables (from `docker/.env` by default), and volume mounts.
   - **`config.docker.yaml`**: Configuration file used *inside* the Docker container (mounted as `/app/config.yaml` by `docker-compose.yml`).
   - **`translator-cron`**: Crontab file defining the scheduled execution of `update-translations.sh` via the entrypoint.
   - **`docker-entrypoint.sh`**: Script run on container start; manages repository cloning/updating, GPG/user environment setup, and starts cron.
+  - **`.env.example`**: Example environment variable file. The user must copy this to `docker/.env` and customize it.
 - **`docs/`**: Contains project documentation.
   - **`repository-structure.md`**: This file.
+  - **`docker/.env.example`**: Example environment variable file. The user must copy this to `docker/.env` and customize it.
 - **`logs/`**: (Created by the application, should be in `.gitignore`) Stores runtime logs from cron, `update-translations.sh`, and `translate_localization_files.py`.
 - **`secrets/`**: (Must be in `.gitignore`) Stores sensitive files.
   - **`gpg_bot_key/`**: Contains the bot's GPG public (`bot_public_key.asc`) and secret (`bot_secret_key.asc`) keys, copied into the Docker image.
@@ -27,7 +29,6 @@ This document outlines the structure and purpose of the files and directories wi
 - **`README.md`**: Provides the primary overview, setup, configuration, and usage instructions for the project, especially for the Dockerized service.
 - **`SECURITY_STRATEGY.md`**: (If maintained) Outlines the security strategy for the project.
 - **`Translate Java Property Files.iml`**: (If using IntelliJ) IntelliJ IDEA module file.
-- **`.env.example`**: Example environment variable file. The user must create a `.env` file based on this.
 - **`config.yaml`**: Configuration file for **manual/local runs** of the translation scripts (not used by the Docker service directly unless specifically mounted).
 - **`config.example.yaml`**: Example for `config.yaml`.
 - **`glossary.json`**: Contains a glossary of terms for translation, used by `src/translate_localization_files.py`.
@@ -48,9 +49,9 @@ This document outlines the structure and purpose of the files and directories wi
 
 ## Key Files Overview
 
-- **`docker/Dockerfile`**: Defines the Docker image. It sets up an Ubuntu environment, installs Python, Git, GnuPG, Transifex CLI, GitHub CLI, and cron. It creates an `appuser` (with UID/GID from build arguments passed from `.env` via `docker-compose.yml`) and imports a dedicated bot GPG key from the `secrets/gpg_bot_key/` directory in the build context.
+- **`docker/Dockerfile`**: Defines the Docker image. It sets up an Ubuntu environment, installs Python, Git, GnuPG, Transifex CLI, GitHub CLI, and cron. It creates an `appuser` (with UID/GID from build arguments passed from `docker/.env` via `docker-compose.yml`) and imports a dedicated bot GPG key from the `secrets/gpg_bot_key/` directory in the build context.
 
-- **`docker/docker-compose.yml`**: Configures and runs the `translator` service. It passes build arguments (like `HOST_UID`, `HOST_GID`) and runtime environment variables (API keys, Git repository URLs, GPG signing details) from the project's root `.env` file. It also manages volume mounts for the Docker-specific configuration (`docker/config.docker.yaml` to `/app/config.yaml`), the glossary (`glossary.json` to `/app/glossary.json`), persistent logs (`./logs` to `/app/logs`), and the host's SSH keys (`~/.ssh` to `/home/appuser/.ssh` for Git push operations).
+- **`docker/docker-compose.yml`**: Configures and runs the `translator` service. It passes build arguments (like `HOST_UID`, `HOST_GID`) and runtime environment variables (API keys, Git repository URLs, GPG signing details) from the `docker/.env` file (located in the same directory as the `docker-compose.yml`). It also manages volume mounts for the Docker-specific configuration (`docker/config.docker.yaml` to `/app/config.yaml`), the glossary (`glossary.json` to `/app/glossary.json`), persistent logs (`./logs` to `/app/logs`), and the host's SSH keys (`~/.ssh` to `/home/appuser/.ssh` for Git push operations).
 
 - **`docker/config.docker.yaml`**: This is the **primary configuration file used by the automated Docker service**. It is mounted into the container at `/app/config.yaml` by `docker-compose.yml`. It defines paths relative to the container's filesystem (e.g., `target_project_root: /target_repo`), the OpenAI model, paths for translation queue folders (which are created in `appuser`'s home directory inside the container, e.g., `/home/appuser/.translation_queue`), and other operational parameters for `src/translate_localization_files.py`.
 

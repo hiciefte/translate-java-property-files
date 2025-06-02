@@ -12,8 +12,8 @@ This document outlines the security strategy for the automated translation servi
 
 ### 1. Host Machine Security (Machine running `docker compose`)
 
--   **`.env` File Protection**: Sensitive API keys (`OPENAI_API_KEY`, `TX_TOKEN`, `GITHUB_TOKEN`) and Git/GPG configuration (`GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_SIGNING_KEY`, `FORK_REPO_NAME`, etc.) are stored in a `.env` file in the project root on the host. This file **must**:
-    -   Be protected with strict file permissions (e.g., `chmod 600 .env`).
+-   **`.env` File Protection**: Sensitive API keys (`OPENAI_API_KEY`, `TX_TOKEN`, `GITHUB_TOKEN`) and Git/GPG configuration (`GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_SIGNING_KEY`, `FORK_REPO_NAME`, etc.) are stored in the `docker/.env` file (relative to the project root) on the host. This file **must**:
+    -   Be protected with strict file permissions (e.g., `chmod 600 docker/.env`).
     -   **NEVER** be committed to Git (ensure it's in `.gitignore`).
 -   **Host SSH Key (`~/.ssh/translation_bot_github_id_ed25519`)**: The private SSH key used for Git push authentication to the fork is stored on the host. Its permissions should be strict (e.g., `chmod 600`).
 -   **Docker Daemon Access**: Access to the Docker daemon on the host should be restricted to authorized users.
@@ -21,7 +21,7 @@ This document outlines the security strategy for the automated translation servi
 ### 2. Docker Image and Container Security
 
 -   **No Hardcoded Credentials in Image (except GPG key)**:
-    -   API tokens and most Git configuration are passed as environment variables at runtime via `docker-compose.yml` from the host's `.env` file.
+    -   API tokens and most Git configuration are passed as environment variables at runtime via `docker-compose.yml` from the host's `docker/.env` file.
     -   **Exception**: The bot's GPG private key (`bot_secret_key.asc`) is copied into the Docker image during the build process from the `secrets/gpg_bot_key/` directory. This makes the security of the build environment and the Docker image itself (if pushed to a registry) critical.
 -   **`appuser` within Container**: Operations within the container are performed by a non-root user (`appuser`) created with specific UID/GID matching the host (for volume permission handling).
 -   **Volume Mounts**:
@@ -67,7 +67,7 @@ Rapid revocation is key if a credential is compromised.
     2.  Remove the compromised GPG public key from the committer's GitHub account.
     3.  Generate a new GPG key pair locally.
     4.  Replace `bot_public_key.asc` and `bot_secret_key.asc` in the host's `secrets/gpg_bot_key/` directory with the new keys.
-    5.  Update `GIT_SIGNING_KEY` in the host's `.env` file with the new key ID.
+    5.  Update `GIT_SIGNING_KEY` in the host's `docker/.env` file with the new key ID.
     6.  **Rebuild the Docker image**: `docker compose -f docker/docker-compose.yml build --no-cache translator`
     7.  **Redeploy/Restart the service**: `docker compose -f docker/docker-compose.yml up -d --force-recreate`
     8.  Add the new GPG public key to the committer's GitHub account.
@@ -75,7 +75,7 @@ Rapid revocation is key if a credential is compromised.
 3.  **API Token Compromise (`OPENAI_API_KEY`, `TX_TOKEN`, `GITHUB_TOKEN`)**:
     1.  Immediately revoke the compromised token on the respective platform (OpenAI, Transifex, GitHub).
     2.  Generate a new token with the same (or least necessary) permissions.
-    3.  Update the token in the host's `.env` file.
+    3.  Update the token in the host's `docker/.env` file.
     4.  Restart the Docker service to pick up the new environment variable: `docker compose -f docker/docker-compose.yml restart translator` or `docker compose -f docker/docker-compose.yml up -d --force-recreate`.
 
 ## Access Control
@@ -111,7 +111,7 @@ Rapid revocation is key if a credential is compromised.
 This summarizes the setup; detailed steps are in `README.md`.
 
 1.  **Host Preparation**:
-    -   Create `.env` file with API keys, Git/GPG config, and host UID/GID.
+    -   Create `docker/.env` file (by copying `docker/.env.example` to `docker/.env`) with API keys, Git/GPG config, and host UID/GID.
     -   Generate a dedicated, passphrase-less SSH key (e.g., `~/.ssh/translation_bot_github_id_ed25519`).
     -   Configure host `~/.ssh/config` to use this key for `github.com`.
     -   Generate a dedicated GPG key pair for the bot, placing `bot_public_key.asc` and `bot_secret_key.asc` into `secrets/gpg_bot_key/`.
