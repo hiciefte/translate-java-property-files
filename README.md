@@ -148,7 +148,7 @@ The service is configured primarily through environment variables defined in a `
     Update all placeholder values with your actual secrets and configuration:
     *   `OPENAI_API_KEY`, `TX_TOKEN`, `GITHUB_TOKEN`.
     *   `FORK_REPO_URL`: SSH URL of your fork of the target repository (e.g., `git@github.com:translationbot/target-repo.git`). The bot needs write access here.
-    *   `UPSTREAM_REPO_URL`: SSH URL of the main upstream repository (e.g., `git@github.com:original-owner/target-repo.git`). Read-only access is sufficient.
+    *   `UPSTREAM_REPO_URL`: HTTPS URL of the main upstream repository (e.g., `https://github.com/original-owner/target-repo.git`). This is used by root for read-only fetches and by `gh` for PR targeting.
     *   `FORK_REPO_NAME`: Short form, e.g., `translationbot/target-repo`.
     *   `UPSTREAM_REPO_NAME`: Short form, e.g., `original-owner/target-repo`.
     *   `TARGET_BRANCH_FOR_PR`: Usually `main` or `develop`.
@@ -158,7 +158,7 @@ The service is configured primarily through environment variables defined in a `
 
     > **Note on Repository URLs**:
     > *   Always use the SSH URL format (`git@github.com:...`) for the `FORK_REPO_URL` to enable push access via the bot's SSH key.
-    > *   The `UPSTREAM_REPO_URL` can be SSH or HTTPS, as it's primarily for fetching and creating PRs against.
+    > *   The `UPSTREAM_REPO_URL` should be an HTTPS URL (e.g., `https://github.com/original-owner/target-repo.git`). It's used by the entrypoint script (as root) for read-only operations and by the `gh` CLI for creating pull requests (which handles its own authentication via `GITHUB_TOKEN`).
 
 ### 2. SSH Key for GitHub Access (Bot & Server)
 

@@ -114,18 +114,32 @@ if [ "$(id -u)" -ne 0 ]; then
         for arg in "$@"; do
             log_appuser_exec "  $arg"
         done
+        exec "$@"
     else
-        log_appuser_exec "No command/arguments to execute via exec."
+        log_appuser_exec "No command/arguments provided to execute. Exiting appuser block."
+        # Exit successfully as no command was intended to be run by appuser directly
+        exit 0
     fi
-    exec "$@"
 
 else
     # --- ROOT EXECUTION BLOCK ---
     log "Starting initial entrypoint setup as root..."
 
     TARGET_REPO_DIR="/target_repo"
-    FORK_REPO_URL="${FORK_REPO_URL:-git@github.com:hiciefte/bisq2.git}"
-    UPSTREAM_REPO_URL="${UPSTREAM_REPO_URL:-git@github.com:bisq-network/bisq2.git}"
+    # Use HTTPS for default initial clone by root if FORK_REPO_URL is not set in .env
+    # The script will later change origin to SSH format if FORK_REPO_NAME is set.
+    FORK_REPO_URL_FOR_ROOT_CLONE="${FORK_REPO_URL:-https://github.com/hiciefte/bisq2.git}"
+    # FORK_REPO_URL from .env (expected to be SSH for appuser) is still respected if provided.
+    # If FORK_REPO_URL is set in .env, that's what root will attempt to use for clone.
+    # The primary variable for operations is FORK_REPO_URL.
+    # If FORK_REPO_URL is NOT set, then FORK_REPO_URL_FOR_ROOT_CLONE provides an HTTPS default.
+
+    # Determine the effective UPSTREAM_REPO_URL for root operations (prefer HTTPS)
+    # As of recent changes, UPSTREAM_REPO_URL from .env is expected to be HTTPS.
+    # The default in the script also reflects this.
+    ACTUAL_UPSTREAM_URL_FOR_ROOT="${UPSTREAM_REPO_URL:-https://github.com/bisq-network/bisq2.git}"
+    log "Using upstream URL for root operations: $ACTUAL_UPSTREAM_URL_FOR_ROOT"
+
     FORK_REPO_NAME="${FORK_REPO_NAME:-hiciefte/bisq2}" # Used for setting SSH remote URL
 
     APPUSER_UID=${HOST_UID:-1000}
@@ -133,33 +147,45 @@ else
 
     log "Container running as $(id -u):$(id -g) (expected root)."
     log "Target appuser UID: $APPUSER_UID, GID: $APPUSER_GID (from HOST_UID/HOST_GID env vars)."
-    log "Fork Repo URL: $FORK_REPO_URL"
-    log "Upstream Repo URL: $UPSTREAM_REPO_URL"
+    log "Fork Repo URL: $FORK_REPO_URL_FOR_ROOT_CLONE"
+    log "Upstream Repo URL (for root ops): $ACTUAL_UPSTREAM_URL_FOR_ROOT"
     log "Fork Repo Name for SSH: $FORK_REPO_NAME"
 
     mkdir -p "$TARGET_REPO_DIR"
+
+    # Configure SSH for root user to accept new host keys automatically for git clone
+    log "Configuring SSH for root to auto-accept GitHub host key..."
+    mkdir -p /root/.ssh && chmod 700 /root/.ssh
+    echo -e "Host github.com\\n  StrictHostKeyChecking no\\n  UserKnownHostsFile=/dev/null" > /root/.ssh/config
+    chmod 600 /root/.ssh/config
+    log "SSH configured for root."
 
     if [ -d "$TARGET_REPO_DIR/.git" ]; then
         log "Target directory $TARGET_REPO_DIR already contains a .git folder. Configuring remotes and updating..."
         cd "$TARGET_REPO_DIR"
         git config --global --add safe.directory "$TARGET_REPO_DIR" || log "Warning: Failed to add safe.directory to root's global git config."
 
+        # Use the FORK_REPO_URL from .env (expected to be SSH) for an existing repo check
+        # or the FORK_REPO_NAME to construct the SSH URL.
+        EXPECTED_ORIGIN_SSH_URL="git@github.com:${FORK_REPO_NAME}.git"
+        CURRENT_FORK_URL_TO_CHECK="${FORK_REPO_URL:-$EXPECTED_ORIGIN_SSH_URL}"
+
         current_origin_url=$(git remote get-url origin 2>/dev/null || echo "")
-        if [ "$current_origin_url" = "$FORK_REPO_URL" ]; then
-            log "Origin remote already correctly set to $FORK_REPO_URL"
-        elif [ "$current_origin_url" = "git@github.com:${FORK_REPO_NAME}.git" ]; then
-            log "Origin remote already correctly set to SSH URL git@github.com:${FORK_REPO_NAME}.git"
+        if [ "$current_origin_url" = "$CURRENT_FORK_URL_TO_CHECK" ]; then
+            log "Origin remote already correctly set to $CURRENT_FORK_URL_TO_CHECK"
+        elif [ "$current_origin_url" = "$EXPECTED_ORIGIN_SSH_URL" ]; then
+            log "Origin remote already correctly set to SSH URL $EXPECTED_ORIGIN_SSH_URL"
         else
-            log "Setting origin remote to $FORK_REPO_URL (will be changed to SSH later if cloning)"
-            git remote set-url origin "$FORK_REPO_URL" || git remote add origin "$FORK_REPO_URL"
+            log "Setting origin remote to $CURRENT_FORK_URL_TO_CHECK"
+            git remote set-url origin "$CURRENT_FORK_URL_TO_CHECK" || git remote add origin "$CURRENT_FORK_URL_TO_CHECK"
         fi
         
         current_upstream_url=$(git remote get-url upstream 2>/dev/null || echo "")
-        if [ "$current_upstream_url" = "$UPSTREAM_REPO_URL" ]; then
-            log "Upstream remote already correctly set to $UPSTREAM_REPO_URL"
+        if [ "$current_upstream_url" = "$ACTUAL_UPSTREAM_URL_FOR_ROOT" ]; then
+            log "Upstream remote already correctly set to $ACTUAL_UPSTREAM_URL_FOR_ROOT"
         else
-            log "Setting upstream remote to $UPSTREAM_REPO_URL"
-            git remote add upstream "$UPSTREAM_REPO_URL" || git remote set-url upstream "$UPSTREAM_REPO_URL"
+            log "Setting upstream remote to $ACTUAL_UPSTREAM_URL_FOR_ROOT"
+            git remote add upstream "$ACTUAL_UPSTREAM_URL_FOR_ROOT" || git remote set-url upstream "$ACTUAL_UPSTREAM_URL_FOR_ROOT"
         fi
 
         log "Fetching all from origin and upstream..."
@@ -190,19 +216,24 @@ else
         fi
 
     else
-        log "Target directory $TARGET_REPO_DIR is empty or not a git repository. Cloning $FORK_REPO_URL as origin..."
-        git clone --recurse-submodules "$FORK_REPO_URL" "$TARGET_REPO_DIR"
+        # For initial clone by root, use FORK_REPO_URL_FOR_ROOT_CLONE if FORK_REPO_URL is not set.
+        # If FORK_REPO_URL is set in .env (e.g. to an SSH URL), it will be used here.
+        # If FORK_REPO_URL is *not* set, then the HTTPS default FORK_REPO_URL_FOR_ROOT_CLONE is used.
+        ACTUAL_CLONE_URL="${FORK_REPO_URL:-$FORK_REPO_URL_FOR_ROOT_CLONE}"
+        log "Target directory $TARGET_REPO_DIR is empty or not a git repository. Cloning $ACTUAL_CLONE_URL as origin..."
+        git clone --recurse-submodules "$ACTUAL_CLONE_URL" "$TARGET_REPO_DIR"
         if [ $? -ne 0 ]; then
-            log "Error: Failed to clone repository $FORK_REPO_URL into $TARGET_REPO_DIR."
+            log "Error: Failed to clone repository $ACTUAL_CLONE_URL into $TARGET_REPO_DIR."
             exit 1
         fi
         cd "$TARGET_REPO_DIR"
         git config --global --add safe.directory "$TARGET_REPO_DIR" || log "Warning: Failed to add safe.directory to root's global git config."
 
-        log "Adding upstream remote $UPSTREAM_REPO_URL..."
-        git remote add upstream "$UPSTREAM_REPO_URL"
+        log "Adding upstream remote $ACTUAL_UPSTREAM_URL_FOR_ROOT..."
+        git remote add upstream "$ACTUAL_UPSTREAM_URL_FOR_ROOT"
         if [ $? -ne 0 ]; then
-            log "Warning: Failed to add upstream remote."
+            log "Warning: Failed to add upstream remote. It might already exist. Attempting set-url."
+            git remote set-url upstream "$ACTUAL_UPSTREAM_URL_FOR_ROOT" || log "Warning: Failed to set-url for upstream remote either."
         fi
         log "Fetching upstream and setting local main to upstream/main..."
         git fetch upstream --prune
@@ -253,8 +284,8 @@ else
     log "GPG key import is now handled during Docker image build. Skipping GPG data copy from host."
     log "Git user.name, user.email, and signingkey are configured for appuser by this script if run as appuser, or by Dockerfile build args."
 
-    CRON_PID_FILE="/var/run/crond.pid"
-    log "Checking cron daemon status..."
+    CRON_PID_FILE="/var/run/cron.pid" # Corrected PID file for Debian/Ubuntu
+    log "Checking cron daemon status (PID file: $CRON_PID_FILE)..."
     if [ -f "$CRON_PID_FILE" ]; then
         CRON_PID=$(cat "$CRON_PID_FILE")
         if ps -p "$CRON_PID" > /dev/null; then
