@@ -124,8 +124,8 @@ else
     log "Starting initial entrypoint setup as root..."
 
     TARGET_REPO_DIR="/target_repo"
-    FORK_REPO_URL="${FORK_REPO_URL:-https://github.com/hiciefte/bisq2.git}" 
-    UPSTREAM_REPO_URL="${UPSTREAM_REPO_URL:-https://github.com/bisq-network/bisq2.git}"
+    FORK_REPO_URL="${FORK_REPO_URL:-git@github.com:hiciefte/bisq2.git}"
+    UPSTREAM_REPO_URL="${UPSTREAM_REPO_URL:-git@github.com:bisq-network/bisq2.git}"
     FORK_REPO_NAME="${FORK_REPO_NAME:-hiciefte/bisq2}" # Used for setting SSH remote URL
 
     APPUSER_UID=${HOST_UID:-1000}
