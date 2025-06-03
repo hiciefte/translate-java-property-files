@@ -309,6 +309,15 @@ else
     log "GPG key import is now handled during Docker image build. Skipping GPG data copy from host."
     log "Git user.name, user.email, and signingkey are configured for appuser by this script if run as appuser, or by Dockerfile build args."
 
+    # Ensure /app/logs directory exists and is writable by appuser
+    LOGS_DIR="/app/logs"
+    log "Ensuring log directory $LOGS_DIR exists and is writable by $APPUSER_UID:$APPUSER_GID..."
+    mkdir -p "$LOGS_DIR"
+    chown "${APPUSER_UID}:${APPUSER_GID}" "$LOGS_DIR"
+    chmod 755 "$LOGS_DIR" # Ensure appuser can write, and others can read/execute (needed for directory listing)
+    log "Log directory $LOGS_DIR prepared."
+    ls -ld "$LOGS_DIR"
+
     # Ensure cron daemon is started
     CRON_PID_FILE="/var/run/cron.pid" # Corrected PID file for Debian/Ubuntu
     log "Checking cron daemon status (PID file: $CRON_PID_FILE)..."
