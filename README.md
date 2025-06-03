@@ -432,13 +432,13 @@ start/stop/status).
    Group=docker
    WorkingDirectory=/opt/translate-java-property-files
    Restart=always
-   ExecStart=/usr/bin/docker-compose -f docker/docker-compose.yml up
-   ExecStop=/usr/bin/docker-compose -f docker/docker-compose.yml down
+   ExecStart=/usr/bin/docker compose -f docker/docker-compose.yml up
+   ExecStop=/usr/bin/docker compose -f docker/docker-compose.yml down
 
    [Install]
    WantedBy=multi-user.target
    ```
-    * Verify paths for `docker-compose` (might be `/usr/local/bin/docker-compose`).
+    * Verify the path for `docker` (e.g., `/usr/bin/docker`). The command uses `docker compose` (V2 syntax). If you have an older Docker Compose V1 installation (`docker-compose` with a hyphen), you might need to adjust the command and path (e.g., to `/usr/local/bin/docker-compose`).
     * Adjust `User` and `Group` if different.
 
 2. Enable and start:
@@ -448,6 +448,15 @@ start/stop/status).
    sudo systemctl start translator.service
    sudo systemctl status translator.service
    ```
+
+3. **Managing the Service**:
+    * **Check Status & Recent Logs**: `sudo systemctl status translator.service`
+    * **View Full Logs (Live)**: `sudo journalctl -u translator.service -f`
+    * **Stop the Service**: `sudo systemctl stop translator.service`
+    * **Restart the Service**: `sudo systemctl restart translator.service`
+    * **Disable Auto-start on Boot**: `sudo systemctl disable translator.service`
+
+   You may need to switch to a user with `sudo` privileges (or be `root`) to execute these commands if you are currently operating as `translationbot`.
 
 ### Manual Setup & Usage (Local Development/Testing - Not for Production)
 
