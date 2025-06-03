@@ -7,7 +7,7 @@ import re
 import shutil
 import subprocess
 import uuid
-from typing import Dict, List, Tuple, Optional, Union
+from typing import Dict, List, Tuple, Optional
 
 import tiktoken
 import yaml
@@ -23,41 +23,89 @@ from openai import (
 from openai import AsyncOpenAI
 from openai.types.chat import (
     ChatCompletionSystemMessageParam,
-    ChatCompletionUserMessageParam,
-    ChatCompletionAssistantMessageParam,
-    ChatCompletionMessageParam
+    ChatCompletionUserMessageParam
 )
 from tqdm.asyncio import tqdm_asyncio
 
-# Set up logging with timestamps and log levels, logging to both console and file
-LOG_FILE_PATH = "/app/logs/translation_log.log"
-# Ensure log directory exists
-os.makedirs(os.path.dirname(LOG_FILE_PATH), exist_ok=True)
+# Determine the correct path to config.yaml relative to the script's location
+SCRIPT_REAL_PATH = os.path.realpath(__file__)
+SCRIPT_DIR = os.path.dirname(SCRIPT_REAL_PATH)
+CONFIG_FILE = os.path.join(SCRIPT_DIR, '..', 'config.yaml')
+
+# Default logging settings if config is unavailable or incomplete
+DEFAULT_LOG_FILE_PATH = "logs/translation_log_default.log"
+DEFAULT_LOG_LEVEL = logging.INFO
+DEFAULT_LOG_TO_CONSOLE = True
+
+config = {}
+try:
+    with open(CONFIG_FILE, 'r') as config_file_stream:
+        loaded_config = yaml.safe_load(config_file_stream)
+        if loaded_config:
+            config = loaded_config
+
+    logging_config = config.get('logging', {})
+    LOG_FILE_PATH = logging_config.get('log_file_path', DEFAULT_LOG_FILE_PATH)
+    LOG_LEVEL_STR = logging_config.get('log_level', 'INFO').upper()
+    LOG_TO_CONSOLE = logging_config.get('log_to_console', DEFAULT_LOG_TO_CONSOLE)
+    LOG_LEVEL = getattr(logging, LOG_LEVEL_STR, DEFAULT_LOG_LEVEL)
+
+except FileNotFoundError:
+    print(f"Warning: Configuration file '{CONFIG_FILE}' not found. Using default logging settings.")
+    LOG_FILE_PATH = DEFAULT_LOG_FILE_PATH
+    LOG_LEVEL = DEFAULT_LOG_LEVEL
+    LOG_TO_CONSOLE = DEFAULT_LOG_TO_CONSOLE
+except Exception as e:
+    print(f"Warning: Error loading or parsing configuration file '{CONFIG_FILE}': {e}. Using default logging settings.")
+    LOG_FILE_PATH = DEFAULT_LOG_FILE_PATH
+    LOG_LEVEL = DEFAULT_LOG_LEVEL
+    LOG_TO_CONSOLE = DEFAULT_LOG_TO_CONSOLE
+
+log_dir_to_create = os.path.dirname(LOG_FILE_PATH)
+if log_dir_to_create:
+    os.makedirs(log_dir_to_create, exist_ok=True)
+
+handlers = [logging.FileHandler(LOG_FILE_PATH)]
+if LOG_TO_CONSOLE:
+    handlers.append(logging.StreamHandler())
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=LOG_LEVEL,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(LOG_FILE_PATH)
-    ]
+    handlers=handlers
 )
 
-# Load environment variables from a .env file (make sure to create one with your API key)
-load_dotenv()
+# Load environment variables strategically
+# SCRIPT_DIR is .../project_root/src (absolute path)
+PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir))
+
+dotenv_path_project_root = os.path.join(PROJECT_ROOT_DIR, '.env')
+dotenv_path_docker_dir = os.path.join(PROJECT_ROOT_DIR, 'docker', '.env')
+
+if os.path.exists(dotenv_path_project_root):
+    load_dotenv(dotenv_path_project_root)
+    logging.info(f"Loaded environment variables from: {dotenv_path_project_root}")
+elif os.path.exists(dotenv_path_docker_dir):
+    load_dotenv(dotenv_path_docker_dir)
+    logging.info(f"Loaded environment variables from: {dotenv_path_docker_dir}")
+else:
+    logging.info(
+        f"No .env file found in project root ('{dotenv_path_project_root}') "
+        f"or in docker/ ('{dotenv_path_docker_dir}'). "
+        f"Relying on system environment variables if any."
+    )
+    # load_dotenv() with no args will search CWD; this is likely redundant if the above checks cover CWD for root.
 
 # Initialize the OpenAI client with your API key
-client = AsyncOpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+api_key_from_env = os.environ.get('OPENAI_API_KEY')
+if not api_key_from_env:
+    logging.warning("OPENAI_API_KEY not found in environment variables. OpenAI calls will likely fail.")
+client = AsyncOpenAI(api_key=api_key_from_env)
 
-# Load configuration from a YAML file
-CONFIG_FILE = 'config.yaml'
-
-with open(CONFIG_FILE, 'r') as config_file:
-    config = yaml.safe_load(config_file)
-
-# Configuration Parameters
-REPO_ROOT = config.get('target_project_root', '/path/to/repo/root')
-INPUT_FOLDER = config.get('input_folder', '/path/to/default/input_folder')  # Absolute path to resources
+# Configuration Parameters (now using the 'config' dictionary loaded above)
+# Defaults are provided in .get() for robustness if config file or keys are missing.
+REPO_ROOT = config.get('target_project_root', '/path/to/default/repo/root')
+INPUT_FOLDER = config.get('input_folder', '/path/to/default/input_folder')
 GLOSSARY_FILE_PATH = config.get('glossary_file_path', 'glossary.json')
 MODEL_NAME = config.get('model_name', 'gpt-4')
 
@@ -66,17 +114,15 @@ MAX_MODEL_TOKENS = 4000  # You can modify this if needed
 
 # Define the translation queue folders
 # Get appuser's home directory, default to /home/appuser if not found (e.g., during testing outside container)
-APPUSER_HOME = os.path.expanduser("~") # This will be /home/appuser inside the container when run as appuser
-if not os.path.isdir(APPUSER_HOME) or APPUSER_HOME == '/': # Basic check if expanduser fails weirdly or returns root
+APPUSER_HOME = os.path.expanduser("~")  # This will be /home/appuser inside the container when run as appuser
+if not os.path.isdir(APPUSER_HOME) or APPUSER_HOME == '/':  # Basic check if expanduser fails weirdly or returns root
     APPUSER_HOME = "/home/appuser"
-
 
 _translation_queue_name = config.get('translation_queue_folder', 'translation_queue')
 _translated_queue_name = config.get('translated_queue_folder', 'translated_queue')
 
 TRANSLATION_QUEUE_FOLDER = os.path.join(APPUSER_HOME, _translation_queue_name)
 TRANSLATED_QUEUE_FOLDER = os.path.join(APPUSER_HOME, _translated_queue_name)
-
 
 # Dry run configuration (if True, files won't be moved/copied, etc.)
 DRY_RUN = config.get('dry_run', False)
@@ -977,7 +1023,9 @@ async def main():
     """
     Main function to orchestrate the translation process.
     """
-    # Validate paths
+    # Ensure critical paths that might be derived from config are validated after config load
+    # For example, if INPUT_FOLDER or REPO_ROOT uses defaults, they might be invalid.
+    # The validate_paths function should be called early in main if it relies on these.
     validate_paths(INPUT_FOLDER, TRANSLATION_QUEUE_FOLDER, TRANSLATED_QUEUE_FOLDER, REPO_ROOT)
 
     # Step 1: Identify changed translation files
@@ -1021,7 +1069,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    # Ensure queue folders exist
+    # Ensure queue folders exist, potentially using paths derived from config or defaults
     os.makedirs(TRANSLATION_QUEUE_FOLDER, exist_ok=True)
     os.makedirs(TRANSLATED_QUEUE_FOLDER, exist_ok=True)
     try:
