@@ -1,0 +1,17 @@
+# Intentionally using paths that will be heavily mocked in the test
+target_project_root: '/mocked/repo/root'
+input_folder: '/mocked/repo/root/i18n/resources' # This will be the source of truth for 'source_file_path' in the script
+glossary_file_path: './tests/integration/mock_glossary.json' # Relative to project root
+model_name: 'gpt-3.5-turbo'
+supported_locales:
+  - code: 'de'
+    name: 'German'
+  - code: 'es'
+    name: 'Spanish'
+translation_queue_folder: 'translation_queue_integration_test' # Temporary folder for testing
+translated_queue_folder: 'translated_queue_integration_test'   # Temporary folder for testing
+dry_run: false # Set to false, we will mock file operations instead
+
+# Ensure these paths are updated in the test to point to actual test files
+# For example, the script constructs source_file_path using INPUT_FOLDER.
+# The test will need to mock where 'sample_app_en.properties' and 'sample_app_de.properties' are found.
