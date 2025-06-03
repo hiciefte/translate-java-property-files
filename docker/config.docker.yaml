@@ -22,4 +22,9 @@ supported_locales:
   - code: "ru"
     name: "Russian"
   - code: "af_ZA"
-    name: "Afrikaans" 
+    name: "Afrikaans"
+
+logging:
+  log_level: "INFO"
+  log_file_path: "/app/logs/translation_log.log"
+  log_to_console: true 
