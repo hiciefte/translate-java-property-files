@@ -39,7 +39,7 @@ DEFAULT_LOG_TO_CONSOLE = True
 
 config = {}
 try:
-    with open(CONFIG_FILE, 'r') as config_file_stream:
+    with open(CONFIG_FILE, 'r', encoding='utf-8') as config_file_stream:
         loaded_config = yaml.safe_load(config_file_stream)
         if loaded_config:
             config = loaded_config
