@@ -13,7 +13,7 @@ import shutil
 import json
 import yaml
 import logging
-import re # Import re for test_apply_glossary_logic if it uses re directly (though apply_glossary itself uses it)
+import re
 
 # Assuming src.translate_localization_files will be importable.
 # The try-except block allows the tests to be run from the project root (e.g., make test)
@@ -52,7 +52,7 @@ class TestPythonScriptIntegration(unittest.IsolatedAsyncioTestCase):
         self.project_root = os.path.abspath(os.path.join(self.test_dir, '../..'))
         self.test_config_path = os.path.join(self.test_dir, 'test_config.yaml')
 
-        with open(self.test_config_path, 'r') as f:
+        with open(self.test_config_path, 'r', encoding='utf-8') as f:
             self.config = yaml.safe_load(f)
 
         # Paths for queue folders are constructed relative to the project root for test isolation
@@ -71,33 +71,25 @@ class TestPythonScriptIntegration(unittest.IsolatedAsyncioTestCase):
         shutil.copy2(self.sample_de_props_path,
                       os.path.join(self.test_translation_queue_folder, 'app_de.properties'))
 
-        # Ensure Spanish file is not present in the test setup's queue folder,
-        # as some tests might expect it to be created by the script's logic.
         es_setup_path = os.path.join(self.test_translation_queue_folder, 'app_es.properties')
         if os.path.exists(es_setup_path):
             os.remove(es_setup_path)
 
-        # Disable logging to keep test output clean, only re-enable if debugging a test.
         logging.disable(logging.CRITICAL)
 
     def tearDown(self):
         """
         Clean up the test environment after each test.
-
-        This involves removing the temporary queue folders.
         """
         if os.path.exists(self.test_translation_queue_folder):
             shutil.rmtree(self.test_translation_queue_folder)
         if os.path.exists(self.test_translated_queue_folder):
             shutil.rmtree(self.test_translated_queue_folder)
-        logging.disable(logging.NOTSET) # Re-enable logging
+        logging.disable(logging.NOTSET)
 
     def test_normalize_value_logic(self):
         """
         Tests the `normalize_value` helper function.
-
-        Verifies that it correctly handles None input, newline characters (both literal
-        and escaped), and leading/trailing/multiple spaces.
         """
         self.assertEqual(normalize_value("hello\nworld"), "hello<newline>world", "Literal newline should be replaced.")
         self.assertEqual(normalize_value("  hello   world  "), "hello world", "Spaces should be normalized.")
@@ -107,107 +99,108 @@ class TestPythonScriptIntegration(unittest.IsolatedAsyncioTestCase):
     def test_extract_texts_to_translate_logic(self):
         """
         Tests the `extract_texts_to_translate` helper function.
-
-        This function determines which texts from a source properties file need
-        translation based on their presence and content in a target properties file.
-        It should extract texts if the target value is missing (None) or if the
-        normalized target value is identical to the normalized source value (implying
-        it might be an untranslated placeholder or needs re-translation).
+        It checks if the function correctly identifies texts that need translation
+        and returns the correct texts, their original indices in parsed_lines (for
+        existing keys), or new indices (for new keys).
         """
-        # Sample data mimicking parsed .properties file content
         parsed_lines = [
-            {'type': 'entry', 'key': 'key1', 'value': 'target_val1', 'original_value': 'target_val1', 'line_number': 0},
-            {'type': 'entry', 'key': 'key2', 'value': 'source_val2', 'original_value': 'source_val2', 'line_number': 1},
+            {'type': 'entry', 'key': 'key0_exists_no_change', 'value': 'target_val0', 'original_value': 'target_val0', 'line_number': 0},
+            {'type': 'entry', 'key': 'key1_exists_needs_update', 'value': 'old_target_val1', 'original_value': 'old_target_val1', 'line_number': 1},
             {'type': 'comment_or_blank', 'content': '# comment\n', 'line_number': 2},
-            {'type': 'entry', 'key': 'key4', 'value': 'source val4 normalized', 'original_value': 'source val4 normalized', 'line_number': 3},
+            {'type': 'entry', 'key': 'key2_exists_source_match', 'value': 'source_val2', 'original_value': 'source_val2', 'line_number': 3},
         ]
+        # key_to_index based on parsed_lines: {'key0_exists_no_change': 0, 'key1_exists_needs_update': 1, 'key2_exists_source_match': 3}
+        # len(parsed_lines) = 4
+
         source_translations = {
-            'key1': 'source_val1_changed',    # Target exists and is different
-            'key2': 'source_val2',            # Target exists and is identical to source
-            'key3': 'source_val3_new',        # Target is missing (None)
-            'key4': 'source val4 normalized', # Target exists and is identical to normalized source
-            'key5': 'source_val5_no_target_yet' # Target is missing (None)
+            'key0_exists_no_change': 'target_val0',          # No change, target same as source
+            'key1_exists_needs_update': 'source_val1_updated', # Target exists, source is different -> NOT picked by this func
+            'key2_exists_source_match': 'source_val2',       # Target exists, target is same as source -> PICKED
+            'key3_new_in_source': 'source_val3_new',         # Target is None -> PICKED
+            'key4_new_in_source_too': 'source_val4_new_too'  # Target is None -> PICKED
         }
         target_translations = {
-            'key1': 'target_val1',
-            'key2': 'source_val2',
-            'key4': 'source val4 normalized'
+            'key0_exists_no_change': 'target_val0',
+            'key1_exists_needs_update': 'old_target_val1',
+            'key2_exists_source_match': 'source_val2',
         }
 
         texts, indices, keys = extract_texts_to_translate(
             parsed_lines, source_translations, target_translations
         )
 
-        # Based on the function's logic:
-        # - key1: Not included (target exists, is different, and not same as source).
-        # - key2: Included (target exists, is same as source).
-        # - key3: Included (target is None).
-        # - key4: Included (target exists, is same as normalized source).
-        # - key5: Included (target is None).
+        # Expected texts to be extracted by this function's logic:
+        # key0: target is not None. normalize(target_val0) == normalize(target_val0). PICKED.
+        # key1: target is not None. normalize(old_target_val1) != normalize(source_val1_updated). NOT PICKED.
+        # key2: target is not None. normalize(source_val2) == normalize(source_val2). PICKED.
+        # key3: target is None. PICKED.
+        # key4: target is None. PICKED.
         expected_texts_list = sorted([
-            'source_val2',
-            'source_val3_new',
-            'source val4 normalized',
-            'source_val5_no_target_yet'
+            'target_val0',             # for key0_exists_no_change
+            'source_val2',             # for key2_exists_source_match
+            'source_val3_new',         # for key3_new_in_source
+            'source_val4_new_too'      # for key4_new_in_source_too
         ])
         self.assertEqual(sorted(texts), expected_texts_list, "Mismatch in texts identified for translation.")
         self.assertEqual(len(texts), 4, "Incorrect number of texts identified.")
 
-        expected_keys_list = sorted(['key2', 'key3', 'key4', 'key5'])
+        expected_keys_list = sorted([
+            'key0_exists_no_change',
+            'key2_exists_source_match',
+            'key3_new_in_source',
+            'key4_new_in_source_too'
+            ])
         self.assertEqual(sorted(keys), expected_keys_list, "Mismatch in keys identified for translation.")
         self.assertEqual(len(keys), 4, "Incorrect number of keys identified.")
+
+        # Determine expected indices based on the order of keys in source_translations
+        # and their presence in key_to_index derived from parsed_lines.
+        # key_to_index: {'key0_exists_no_change': 0, 'key1_exists_needs_update': 1, 'key2_exists_source_match': 3}
+        # len(parsed_lines) = 4
+
+        # Iteration order of source_translations.items() in Python 3.7+ is insertion order.
+        # 1. key0_exists_no_change: In key_to_index (0). Added. indices = [0]
+        # 2. key1_exists_needs_update: Not added.
+        # 3. key2_exists_source_match: In key_to_index (3). Added. indices = [0, 3]
+        # 4. key3_new_in_source: Not in key_to_index. next_index = 4. Added. indices = [0, 3, 4]. next_index = 5
+        # 5. key4_new_in_source_too: Not in key_to_index. next_index = 5. Added. indices = [0, 3, 4, 5]. next_index = 6
+        expected_indices = [0, 3, 4, 5]
+        self.assertEqual(indices, expected_indices, "The 'indices' returned by extract_texts_to_translate are not as expected.")
+
 
     def test_apply_glossary_logic(self):
         """
         Tests the `apply_glossary` helper function.
 
-        Verifies that glossary terms are correctly applied (case-insensitive, whole word).
-        The current version of `apply_glossary` in the source code does NOT ignore
-        text within HTML-like tags, so this test reflects that actual behavior.
+        Verifies that glossary terms are correctly applied (case-insensitive, whole word)
+        and that, crucially, text within HTML-like angle brackets is ignored by the
+        glossing process, as per the source code's implementation.
         """
         sample_text = "Hello world, translate this text with hello again. <tag>Hello not this</tag>"
         glossary = {"hello": "Hallo", "text": "Textabschnitt"}
 
-        # This expected output reflects that the current apply_glossary in src
-        # DOES NOT skip terms inside tags.
-        expected_output = "Hallo world, translate this Textabschnitt with Hallo again. <tag>Hallo not this</tag>"
+        # Expected output: "Hello" inside <tag> should NOT be translated.
+        expected_output = "Hallo world, translate this Textabschnitt with Hallo again. <tag>Hello not this</tag>"
         self.assertEqual(apply_glossary(sample_text, glossary), expected_output)
 
         sample_text_no_match = "Hi there, friend."
         self.assertEqual(apply_glossary(sample_text_no_match, glossary), sample_text_no_match, "Should not change if no glossary terms match.")
 
-        # This test case also reflects that tags are not specially handled by current src function
+        # Text entirely within tags should remain unchanged.
         sample_text_with_tag_only = "<tag>Hello world</tag>"
-        expected_tag_translation = "<tag>Hallo world</tag>"
-        self.assertEqual(apply_glossary(sample_text_with_tag_only, glossary), expected_tag_translation, "Glossary should apply within tags for current src function.")
+        expected_tag_translation = "<tag>Hello world</tag>"
+        self.assertEqual(apply_glossary(sample_text_with_tag_only, glossary), expected_tag_translation, "Glossary should not apply within tags.")
 
 
     async def test_main_translation_flow_simplified(self):
         """
         Tests the main script flow of `translate_localization_files.main()` with
         the core translation processing (`process_translation_queue`) mocked out.
-
-        This test verifies:
-        - Correct loading of configurations.
-        - Orchestration of file operations:
-            - Getting changed files.
-            - Copying files to a translation queue.
-            - Invoking the (mocked) processing function.
-            - Copying results back.
-            - Archiving original files.
-            - Cleaning up queue folders.
-        - All file system paths used by the script are correctly patched to use
-          test-specific, mocked locations.
         """
-        # Paths used by the script, reflecting user home for queue folders.
         script_translation_queue_abs = os.path.join(os.path.expanduser("~"), self.config['translation_queue_folder'])
         script_translated_queue_abs = os.path.join(os.path.expanduser("~"), self.config['translated_queue_folder'])
-
-        # Mock for the function that handles the detailed translation logic.
         mock_process_translation_queue = AsyncMock()
 
-        # Patch all external dependencies and file system interactions.
-        # Global constants in the script are patched to use test-specific config values.
         with patch('src.translate_localization_files.CONFIG_FILE', self.test_config_path), \
              patch('src.translate_localization_files.REPO_ROOT', self.config['target_project_root']), \
              patch('src.translate_localization_files.INPUT_FOLDER', self.config['input_folder']), \
@@ -227,7 +220,6 @@ class TestPythonScriptIntegration(unittest.IsolatedAsyncioTestCase):
 
             await src.translate_localization_files.main()
 
-            # Verify that each step in the main script flow was called as expected.
             mock_get_changed.assert_called_once()
             mock_copy_to_queue.assert_called_once()
             mock_process_translation_queue.assert_called_once_with(
@@ -238,12 +230,10 @@ class TestPythonScriptIntegration(unittest.IsolatedAsyncioTestCase):
             mock_copy_back.assert_called_once()
             mock_move_archive.assert_called_once()
 
-            # Verify cleanup calls for queue folders.
             expected_rmtree_calls = [
                 call(script_translation_queue_abs),
                 call(script_translated_queue_abs)
             ]
-            # Check call count and presence of each expected call.
             self.assertEqual(len(mock_shutil_rmtree.call_args_list), len(expected_rmtree_calls), "shutil.rmtree not called expected number of times.")
             self.assertTrue(all(c in mock_shutil_rmtree.call_args_list for c in expected_rmtree_calls), "shutil.rmtree not called with expected arguments.")
 
