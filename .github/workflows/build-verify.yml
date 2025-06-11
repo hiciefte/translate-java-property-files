@@ -12,8 +12,8 @@ jobs:
 
     steps:
       - name: Checkout repository
-        # Pin to a specific commit SHA for long-term stability
-        uses: actions/checkout@a4b2a048e2204558525b4de451a445da2d5113d7 # v4.1.7
+        # Pin to the major version tag for stability and to avoid invalid SHAs.
+        uses: actions/checkout@v4
 
       - name: Lint Dockerfile with Hadolint
         uses: hadolint/hadolint-action@v3.1.0
