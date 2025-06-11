@@ -76,7 +76,7 @@ jobs:
         # reduce noise from unactionable alerts.
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: 'local/translator-app:${{ github.sha }}'
+          image-ref: 'translator-app:ci-${{ github.sha }}'
           format: 'table'
           # Fail the build if any critical or high severity vulnerabilities are found.
           exit-code: '1'
