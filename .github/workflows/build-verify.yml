@@ -1,0 +1,90 @@
+name: Build and Verify
+
+on:
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  verify:
+    name: Lint, Scan, and Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        # Pin to the major version tag for stability and to avoid invalid SHAs.
+        uses: actions/checkout@v4
+
+      - name: Lint Dockerfile with Hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: docker/Dockerfile
+          config: .hadolint.yaml
+          failure-threshold: warning # Fails on warnings or errors
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Scan Python dependencies for vulnerabilities
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create dummy secret files (for CI build only)
+        run: |
+          # These files are required for the Docker build's COPY step to succeed.
+          # They are empty and do not contain real secrets.
+          mkdir -p secrets/gpg_bot_key
+          touch secrets/gpg_bot_key/bot_public_key.asc
+          touch secrets/gpg_bot_key/bot_secret_key.asc
+          echo "DUMMY_KEY=123" > docker/.env
+
+      - name: Build Docker image
+        id: docker_build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: false # Do not push the image
+          tags: translator-app:ci-${{ github.sha }}
+          load: true # Load the image into the local Docker daemon for scanning
+          build-args: |
+            SKIP_GPG_IMPORT=true
+            GPG_KEY_FINGERPRINT_FOR_TRUST=DUMMY_FINGERPRINT_FOR_CI
+
+      - name: Cache Trivy vulnerability database
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: ${{ runner.os }}-trivy-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-trivy-
+
+      - name: Scan built image with Trivy
+        # Scans the final image for OS and library vulnerabilities.
+        # We use a .trivyignore file to suppress specific CVEs, such as those
+        # present in the vendor-supplied Transifex CLI binary, which are
+        # outside of our control to fix. This is a pragmatic approach to
+        # reduce noise from unactionable alerts.
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          image-ref: 'translator-app:ci-${{ github.sha }}'
+          format: 'table'
+          # Fail the build if any critical or high severity vulnerabilities are found.
+          exit-code: '1'
+          # Only report on vulnerabilities that have a known fix.
+          ignore-unfixed: true
+          # Scan for both OS and programming language library vulnerabilities.
+          vuln-type: 'os,library'
+          # The severity levels to scan for.
+          severity: 'CRITICAL,HIGH'
+          # Use the .trivyignore file to suppress specific vulnerability alerts.
+          trivyignores: .trivyignore 

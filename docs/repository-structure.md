@@ -5,7 +5,9 @@ This document outlines the structure and purpose of the files and directories wi
 ## Root Directory
 
 - **`.git/`**: Contains Git version control information.
-- **`.github/`**: (If present) Contains GitHub-specific files like workflows or issue templates.
+- **`.github/`**: Contains GitHub-specific files like workflows or issue templates.
+  - **`workflows/`**: Contains GitHub Actions workflow files.
+    - **`build-verify.yml`**: Defines a CI workflow that runs on pull requests. It lints the Dockerfile, scans dependencies and the final image for vulnerabilities, and verifies that the Docker image can be built successfully.
 - **`docker/`**: Contains all files for building and running the Dockerized application.
   - **`Dockerfile`**: Defines the Docker image, installs dependencies (Python, Git, GPG, CLIs), sets up `appuser`, and imports the bot GPG key.
   - **`docker-compose.yml`**: Configures the Docker service (`translator`), manages environment variables (from `docker/.env` by default), and volume mounts.
@@ -24,6 +26,8 @@ This document outlines the structure and purpose of the files and directories wi
 - **`venv/`**: (If used for local development) Contains Python virtual environment files.
 - **`.DS_Store`**: macOS specific file storing custom attributes of its containing folder (should be in `.gitignore`).
 - **`.gitignore`**: Specifies intentionally untracked files that Git should ignore.
+- **`.hadolint.yaml`**: Configuration file for the `hadolint` Dockerfile linter. Used to specify rules to ignore, such as pinning base image versions.
+- **`.trivyignore`**: Configuration file for the `Trivy` vulnerability scanner. Used to suppress specific CVEs that are deemed false positives or are not actionable.
 - **`CONTRIBUTING.md`**: (If present) Guidelines for contributing to the project.
 - **`LICENSE`**: Project's license file.
 - **`README.md`**: Provides the primary overview, setup, configuration, and usage instructions for the project, especially for the Dockerized service.
