@@ -51,7 +51,7 @@ RUN apt-get update && \
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1
 
 # Install Transifex CLI
-RUN TX_VERSION="v1.6.6" && \
+RUN TX_VERSION="v1.6.17" && \
     CONTAINER_ARCH=$(dpkg --print-architecture) && \
     if [ "$CONTAINER_ARCH" = "amd64" ]; then TX_ARCH="linux-amd64"; \
     elif [ "$CONTAINER_ARCH" = "arm64" ]; then TX_ARCH="linux-arm64"; \
