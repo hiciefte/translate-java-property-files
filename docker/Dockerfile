@@ -6,6 +6,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG HOST_UID
 ARG HOST_GID
 ARG GPG_KEY_FINGERPRINT_FOR_TRUST
+ARG SKIP_GPG_IMPORT=false
 
 ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
@@ -64,23 +65,19 @@ RUN TX_VERSION="v1.6.6" && \
 COPY secrets/gpg_bot_key/bot_public_key.asc /tmp/bot_public_key.asc
 COPY secrets/gpg_bot_key/bot_secret_key.asc /tmp/bot_secret_key.asc
 
-RUN \
-    # Import keys as appuser.
-    echo "Importing GPG keys for appuser..." && \
-    su - appuser -c "gpg --batch --import /tmp/bot_public_key.asc" && \
-    su - appuser -c "gpg --batch --import /tmp/bot_secret_key.asc" && \
-    #
-    # Set trust for the imported key.
-    echo "Setting trust for GPG key ${GPG_KEY_FINGERPRINT_FOR_TRUST}..." && \
-    su - appuser -c "echo \"${GPG_KEY_FINGERPRINT_FOR_TRUST:?GPG_KEY_FINGERPRINT_FOR_TRUST build argument is not set or empty}:6:\" | gpg --batch --import-ownertrust" && \
-    #
-    # Configure git to use GPG signing.
-    su - appuser -c "git config --global commit.gpgsign true" && \
-    #
-    # Clean up.
-    echo "Cleaning up temporary GPG key files..." && \
-    rm /tmp/bot_public_key.asc /tmp/bot_secret_key.asc && \
-    echo "GPG key import and git config complete for appuser."
+RUN if [ "$SKIP_GPG_IMPORT" = "true" ]; then \
+      echo "Skipping GPG key import for CI build."; \
+    else \
+      echo "Importing GPG keys for appuser..." && \
+      su - appuser -c "gpg --batch --import /tmp/bot_public_key.asc" && \
+      su - appuser -c "gpg --batch --import /tmp/bot_secret_key.asc" && \
+      echo "Setting trust for GPG key ${GPG_KEY_FINGERPRINT_FOR_TRUST}..." && \
+      su - appuser -c "echo \"${GPG_KEY_FINGERPRINT_FOR_TRUST:?GPG_KEY_FINGERPRINT_FOR_TRUST build argument is not set or empty}:6:\" | gpg --batch --import-ownertrust" && \
+      su - appuser -c "git config --global commit.gpgsign true" && \
+      echo "GPG key import and git config complete for appuser."; \
+    fi && \
+    # Clean up temporary files in all cases
+    rm -f /tmp/bot_public_key.asc /tmp/bot_secret_key.asc
 
 WORKDIR /app
 
