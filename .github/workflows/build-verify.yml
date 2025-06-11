@@ -12,7 +12,8 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        # Pin to a specific commit SHA for long-term stability
+        uses: actions/checkout@a4b2a048e2204558525b4de451a445da2d5113d7 # v4.1.7
 
       - name: Lint Dockerfile with Hadolint
         uses: hadolint/hadolint-action@v3.1.0
@@ -20,6 +21,14 @@ jobs:
           dockerfile: docker/Dockerfile
           config: .hadolint.yaml
           failure-threshold: warning # Fails on warnings or errors
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
       - name: Scan Python dependencies for vulnerabilities
         run: |
@@ -29,8 +38,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Create dummy secret files for build
+      - name: Create dummy secret files (for CI build only)
         run: |
+          # These files are required for the Docker build's COPY step to succeed.
+          # They are empty and do not contain real secrets.
           mkdir -p secrets/gpg_bot_key
           touch secrets/gpg_bot_key/bot_public_key.asc
           touch secrets/gpg_bot_key/bot_secret_key.asc
@@ -48,6 +59,14 @@ jobs:
           build-args: |
             SKIP_GPG_IMPORT=true
             GPG_KEY_FINGERPRINT_FOR_TRUST=DUMMY_FINGERPRINT_FOR_CI
+
+      - name: Cache Trivy vulnerability database
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: ${{ runner.os }}-trivy-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-trivy-
 
       - name: Scan built image with Trivy
         uses: aquasecurity/trivy-action@master
