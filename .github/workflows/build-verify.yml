@@ -74,7 +74,7 @@ jobs:
         # present in the vendor-supplied Transifex CLI binary, which are
         # outside of our control to fix. This is a pragmatic approach to
         # reduce noise from unactionable alerts.
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@v0.31.0
         with:
           image-ref: 'translator-app:ci-${{ github.sha }}'
           format: 'table'
