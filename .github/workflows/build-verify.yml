@@ -18,6 +18,7 @@ jobs:
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: docker/Dockerfile
+          config: .hadolint.yaml
           failure-threshold: warning # Fails on warnings or errors
 
       - name: Scan Python dependencies for vulnerabilities

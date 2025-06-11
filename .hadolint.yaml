@@ -1,0 +1,3 @@
+---
+ignored:
+  - DL3008 # Pin versions in apt get install. We are pinning the base image, which is sufficient for our needs. 
