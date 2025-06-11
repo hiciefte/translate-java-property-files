@@ -18,13 +18,13 @@ import yaml
 # or directly if the PYTHONPATH is configured.
 try:
     import src.translate_localization_files
-    from src.translate_localization_files import extract_texts_to_translate, normalize_value, apply_glossary
+    from src.translate_localization_files import extract_texts_to_translate, normalize_value
 except ModuleNotFoundError:
     import sys
     # This assumes tests are run from a location where '../../' is the project root.
     sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
     import src.translate_localization_files
-    from src.translate_localization_files import extract_texts_to_translate, normalize_value, apply_glossary
+    from src.translate_localization_files import extract_texts_to_translate, normalize_value
 
 
 class TestPythonScriptIntegration(unittest.IsolatedAsyncioTestCase):
@@ -144,28 +144,6 @@ class TestPythonScriptIntegration(unittest.IsolatedAsyncioTestCase):
 
         expected_indices = [0, 3, 4, 5]
         self.assertEqual(indices, expected_indices, "The 'indices' returned by extract_texts_to_translate are not as expected.")
-
-
-    def test_apply_glossary_logic(self):
-        """
-        Tests the `apply_glossary` helper function.
-
-        Verifies that glossary terms are correctly applied (case-insensitive, whole word)
-        and that, crucially, text within HTML-like angle brackets is ignored by the
-        glossing process, as per the source code's implementation.
-        """
-        sample_text = "Hello world, translate this text with hello again. <tag>Hello not this</tag>"
-        glossary = {"hello": "Hallo", "text": "Textabschnitt"}
-
-        expected_output = "Hallo world, translate this Textabschnitt with Hallo again. <tag>Hello not this</tag>"
-        self.assertEqual(apply_glossary(sample_text, glossary), expected_output)
-
-        sample_text_no_match = "Hi there, friend."
-        self.assertEqual(apply_glossary(sample_text_no_match, glossary), sample_text_no_match, "Should not change if no glossary terms match.")
-
-        sample_text_with_tag_only = "<tag>Hello world</tag>"
-        expected_tag_translation = "<tag>Hello world</tag>"
-        self.assertEqual(apply_glossary(sample_text_with_tag_only, glossary), expected_tag_translation, "Glossary should not apply within tags.")
 
 
     async def test_main_translation_flow_simplified(self):

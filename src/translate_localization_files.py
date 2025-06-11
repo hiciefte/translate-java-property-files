@@ -353,32 +353,6 @@ def extract_texts_to_translate(
     return texts_to_translate, indices, keys
 
 
-def apply_glossary(translated_text: str, language_glossary: Dict[str, str]) -> str:
-    """
-    Apply glossary terms to the translated text, excluding text within angle brackets.
-
-    Args:
-        translated_text (str): The translated text.
-        language_glossary (Dict[str, str]): The glossary for the language.
-
-    Returns:
-        str: The text with glossary terms applied, excluding tags.
-    """
-    # Split the text into parts inside and outside of angle brackets
-    parts = re.split(r'(<[^<>]+>)', translated_text)
-    # parts will be a list where even indices are outside angle brackets, odd indices are inside
-    for i in range(0, len(parts), 2): # type: ignore[arg-type]
-        # Apply glossary to parts[i] (outside angle brackets)
-        for source_term, target_term in language_glossary.items():
-            # Use regex to replace whole words only, case-insensitive
-            parts[i] = re.sub( # type: ignore[arg-type]
-                rf'\b{re.escape(source_term)}\b',
-                target_term, parts[i], flags=re.IGNORECASE
-            )
-    # Reassemble the text
-    return ''.join(parts)
-
-
 def count_tokens(text: str, model_name: str = 'gpt-3.5-turbo') -> int:
     """
     Count the number of tokens in a text for a specific model.
@@ -497,7 +471,8 @@ def restore_placeholders(text: str, placeholder_mapping: Dict[str, str]) -> str:
 
 def clean_translated_text(translated_text: str, original_text: str) -> str:
     """
-    Clean the translated text by removing unwanted quotation marks or brackets.
+    Cleans the translated text by removing leading/trailing quotes and ensuring
+    that the text is not surrounded by unwanted characters.
 
     Args:
         translated_text (str): The translated text.
@@ -506,11 +481,11 @@ def clean_translated_text(translated_text: str, original_text: str) -> str:
     Returns:
         str: The cleaned translated text.
     """
-    # Remove quotation marks added around the text if they were not in the original text
+    # Remove leading/trailing quotes if they are not in the original text
     if translated_text.startswith('"') and translated_text.endswith('"') and not (
             original_text.startswith('"') and original_text.endswith('"')):
         translated_text = translated_text[1:-1]
-    # Remove square brackets if they were not in the original text
+    # Remove square brackets if they are not in the original text
     if translated_text.startswith('[') and translated_text.endswith(']') and not (
             original_text.startswith('[') and original_text.endswith(']')):
         translated_text = translated_text[1:-1]
@@ -660,9 +635,6 @@ Provide the translation **of the Value only**, following the instructions above.
 
                 # Clean the translated text
                 translated_text = clean_translated_text(translated_text, text)
-
-                # Apply glossary post-processing (with updated function)
-                translated_text = apply_glossary(translated_text, language_glossary)
 
                 logging.debug(f"Translated key '{key}' successfully.")
                 return index, translated_text
