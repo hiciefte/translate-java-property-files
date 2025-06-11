@@ -165,8 +165,10 @@ check_service_health() {
             continue
         fi
 
-        if docker ps -f "id=$container_id" --format "{{.Status}}" | grep -qE "^Up"; then
-            log_message "Docker container for $DOCKER_SERVICE_NAME (ID: $container_id) is Up." "INFO"
+        local container_status
+        container_status=$(docker ps -f "id=$container_id" --format "{{.Status}}" 2>/dev/null || echo "Not found")
+        if [[ "$container_status" =~ ^Up ]]; then
+            log_message "Docker container for $DOCKER_SERVICE_NAME (ID: $container_id) is Up (Status: '$container_status')." "INFO"
             # Add a small delay for services to fully initialize if needed
             log_message "Giving service a few seconds to settle..." "DEBUG"
             sleep 5
@@ -176,7 +178,7 @@ check_service_health() {
             log_message "Health check passed for $SYSTEMD_SERVICE_NAME." "INFO"
             return 0
         else
-            log_message "Docker container for $DOCKER_SERVICE_NAME (ID: $container_id) is not Up. Status: $(docker ps -f "id=$container_id" --format "{{.Status}}" || echo "Not found")." "WARNING"
+            log_message "Docker container for $DOCKER_SERVICE_NAME (ID: $container_id) is not Up. Status: '$container_status'." "WARNING"
         fi
 
         log_message "Health check attempt failed. Retries left: $retries. Waiting $HEALTH_CHECK_INTERVAL seconds..." "WARNING"
@@ -304,7 +306,7 @@ needs_rebuild() {
     local head2="$2"
     log_message "Checking for changes requiring rebuild between $head1 and $head2..." "DEBUG"
     for pattern in "${REBUILD_TRIGGER_FILES[@]}"; do
-        if git diff --name-only "$head1" "$head2" -- "$INSTALL_DIR/$pattern" | grep -q .; then
+        if git diff --name-only "$head1" "$head2" -- "$pattern" | grep -q .; then
             log_message "Changes detected in '$pattern' requiring rebuild." "INFO"
             return 0 # True, needs rebuild
         fi
@@ -320,7 +322,7 @@ needs_restart_for_config_changes() {
     local head2="$2"
     log_message "Checking for config changes requiring restart between $head1 and $head2..." "DEBUG"
     for pattern in "${RESTART_TRIGGER_FILES[@]}"; do
-        if git diff --name-only "$head1" "$head2" -- "$INSTALL_DIR/$pattern" | grep -q .; then
+        if git diff --name-only "$head1" "$head2" -- "$pattern" | grep -q .; then
             log_message "Changes detected in '$pattern' requiring service restart." "INFO"
             return 0 # True, needs restart
         fi

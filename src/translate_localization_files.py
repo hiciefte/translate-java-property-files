@@ -6,6 +6,7 @@ import random
 import re
 import shutil
 import subprocess
+import sys
 import uuid
 from typing import Dict, List, Tuple, Optional
 
@@ -84,22 +85,23 @@ dotenv_path_docker_dir = os.path.join(PROJECT_ROOT_DIR, 'docker', '.env')
 
 if os.path.exists(dotenv_path_project_root):
     load_dotenv(dotenv_path_project_root)
-    logging.info(f"Loaded environment variables from: {dotenv_path_project_root}")
+    logging.info("Loaded environment variables from: %s", dotenv_path_project_root)
 elif os.path.exists(dotenv_path_docker_dir):
     load_dotenv(dotenv_path_docker_dir)
-    logging.info(f"Loaded environment variables from: {dotenv_path_docker_dir}")
+    logging.info("Loaded environment variables from: %s", dotenv_path_docker_dir)
 else:
     logging.info(
-        f"No .env file found in project root ('{dotenv_path_project_root}') "
-        f"or in docker/ ('{dotenv_path_docker_dir}'). "
-        f"Relying on system environment variables if any."
+        "No .env file found in project root ('%s') or in docker/ ('%s'). Relying on system environment variables if any.",
+        dotenv_path_project_root,
+        dotenv_path_docker_dir
     )
     # load_dotenv() with no args will search CWD; this is likely redundant if the above checks cover CWD for root.
 
 # Initialize the OpenAI client with your API key
 api_key_from_env = os.environ.get('OPENAI_API_KEY')
 if not api_key_from_env:
-    logging.warning("OPENAI_API_KEY not found in environment variables. OpenAI calls will likely fail.")
+    logging.critical("CRITICAL: OPENAI_API_KEY not found in environment variables. This is required to run the script. Exiting.")
+    sys.exit(1)
 client = AsyncOpenAI(api_key=api_key_from_env)
 
 # Configuration Parameters (now using the 'config' dictionary loaded above)
@@ -365,11 +367,11 @@ def apply_glossary(translated_text: str, language_glossary: Dict[str, str]) -> s
     # Split the text into parts inside and outside of angle brackets
     parts = re.split(r'(<[^<>]+>)', translated_text)
     # parts will be a list where even indices are outside angle brackets, odd indices are inside
-    for i in range(0, len(parts), 2):
+    for i in range(0, len(parts), 2): # type: ignore[arg-type]
         # Apply glossary to parts[i] (outside angle brackets)
         for source_term, target_term in language_glossary.items():
             # Use regex to replace whole words only, case-insensitive
-            parts[i] = re.sub(
+            parts[i] = re.sub( # type: ignore[arg-type]
                 rf'\b{re.escape(source_term)}\b',
                 target_term, parts[i], flags=re.IGNORECASE
             )
@@ -639,7 +641,7 @@ Provide the translation **of the Value only**, following the instructions above.
         max_retries = 5
         base_delay = 1
 
-        for attempt in range(1, max_retries + 1):
+        for attempt in range(1, max_retries + 1): # type: ignore[arg-type]
             try:
                 # Use chat completion API
                 response = await client.chat.completions.create(
@@ -651,7 +653,7 @@ Provide the translation **of the Value only**, following the instructions above.
                     temperature=0.3,
                 )
 
-                translated_text = response.choices[0].message.content.strip()
+                translated_text = response.choices[0].message.content.strip() # type: ignore[arg-type]
 
                 # Restore placeholders in the translated text
                 translated_text = restore_placeholders(translated_text, placeholder_mapping)
@@ -676,6 +678,13 @@ Provide the translation **of the Value only**, following the instructions above.
                 logging.error(f"An unexpected error occurred: {general_exc}")
                 return index, text
 
+        # Fallback return statement to satisfy linters and ensure explicit return
+        logging.warning(
+            f"Translation loop for key '{key}' completed without an explicit return within the loop. "
+            f"This shouldn't happen with current logic. Returning original text."
+        )
+        return index, text
+
 
 def integrate_translations(
         parsed_lines: List[Dict],
@@ -696,11 +705,11 @@ def integrate_translations(
         List[Dict]: The updated parsed lines.
     """
     for idx, translation_idx in enumerate(indices):
-        key = keys[idx]
-        value = translations[idx]
+        key = keys[idx]  # type: ignore[arg-type]
+        value = translations[idx]  # type: ignore[arg-type]
         if translation_idx < len(parsed_lines):
             # Update existing entry
-            parsed_lines[translation_idx]['value'] = value  # type: ignore
+            parsed_lines[translation_idx]['value'] = value  # type: ignore[arg-type]
         else:
             # Add new entry
             parsed_lines.append({
@@ -1001,8 +1010,8 @@ async def process_translation_queue(
             results.append((index, result))
 
         # Sort results by index to ensure correct order
-        results.sort(key=lambda x: x[0])  # type: ignore
-        translations = [result for _, result in results]  # type: ignore
+        results.sort(key=lambda x: x[0])  # type: ignore[arg-type]
+        translations = [result for _, result in results]  # type: ignore[arg-type]
 
         # Integrate translations into the parsed lines
         updated_lines = integrate_translations(parsed_lines, translations, indices, keys_to_translate)
