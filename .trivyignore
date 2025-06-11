@@ -1,0 +1,4 @@
+# Ignore vulnerabilities found in the third-party Transifex CLI binary.
+# This is a known issue with the vendor's build process, and we accept
+# the risk as the CLI is only used to communicate with Transifex's official API.
+/usr/local/bin/tx 

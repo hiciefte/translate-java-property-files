@@ -26,6 +26,8 @@ This document outlines the structure and purpose of the files and directories wi
 - **`venv/`**: (If used for local development) Contains Python virtual environment files.
 - **`.DS_Store`**: macOS specific file storing custom attributes of its containing folder (should be in `.gitignore`).
 - **`.gitignore`**: Specifies intentionally untracked files that Git should ignore.
+- **`.hadolint.yaml`**: Configuration file for the `hadolint` Dockerfile linter. Used to specify rules to ignore, such as pinning base image versions.
+- **`.trivyignore`**: Configuration file for the `Trivy` vulnerability scanner. Used to suppress specific CVEs that are deemed false positives or are not actionable.
 - **`CONTRIBUTING.md`**: (If present) Guidelines for contributing to the project.
 - **`LICENSE`**: Project's license file.
 - **`README.md`**: Provides the primary overview, setup, configuration, and usage instructions for the project, especially for the Dockerized service.

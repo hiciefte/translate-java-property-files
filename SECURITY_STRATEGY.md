@@ -131,8 +131,8 @@ This strategy aims to provide a robust security posture for the automated transl
 
 To proactively enforce security and quality, a GitHub Actions workflow (`.github/workflows/build-verify.yml`) automatically runs on every pull request. This workflow acts as a security gate and performs the following checks:
 
-1.  **Dockerfile Linting (`hadolint`)**: The `Dockerfile` is scanned for common errors and violations of security best practices. This ensures the container itself is built on a sound foundation.
+1.  **Dockerfile Linting (`hadolint`)**: The `Dockerfile` is scanned for common errors and violations of security best practices. This ensures the container itself is built on a sound foundation. Findings can be managed via the `.hadolint.yaml` file to ignore specific rules where necessary.
 2.  **Dependency Scanning (`pip-audit`)**: The `requirements.txt` file is audited against a database of known vulnerabilities. This prevents the introduction of Python packages with security flaws.
-3.  **Docker Image Vulnerability Scanning (`Trivy`)**: After a successful build, the resulting Docker image is scanned for operating system and library vulnerabilities (e.g., in `ubuntu`, `curl`, `openssl`). This ensures the entire runtime environment is secure.
+3.  **Docker Image Vulnerability Scanning (`Trivy`)**: After a successful build, the resulting Docker image is scanned for operating system and library vulnerabilities (e.g., in `ubuntu`, `curl`, `openssl`). This ensures the entire runtime environment is secure. To manage unactionable findings, such as vulnerabilities in vendor-supplied binaries, specific CVEs are suppressed using the `.trivyignore` file.
 
-If any of these checks fail (e.g., a high-severity vulnerability is found), the workflow fails, preventing the pull request from being merged. This provides a strong, automated first line of defense against security regressions. 
+If any of these checks fail (e.g., a high-severity vulnerability is found that is not explicitly ignored), the workflow fails, preventing the pull request from being merged. This provides a strong, automated first line of defense against security regressions. 

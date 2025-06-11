@@ -69,11 +69,22 @@ jobs:
             ${{ runner.os }}-trivy-
 
       - name: Scan built image with Trivy
+        # Scans the final image for OS and library vulnerabilities.
+        # We use a .trivyignore file to suppress specific CVEs, such as those
+        # present in the vendor-supplied Transifex CLI binary, which are
+        # outside of our control to fix. This is a pragmatic approach to
+        # reduce noise from unactionable alerts.
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: 'translator-app:ci-${{ github.sha }}'
+          image-ref: 'local/translator-app:${{ github.sha }}'
           format: 'table'
+          # Fail the build if any critical or high severity vulnerabilities are found.
           exit-code: '1'
+          # Only report on vulnerabilities that have a known fix.
           ignore-unfixed: true
+          # Scan for both OS and programming language library vulnerabilities.
           vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH' 
+          # The severity levels to scan for.
+          severity: 'CRITICAL,HIGH'
+          # Use the .trivyignore file to suppress specific vulnerability alerts.
+          trivyignores: .trivyignore 
