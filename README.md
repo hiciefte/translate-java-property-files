@@ -413,7 +413,7 @@ setup by `docker-entrypoint.sh`). The script:
     * Ensure `target_project_root` and `input_folder` in `docker/config.docker.yaml` are correct.
     * This can also happen if `tx pull` fails to create the directory. Check `tx pull` logs.
 
-## 🛠️ Advanced Topics & Alternatives
+## Advanced Topics & Alternatives
 
 ### Managing with systemd on a Server
 
@@ -430,16 +430,17 @@ start/stop/status).
    [Service]
    User=translationbot
    Group=docker
-   WorkingDirectory=/opt/translate-java-property-files
+   WorkingDirectory=/opt/translate-java-property-files # Ensure this is the correct project path
    Restart=always
+   # Ensure the full path to docker compose is correct for your system
    ExecStart=/usr/bin/docker compose -f docker/docker-compose.yml up
    ExecStop=/usr/bin/docker compose -f docker/docker-compose.yml down
 
    [Install]
    WantedBy=multi-user.target
    ```
-    * Verify the path for `docker` (e.g., `/usr/bin/docker`). The command uses `docker compose` (V2 syntax). If you have an older Docker Compose V1 installation (`docker-compose` with a hyphen), you might need to adjust the command and path (e.g., to `/usr/local/bin/docker-compose`).
-    * Adjust `User` and `Group` if different.
+    * Verify the path for `docker compose` (e.g., `/usr/bin/docker` or `/usr/local/bin/docker`). The command `docker compose` (V2 syntax) is used. If you have an older Docker Compose V1 installation (`docker-compose` with a hyphen), you would need to adjust the command and potentially the path (e.g., to `/usr/local/bin/docker-compose`).
+    * Ensure `User=translationbot` and `Group=docker` are appropriate for your setup. The `translationbot` user should own the files in `WorkingDirectory` and be a member of the `docker` group.
 
 2. Enable and start:
    ```bash
@@ -456,7 +457,7 @@ start/stop/status).
     * **Restart the Service**: `sudo systemctl restart translator.service`
     * **Disable Auto-start on Boot**: `sudo systemctl disable translator.service`
 
-   You may need to switch to a user with `sudo` privileges (or be `root`) to execute these commands if you are currently operating as `translationbot`.
+   You may need to switch to a user with `sudo` privileges (or be `root`) to execute these `systemctl` commands.
 
 ### Manual Setup & Usage (Local Development/Testing - Not for Production)
 
@@ -482,5 +483,48 @@ Contributions are welcome! Please fork, branch, commit, and send a pull request.
 ## License
 
 This project is licensed under the MIT License.
+
+## Updates and Maintenance
+
+### Updating the Service (`update-service.sh`)
+
+A script named `update-service.sh` is provided in the project root to automate the process of updating the translation service. This script will:
+
+*   Pull the latest changes from the Git repository.
+*   Check for local uncommitted changes and stash them.
+*   Determine if a Docker image rebuild or a service restart is necessary based on the files changed.
+*   Perform the Docker image build (if needed).
+*   Stop/start/restart the `translator.service` systemd service.
+*   Perform a basic health check after updates.
+*   Attempt to roll back to the previous working state if an update fails (e.g., Docker build error, service start failure, health check failure).
+
+**How to run the update script:**
+
+1.  **Navigate to the project directory** (e.g., `/opt/translate-java-property-files`):
+    ```bash
+    cd /opt/translate-java-property-files
+    ```
+
+2.  **Ensure the script is executable**:
+    ```bash
+    chmod +x update-service.sh
+    ```
+
+3.  **Run the script with `sudo`**:
+    The script requires `sudo` privileges to manage the systemd service (`translator.service`) and potentially for Docker commands if the executing user is not in the `docker` group (though `translationbot` should be).
+    ```bash
+    sudo ./update-service.sh
+    ```
+
+The script will log its actions to the console (stderr) and also create detailed logs and rollback state information in the `logs/update_service/` directory within the project.
+
+### Manual Docker Operations (If Needed)
+
+If you need to manually interact with the Docker service:
+
+*   **Build image** (as `translationbot` from project root):
+    ```bash
+    docker compose -f docker/docker-compose.yml build --no-cache
+    ```
 
    
