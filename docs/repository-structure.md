@@ -5,7 +5,9 @@ This document outlines the structure and purpose of the files and directories wi
 ## Root Directory
 
 - **`.git/`**: Contains Git version control information.
-- **`.github/`**: (If present) Contains GitHub-specific files like workflows or issue templates.
+- **`.github/`**: Contains GitHub-specific files like workflows or issue templates.
+  - **`workflows/`**: Contains GitHub Actions workflow files.
+    - **`build-verify.yml`**: Defines a CI workflow that runs on pull requests. It lints the Dockerfile, scans dependencies and the final image for vulnerabilities, and verifies that the Docker image can be built successfully.
 - **`docker/`**: Contains all files for building and running the Dockerized application.
   - **`Dockerfile`**: Defines the Docker image, installs dependencies (Python, Git, GPG, CLIs), sets up `appuser`, and imports the bot GPG key.
   - **`docker-compose.yml`**: Configures the Docker service (`translator`), manages environment variables (from `docker/.env` by default), and volume mounts.
