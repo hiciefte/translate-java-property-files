@@ -42,9 +42,9 @@ RUN apt-get update && \
     GOSU_ARCH="$(dpkg --print-architecture)"; \
     curl -sSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$GOSU_ARCH"; \
     if [ "$GOSU_ARCH" = "amd64" ]; then \
-        GOSU_SHA256="13216035334b341f235555c15ee4f6e6d15cc95a0455ce778f9e99cba4839848"; \
+        GOSU_SHA256="bbc4136d03ab138b1ad66fa4fc051bafc6cc7ffae632b069a53657279a450de3"; \
     elif [ "$GOSU_ARCH" = "arm64" ]; then \
-        GOSU_SHA256="e46162123a63531b26284f22849e75fab7b9d62d294025b902047321e1a49298"; \
+        GOSU_SHA256="c3805a85d17f4454c23d7059bcb97e1ec1af272b90126e79ed002342de08389b"; \
     else \
         echo "Unsupported architecture: $GOSU_ARCH" >&2; \
         exit 1; \

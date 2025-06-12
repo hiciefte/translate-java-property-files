@@ -85,7 +85,7 @@ class TestPythonScriptIntegration(unittest.IsolatedAsyncioTestCase):
                 f.write("dialog.title=Hello World\n")
                 f.write("error.message=An error has occurred.\n")
 
-        # logging.disable(logging.CRITICAL)
+        logging.disable(logging.CRITICAL)
 
     def tearDown(self):
         """
