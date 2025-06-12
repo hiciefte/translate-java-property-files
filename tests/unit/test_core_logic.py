@@ -1,6 +1,13 @@
 import os
 import unittest
 from unittest.mock import patch
+import tempfile
+import textwrap
+
+# Set a dummy API key before importing the main script.
+# This prevents the OpenAI client from failing in a test environment
+# where the key might not be set.
+os.environ['OPENAI_API_KEY'] = 'DUMMY_KEY_FOR_TESTING'
 
 # It's good practice to be able to import the functions to be tested.
 # This might require adjusting the Python path if the test runner doesn't handle it.
@@ -22,47 +29,44 @@ class TestCoreLogic(unittest.TestCase):
         Tests that parse_properties_file correctly handles various .properties file features,
         especially multi-line values.
         """
-        # Define the exact content to be written to the temp file
-        content = """# This is a comment
+        # Use textwrap.dedent to avoid issues with leading whitespace.
+        content = textwrap.dedent("""
+            # This is a comment
 
-key.one=Simple value
-key.two=This is a multi-line value that \\
-         continues on the next line.
-# Another comment
-key.three=Another simple value
-"""
-        # Create a temporary file to parse
-        temp_dir = os.path.join(os.path.dirname(__file__), 'temp')
-        os.makedirs(temp_dir, exist_ok=True)
-        temp_file_path = os.path.join(temp_dir, 'test.properties')
-        with open(temp_file_path, 'w', encoding='utf-8') as f:
-            f.write(content.strip())
+            key.one=Simple value
+            key.two=This is a multi-line value that \\
+                     continues on the next line.
+            # Another comment
+            key.three=Another simple value
+        """)
 
-        parsed_lines, translations = parse_properties_file(temp_file_path)
+        # Use a temporary directory to ensure cleanup and avoid conflicts.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_file_path = os.path.join(temp_dir, 'test.properties')
+            with open(temp_file_path, 'w', encoding='utf-8') as f:
+                f.write(content.lstrip())
 
-        # 1. Test the translations dictionary
-        expected_translations = {
-            'key.one': 'Simple value',
-            'key.two': 'This is a multi-line value that continues on the next line.',
-            'key.three': 'Another simple value'
-        }
-        self.assertEqual(translations, expected_translations)
+            parsed_lines, translations = parse_properties_file(temp_file_path)
 
-        # 2. Test the parsed_lines structure
-        self.assertEqual(len(parsed_lines), 6)
-        self.assertEqual(parsed_lines[0]['type'], 'comment_or_blank')
-        self.assertEqual(parsed_lines[1]['type'], 'comment_or_blank')
-        self.assertEqual(parsed_lines[2]['type'], 'entry')
-        self.assertEqual(parsed_lines[2]['key'], 'key.one')
-        self.assertEqual(parsed_lines[3]['type'], 'entry')
-        self.assertEqual(parsed_lines[3]['key'], 'key.two')
-        self.assertEqual(parsed_lines[3]['value'], 'This is a multi-line value that continues on the next line.')
-        self.assertEqual(parsed_lines[4]['type'], 'comment_or_blank')
-        self.assertEqual(parsed_lines[5]['type'], 'entry')
+            # 1. Test the translations dictionary
+            expected_translations = {
+                'key.one': 'Simple value',
+                'key.two': 'This is a multi-line value that continues on the next line.',
+                'key.three': 'Another simple value'
+            }
+            self.assertEqual(translations, expected_translations)
 
-        # Clean up the temporary file and directory
-        os.remove(temp_file_path)
-        os.rmdir(temp_dir)
+            # 2. Test the parsed_lines structure
+            self.assertEqual(len(parsed_lines), 6)
+            self.assertEqual(parsed_lines[0]['type'], 'comment_or_blank')
+            self.assertEqual(parsed_lines[1]['type'], 'comment_or_blank')
+            self.assertEqual(parsed_lines[2]['type'], 'entry')
+            self.assertEqual(parsed_lines[2]['key'], 'key.one')
+            self.assertEqual(parsed_lines[3]['type'], 'entry')
+            self.assertEqual(parsed_lines[3]['key'], 'key.two')
+            self.assertEqual(parsed_lines[3]['value'], 'This is a multi-line value that continues on the next line.')
+            self.assertEqual(parsed_lines[4]['type'], 'comment_or_blank')
+            self.assertEqual(parsed_lines[5]['type'], 'entry')
 
     def test_integrate_and_reassemble(self):
         """
@@ -89,16 +93,13 @@ key.three=Another simple value
 
         # 5. Assert the final content is exactly as expected
         expected_content = (
-            "key.one=new translated value\\n"
+            "key.one=new translated value\n"
             "# A comment\\n"
-            "key.new=a brand new key's value\\n"
+            "key.new=a brand new key's value\n"
         )
 
-        # We need to normalize newlines for comparison
-        self.assertEqual(
-            final_content.replace('\\n', '\n'),
-            expected_content.replace('\\n', '\n')
-        )
+        # The reassemble function uses '\\n' literally, so we compare directly.
+        self.assertEqual(final_content, expected_content)
 
     def test_build_context_respects_token_limit(self):
         """
@@ -114,23 +115,27 @@ key.three=Another simple value
 
         with patch('src.translate_localization_files.count_tokens', side_effect=mock_count_tokens):
             existing_translations = {
-                "key1": "translation1",  # len("key1 = \\"translation1\\"") = 20
-                "key2": "translation2",  # len("key2 = \\"translation2\\"") = 20
-                "key3": "translation3"  # len("key3 = \\"translation3\\"") = 20
+                "key1": "translation1",
+                "key2": "translation2",
+                "key3": "translation3"
             }
             source_translations = {
                 "key1": "source1",
                 "key2": "source2",
                 "key3": "source3"
             }
-            language_glossary = {"term": "gloss"}  # len('"term" should be translated as "gloss"') = 38
+            language_glossary = {"term": "gloss"}
             model_name = "test-model"
 
-            # Set max_tokens so only one example can fit after accounting for
-            # the glossary and a reserved amount (1000 in the actual function).
-            # Glossary (38) + one example (20) + reserved (1000) = 1058.
-            # We'll set the limit just above that.
-            max_tokens = 1059
+            # Dynamically calculate token counts based on the mock function
+            # to make the test self-verifying.
+            glossary_len = mock_count_tokens(f'"term" should be translated as "gloss"', model_name)
+            example1_len = mock_count_tokens(f'key1 = "translation1"', model_name)
+            # Function reserves 1000 tokens for the response.
+            reserved_len = 1000
+
+            # Set max_tokens so only the glossary and one example can fit.
+            max_tokens = glossary_len + example1_len + reserved_len + 1
 
             context_text, glossary_text = build_context(
                 existing_translations,
@@ -152,8 +157,10 @@ key.three=Another simple value
         """
         Tests the `normalize_value` helper function.
         """
-        self.assertEqual(normalize_value("hello\\nworld"), "hello<newline>world", "Literal newline should be replaced.")
+        # Test case for a real, literal newline character in the string.
+        self.assertEqual(normalize_value("hello\nworld"), "hello<newline>world", "Literal newline should be replaced.")
         self.assertEqual(normalize_value("  hello   world  "), "hello world", "Spaces should be normalized.")
+        # Test case for an escaped newline sequence in the string.
         self.assertEqual(normalize_value("hello\\nworld"), "hello<newline>world", "Escaped newline should be replaced.")
         self.assertEqual(normalize_value(None), "", "None input should return empty string.")
 
