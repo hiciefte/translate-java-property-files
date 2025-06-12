@@ -1,6 +1,6 @@
-import unittest
 import os
-from unittest.mock import patch, MagicMock
+import unittest
+from unittest.mock import patch
 
 # It's good practice to be able to import the functions to be tested.
 # This might require adjusting the Python path if the test runner doesn't handle it.
@@ -9,7 +9,7 @@ from src.translate_localization_files import (
     integrate_translations,
     reassemble_file,
     build_context,
-    count_tokens,  # Imported to assist in build_context testing
+    # Imported to assist in build_context testing
     normalize_value,
     extract_texts_to_translate
 )
@@ -59,7 +59,7 @@ key.three=Another simple value
         self.assertEqual(parsed_lines[3]['value'], 'This is a multi-line value that continues on the next line.')
         self.assertEqual(parsed_lines[4]['type'], 'comment_or_blank')
         self.assertEqual(parsed_lines[5]['type'], 'entry')
-        
+
         # Clean up the temporary file and directory
         os.remove(temp_file_path)
         os.rmdir(temp_dir)
@@ -93,7 +93,7 @@ key.three=Another simple value
             "# A comment\\n"
             "key.new=a brand new key's value\\n"
         )
-        
+
         # We need to normalize newlines for comparison
         self.assertEqual(
             final_content.replace('\\n', '\n'),
@@ -105,6 +105,7 @@ key.three=Another simple value
         Tests that build_context correctly limits the number of examples
         based on the max_tokens parameter.
         """
+
         # Mocking `count_tokens` to have predictable token counts
         def mock_count_tokens(text: str, model_name: str) -> int:
             # Simple mock: token count is the length of the text.
@@ -115,14 +116,14 @@ key.three=Another simple value
             existing_translations = {
                 "key1": "translation1",  # len("key1 = \\"translation1\\"") = 20
                 "key2": "translation2",  # len("key2 = \\"translation2\\"") = 20
-                "key3": "translation3"   # len("key3 = \\"translation3\\"") = 20
+                "key3": "translation3"  # len("key3 = \\"translation3\\"") = 20
             }
             source_translations = {
                 "key1": "source1",
                 "key2": "source2",
                 "key3": "source3"
             }
-            language_glossary = {"term": "gloss"} # len('"term" should be translated as "gloss"') = 38
+            language_glossary = {"term": "gloss"}  # len('"term" should be translated as "gloss"') = 38
             model_name = "test-model"
 
             # Set max_tokens so only one example can fit after accounting for
@@ -170,7 +171,7 @@ key.three=Another simple value
             {'type': 'entry', 'key': 'key1_needs_translation', 'value': 'Source Value 1', 'line_number': 1},
             {'type': 'comment_or_blank', 'content': '# comment', 'line_number': 2},
         ]
-        
+
         target_translations = {
             'key0_translated': 'Zielwert 0',
             'key1_needs_translation': 'Source Value 1',
@@ -193,11 +194,12 @@ key.three=Another simple value
         expected_texts = sorted(['Source Value 1', 'Source Value 2'])
         expected_keys = sorted(['key1_needs_translation', 'key2_new'])
         # key1 is at index 1 in parsed_lines. key2 is new, so its index is len(parsed_lines) = 3.
-        expected_indices = [1, 3] 
+        expected_indices = [1, 3]
 
         self.assertEqual(sorted(texts), expected_texts, "Should identify untranslated and new keys.")
         self.assertEqual(sorted(keys), expected_keys, "Should identify the correct keys for translation.")
         self.assertEqual(indices, expected_indices, "Should return the correct original and new indices.")
 
+
 if __name__ == '__main__':
-    unittest.main() 
+    unittest.main()
