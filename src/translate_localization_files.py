@@ -320,63 +320,55 @@ def extract_texts_to_translate(
         target_translations: Dict[str, str]
 ) -> Tuple[List[str], List[int], List[str]]:
     """
-    Extract texts that need translation.
+    Identifies which texts need to be translated. A text needs translation if:
+    1. The key is new (exists in source, not in target).
+    2. The key exists in both, but the source and target values are identical,
+       indicating an untranslated string copied from the source by a tool like Transifex.
 
     Args:
-        parsed_lines (List[Dict]): Parsed lines from the target file.
-        source_translations (Dict[str, str]): Translations from the source file.
-        target_translations (Dict[str, str]): Translations from the target file.
+        parsed_lines: The parsed content of the target language file.
+        source_translations: A dictionary of key-value pairs from the source (e.g., English) file.
+        target_translations: A dictionary of key-value pairs from the target file being processed.
 
     Returns:
-        Tuple[List[str], List[int], List[str]]: Texts to translate, their indices, and keys.
+        A tuple containing the list of texts to translate, their corresponding indices, and their keys.
     """
     texts_to_translate = []
     indices = []
-    keys = []
-    key_to_index = {item['key']: idx for idx, item in enumerate(parsed_lines) if item['type'] == 'entry'}
-    next_index = len(parsed_lines)  # Start index for new entries
+    keys_to_translate = []
 
-    for key, source_value in source_translations.items():
-        target_value = target_translations.get(key)
-        normalized_source = normalize_value(source_value)
-        normalized_target = normalize_value(target_value)
-        if target_value is None or normalized_target == normalized_source:
-            # Needs translation
-            texts_to_translate.append(source_value)
-            if key in key_to_index:
-                indices.append(key_to_index[key])
-            else:
-                # Key is missing in target, will be appended
-                indices.append(next_index)
-                next_index += 1
-            keys.append(key)
-    return texts_to_translate, indices, keys
+    existing_keys_in_target = {line['key'] for line in parsed_lines if line['type'] == 'entry'}
 
+    # 1. Check existing keys for required updates.
+    # A key needs translation if the source value is THE SAME as the target value,
+    # as this indicates a fallback to the source language.
+    for i, line in enumerate(parsed_lines):
+        if line['type'] == 'entry':
+            key = line['key']
+            target_value = line.get('value', '')
+            source_value = source_translations.get(key)
 
-def apply_glossary(translated_text: str, language_glossary: Dict[str, str]) -> str:
-    """
-    Apply glossary terms to the translated text, excluding text within angle brackets.
+            # If key exists in source and the values are identical, it needs translation.
+            if source_value is not None and normalize_value(source_value) == normalize_value(target_value):
+                # The value to translate is the source value.
+                texts_to_translate.append(source_value)
+                indices.append(i)  # Use the line's actual index
+                keys_to_translate.append(key)
 
-    Args:
-        translated_text (str): The translated text.
-        language_glossary (Dict[str, str]): The glossary for the language.
+    # 2. Find new keys that are in the source but not in the target file.
+    new_keys = source_translations.keys() - existing_keys_in_target
 
-    Returns:
-        str: The text with glossary terms applied, excluding tags.
-    """
-    # Split the text into parts inside and outside of angle brackets
-    parts = re.split(r'(<[^<>]+>)', translated_text)
-    # parts will be a list where even indices are outside angle brackets, odd indices are inside
-    for i in range(0, len(parts), 2): # type: ignore[arg-type]
-        # Apply glossary to parts[i] (outside angle brackets)
-        for source_term, target_term in language_glossary.items():
-            # Use regex to replace whole words only, case-insensitive
-            parts[i] = re.sub( # type: ignore[arg-type]
-                rf'\b{re.escape(source_term)}\b',
-                target_term, parts[i], flags=re.IGNORECASE
-            )
-    # Reassemble the text
-    return ''.join(parts)
+    # Start indexing for new keys from after the last line of the parsed file
+    next_new_key_index = len(parsed_lines)
+
+    for key in sorted(list(new_keys)):  # Sort for deterministic order
+        source_value = source_translations[key]
+        texts_to_translate.append(source_value)
+        indices.append(next_new_key_index)
+        keys_to_translate.append(key)
+        next_new_key_index += 1
+
+    return texts_to_translate, indices, keys_to_translate
 
 
 def count_tokens(text: str, model_name: str = 'gpt-3.5-turbo') -> int:
@@ -497,7 +489,8 @@ def restore_placeholders(text: str, placeholder_mapping: Dict[str, str]) -> str:
 
 def clean_translated_text(translated_text: str, original_text: str) -> str:
     """
-    Clean the translated text by removing unwanted quotation marks or brackets.
+    Cleans the translated text by removing leading/trailing quotes and ensuring
+    that the text is not surrounded by unwanted characters.
 
     Args:
         translated_text (str): The translated text.
@@ -506,11 +499,11 @@ def clean_translated_text(translated_text: str, original_text: str) -> str:
     Returns:
         str: The cleaned translated text.
     """
-    # Remove quotation marks added around the text if they were not in the original text
+    # Remove leading/trailing quotes if they are not in the original text
     if translated_text.startswith('"') and translated_text.endswith('"') and not (
             original_text.startswith('"') and original_text.endswith('"')):
         translated_text = translated_text[1:-1]
-    # Remove square brackets if they were not in the original text
+    # Remove square brackets if they are not in the original text
     if translated_text.startswith('[') and translated_text.endswith(']') and not (
             original_text.startswith('[') and original_text.endswith(']')):
         translated_text = translated_text[1:-1]
@@ -661,9 +654,6 @@ Provide the translation **of the Value only**, following the instructions above.
                 # Clean the translated text
                 translated_text = clean_translated_text(translated_text, text)
 
-                # Apply glossary post-processing (with updated function)
-                translated_text = apply_glossary(translated_text, language_glossary)
-
                 logging.debug(f"Translated key '{key}' successfully.")
                 return index, translated_text
 
@@ -675,7 +665,7 @@ Provide the translation **of the Value only**, following the instructions above.
                 else:
                     return index, text
             except Exception as general_exc:
-                logging.error(f"An unexpected error occurred: {general_exc}")
+                logging.error(f"An unexpected error occurred: {general_exc}", exc_info=True)
                 return index, text
 
         # Fallback return statement to satisfy linters and ensure explicit return
@@ -755,23 +745,24 @@ def reassemble_file(parsed_lines: List[Dict]) -> str:
     return ''.join(lines)
 
 
-def extract_language_from_filename(filename: str) -> Optional[str]:
+def extract_language_from_filename(filename: str, supported_codes: List[str]) -> Optional[str]:
     """
-    Extract the language code from a filename.
+    Extract the language code from a filename by checking against a list of supported codes.
 
     Args:
         filename (str): The filename.
+        supported_codes (List[str]): A list of supported language codes.
 
     Returns:
         Optional[str]: The language code if found, else None.
     """
-    match = re.search(r'_(\w{2,3}(?:_\w{2})?)\.properties$', filename)
-    if match:
-        # Extract the language code without the preceding underscore and file extension
-        lang_code = match.group(1)  # e.g., 'cs' from '_cs.properties'
-        return lang_code
-    else:
-        return None
+    # Sort codes by length, longest first, to handle cases like 'pt_BR' before 'pt'
+    # if 'pt' were ever a supported code.
+    sorted_codes = sorted(supported_codes, key=len, reverse=True)
+    for code in sorted_codes:
+        if filename.endswith(f'_{code}.properties'):
+            return code
+    return None
 
 
 def move_files_to_archive(input_folder_path: str, archive_folder_path: str):
@@ -950,7 +941,7 @@ async def process_translation_queue(
 
     for translation_file in properties_files:
         # Extract the language code from the filename
-        language_code = extract_language_from_filename(translation_file)
+        language_code = extract_language_from_filename(translation_file, list(LANGUAGE_CODES.keys()))
         if not language_code:
             logging.warning(f"Skipping file {translation_file}: unable to extract language code.")
             continue

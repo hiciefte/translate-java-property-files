@@ -252,14 +252,64 @@ if [ ! -d "$TARGET_PROJECT_ROOT" ]; then
     exit 1
 fi
 
-# Navigate to the target project root
-cd "$TARGET_PROJECT_ROOT"
-log "Changed directory to target project root: $(pwd)"
-log "Listing permissions for $TARGET_PROJECT_ROOT before stash:"
-ls -la "$TARGET_PROJECT_ROOT"
-log "Listing permissions for $TARGET_PROJECT_ROOT/.git before stash:"
-ls -la "$TARGET_PROJECT_ROOT/.git"
-log "Ensuring repository is in a clean state..."
+# Change directory to the target project root
+cd "$TARGET_PROJECT_ROOT" || {
+    log "Error: Could not change directory to target project root: $TARGET_PROJECT_ROOT"
+    exit 1
+}
+
+log "Successfully changed directory to $TARGET_PROJECT_ROOT"
+
+log "Verifying Transifex configuration against actual source files..."
+
+TX_CONFIG_FILE=".tx/config"
+if [ ! -f "$TX_CONFIG_FILE" ]; then
+    log "Warning: Transifex config file not found at '$TARGET_PROJECT_ROOT/$TX_CONFIG_FILE'. Skipping verification."
+else
+    # Check for unconfigured source files before proceeding.
+    # This prevents pulling translations for files that are no longer part of the source.
+    #
+    log "INFO" "Checking for source files that are not configured in Transifex..."
+
+    # Extract the 'source_file' for each resource from the Transifex config.
+    # This gives us the configured source files with their full paths relative to the repo root.
+    # Example: i18n/src/main/resources/BtcAddresses.properties
+    mapfile -t configured_sources < <(yq e '.main.projects.bisq.resources[].source_file' "$TX_CONFIG_FILE")
+
+    # Get the actual English source files present on disk.
+    # We use find and then remove the input folder prefix to get paths relative to the input folder,
+    # which should match the format in the Transifex config.
+    shopt -s globstar
+    mapfile -t actual_sources_full_path < <(find "$ABSOLUTE_INPUT_FOLDER" -type f -name '*_en.properties')
+
+    declare -A configured_relative_paths
+    for src in "${configured_sources[@]}"; do
+        configured_relative_paths["$src"]=1
+    done
+
+    unconfigured_files_found=false
+    for full_path in "${actual_sources_full_path[@]}"; do
+        # Make the path relative to the target project root to match the tx config format
+        relative_path=${full_path#"$TARGET_PROJECT_ROOT/"}
+        if [[ -z "${configured_relative_paths["$relative_path"]}" ]]; then
+            if ! $unconfigured_files_found; then
+                log "WARNING" "Found source files not configured in Transifex:"
+                unconfigured_files_found=true
+            fi
+            log "WARNING" "  - $relative_path"
+        fi
+    done
+
+    if $unconfigured_files_found; then
+        log "ERROR" "Aborting due to unconfigured source files. Please update the Transifex config at '$TX_CONFIG_FILE' and push the changes."
+        exit 1
+    fi
+    log "INFO" "All source files are correctly configured in Transifex."
+fi
+
+# Stash any local changes to avoid conflicts, but do this carefully
+log "Stashing any existing local changes in $TARGET_PROJECT_ROOT"
+git stash push -- i18n/src/main/resources/
 
 # Save the current branch (should be main as set by entrypoint)
 ORIGINAL_BRANCH=$(git branch --show-current)
@@ -267,28 +317,6 @@ log "Current branch (should be main): $ORIGINAL_BRANCH"
 if [ "$ORIGINAL_BRANCH" != "main" ]; then
     log "Warning: Expected to be on main branch, but on $ORIGINAL_BRANCH. Checking out main."
     git checkout main
-fi
-
-# Stash any unexpected local changes (though entrypoint should have left it clean)
-log "Stashing any lingering changes to ensure a clean state..."
-log "DEBUG: Before stash command"
-set +e
-STASH_RESULT=$(git stash push -u -m "Auto-stashed by update-translations.sh" 2>&1)
-STASH_EXIT_CODE=$?
-log "DEBUG: After stash command"
-set -e
-log "DEBUG: git stash exit code: $STASH_EXIT_CODE"
-log "DEBUG: git stash output: $STASH_RESULT"
-if [[ $STASH_EXIT_CODE -ne 0 ]]; then
-    log "Warning: git stash failed with exit code $STASH_EXIT_CODE. Output: $STASH_RESULT"
-fi
-log "DEBUG: After stash result logic"
-STASH_NEEDED=0
-if [[ $STASH_RESULT != "No local changes to save" ]]; then
-    STASH_NEEDED=1
-    log "Lingering changes were stashed."
-else
-    log "No lingering changes to stash; repository is clean."
 fi
 
 # The entrypoint script already reset main to upstream/main and updated submodules.
@@ -315,12 +343,16 @@ if command_exists tx; then
     fi
     
     # Pull translations with -t option
-    log "Using tx pull -t --use-git-timestamps command"
+    log "Using tx pull -t -f --use-git-timestamps command"
     log "Listing permissions for current directory ($(pwd)) before tx pull:"
     ls -la .
     log "Listing permissions for ./i18n/src/main/resources before tx pull:"
     ls -la ./i18n/src/main/resources
-    tx pull -t --use-git-timestamps || log "Failed to pull translations from Transifex, continuing with script"
+    tx pull -t -f --use-git-timestamps || {
+        log "Error during tx pull. Exiting."
+        exit 1
+    }
+    log "Successfully pulled translations"
 else
     log "Error: Transifex CLI not found. Please install it manually."
     exit 1
@@ -332,7 +364,7 @@ log "Returned to the translation script directory"
 
 # Step 3: Run the translation script with the virtual environment Python
 log "Running translation script"
-python src/translate_localization_files.py || {
+"$VENV_DIR/bin/python" src/translate_localization_files.py || {
     log "Error: Failed to run translation script. Exiting."
     exit 1
 }
@@ -433,7 +465,7 @@ git submodule init
 git submodule update --recursive
 
 # Pop the stash if we stashed changes earlier
-if [ $STASH_NEEDED -eq 1 ]; then
+if [ -n "$(git stash list)" ]; then
     log "Popping stashed changes"
     git stash pop
 fi

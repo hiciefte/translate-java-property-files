@@ -17,17 +17,18 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends software-properties-common && \
     add-apt-repository ppa:deadsnakes/ppa && \
     apt-get update && \
-    apt-get install -y --no-install-recommends \
-        git \
-        openssh-client \
-        gnupg \
-        curl \
-        python3.9 \
-        python3.9-venv \
-        python3-pip \
-        cron \
-        procps \
-        psmisc && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    cron \
+    curl \
+    git \
+    gnupg \
+    jq \
+    python3.9 \
+    python3.9-venv \
+    python3-pip \
+    openssh-client && \
     #
     # Install GitHub CLI
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
@@ -35,8 +36,27 @@ RUN apt-get update && \
     apt-get update && \
     apt-get install -y gh --no-install-recommends && \
     #
-    # Clean up apt cache to reduce image size
+    # Download and install gosu for user switching
+    set -eux; \
+    GOSU_VERSION=1.17; \
+    GOSU_ARCH="$(dpkg --print-architecture)"; \
+    curl -sSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$GOSU_ARCH"; \
+    if [ "$GOSU_ARCH" = "amd64" ]; then \
+        GOSU_SHA256="bbc4136d03ab138b1ad66fa4fc051bafc6cc7ffae632b069a53657279a450de3"; \
+    elif [ "$GOSU_ARCH" = "arm64" ]; then \
+        GOSU_SHA256="c3805a85d17f4454c23d7059bcb97e1ec1af272b90126e79ed002342de08389b"; \
+    else \
+        echo "Unsupported architecture: $GOSU_ARCH" >&2; \
+        exit 1; \
+    fi; \
+    echo "$GOSU_SHA256 /usr/local/bin/gosu" | sha256sum -c -; \
+    chmod +x /usr/local/bin/gosu && \
+    #
+    # Clean up apt cache and remove temporary dependencies
     rm -rf /var/lib/apt/lists/* && \
+    apt-get remove -y software-properties-common && \
+    apt-get autoremove -y && \
+    apt-get clean && \
     #
     # Create a non-root user with the --no-log-init flag
     groupadd -o -g ${HOST_GID:-1000} appuser && \
