@@ -161,11 +161,13 @@ class TestPythonScriptIntegration(unittest.IsolatedAsyncioTestCase):
             "es": "Spanish",
             "pt_BR": "Brazilian Portuguese"
         }
-
+        mock_name_to_code = {name.lower(): code for code, name in mock_language_codes.items()}
+    
         # 4. Run the function under test, ensuring DRY_RUN is False
         with patch('src.translate_localization_files.client.chat.completions.create', new=mock_create), \
              patch('src.translate_localization_files.INPUT_FOLDER', self.test_input_folder), \
              patch('src.translate_localization_files.LANGUAGE_CODES', mock_language_codes), \
+             patch('src.translate_localization_files.NAME_TO_CODE', mock_name_to_code), \
              patch('src.translate_localization_files.DRY_RUN', False):
             await src.translate_localization_files.process_translation_queue(
                 translation_queue_folder=self.test_translation_queue_folder,
