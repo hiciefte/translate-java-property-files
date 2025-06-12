@@ -168,6 +168,13 @@ else
     chmod 600 /root/.ssh/config
     log "SSH configured for root."
 
+    # Function to log current commit status
+    log_commit_status() {
+        local timing_label="$1"
+        log "Current commit on main ($timing_label):"
+        git -C "$TARGET_REPO_DIR" log -1 --pretty=format:"%h - %an, %ar : %s"
+    }
+
     # System-wide configuration to trust the target repository directory, done by root.
     # This should be done *before* any git operations are attempted in that directory by root.
     log "Adding $TARGET_REPO_DIR to system-wide Git safe.directory configuration..."
@@ -230,15 +237,12 @@ else
             log "Warning: FORK_REPO_NAME not set. Cannot ensure origin URL is SSH for existing repo. Push might fail for appuser."
         fi
 
-        echo "[Entrypoint] /target_repo/.git exists. Fetching updates..."
         cd "$TARGET_REPO_DIR" || exit
-        echo "[Entrypoint] Current commit before fetch:"
-        git rev-parse HEAD
+        log_commit_status "before update"
         git fetch upstream
         git reset --hard upstream/main
-        echo "[Entrypoint] Current commit after reset to upstream/main:"
-        git rev-parse HEAD
-        echo "[Entrypoint] Verifying contents of i18n/src/main/resources post-update:"
+        log_commit_status "after update"
+        log "Verifying contents of i18n/src/main/resources post-update:"
         ls -la i18n/src/main/resources
         cd /
 
@@ -292,15 +296,12 @@ else
             log "Warning: FORK_REPO_NAME not set in environment. Cannot change origin URL to SSH. Push will likely use HTTPS."
         fi
 
-        echo "[Entrypoint] /target_repo/.git exists. Fetching updates..."
         cd "$TARGET_REPO_DIR" || exit
-        echo "[Entrypoint] Current commit before fetch:"
-        git rev-parse HEAD
+        log_commit_status "before reset to upstream"
         git fetch upstream
         git reset --hard upstream/main
-        echo "[Entrypoint] Current commit after reset to upstream/main:"
-        git rev-parse HEAD
-        echo "[Entrypoint] Verifying contents of i18n/src/main/resources post-update:"
+        log_commit_status "after reset to upstream"
+        log "Verifying contents of i18n/src/main/resources post-clone:"
         ls -la i18n/src/main/resources
         cd /
     fi

@@ -35,11 +35,12 @@ RUN apt-get update && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
     apt-get update && \
     apt-get install -y gh --no-install-recommends && \
+    #
     # Download and install gosu for user switching
     set -eux; \
     GOSU_VERSION=1.17; \
     GOSU_ARCH="$(dpkg --print-architecture)"; \
-    wget -O /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$GOSU_ARCH"; \
+    curl -sSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$GOSU_ARCH"; \
     if [ "$GOSU_ARCH" = "amd64" ]; then \
         GOSU_SHA256="13216035334b341f235555c15ee4f6e6d15cc95a0455ce778f9e99cba4839848"; \
     elif [ "$GOSU_ARCH" = "arm64" ]; then \
