@@ -252,14 +252,61 @@ if [ ! -d "$TARGET_PROJECT_ROOT" ]; then
     exit 1
 fi
 
-# Navigate to the target project root
-cd "$TARGET_PROJECT_ROOT"
-log "Changed directory to target project root: $(pwd)"
-log "Listing permissions for $TARGET_PROJECT_ROOT before stash:"
-ls -la "$TARGET_PROJECT_ROOT"
-log "Listing permissions for $TARGET_PROJECT_ROOT/.git before stash:"
-ls -la "$TARGET_PROJECT_ROOT/.git"
-log "Ensuring repository is in a clean state..."
+# Change directory to the target project root
+cd "$TARGET_PROJECT_ROOT" || {
+    log "Error: Could not change directory to target project root: $TARGET_PROJECT_ROOT"
+    exit 1
+}
+
+log "Successfully changed directory to $TARGET_PROJECT_ROOT"
+
+log "Verifying Transifex configuration against actual source files..."
+
+TX_CONFIG_FILE=".tx/config"
+if [ ! -f "$TX_CONFIG_FILE" ]; then
+    log "Warning: Transifex config file not found at '$TARGET_PROJECT_ROOT/$TX_CONFIG_FILE'. Skipping verification."
+else
+    # Get the list of source files configured in Transifex.
+    # Example line: source_file = i18n/src/main/resources/app.properties
+    # We extract the path after "= " and then get just the filename.
+    CONFIGURED_SOURCES=$(grep 'source_file *=' "$TX_CONFIG_FILE" | awk -F'= *' '{print $2}' | xargs -n 1 basename)
+
+    # Get the list of actual source .properties files on disk.
+    # This is more robust than the previous glob. It finds all .properties files,
+    # then filters out anything that looks like a translation file (e.g., _de, _pt_BR).
+    ACTUAL_SOURCES=$(find "$ABSOLUTE_INPUT_FOLDER" -maxdepth 1 -type f -name '*.properties' | grep -v -E '_[a-z]{2}(_[A-Z]{2})?\.properties$|_pcm\.properties$|_af_ZA\.properties$' | xargs -n 1 basename)
+
+    # Now, compare the two lists.
+    unconfigured_found=false
+    for source_file in $ACTUAL_SOURCES; do
+        if ! echo "$CONFIGURED_SOURCES" | grep -q -w "$source_file"; then
+            log "------------------------------------------------------------"
+            log "WARNING: UNCONFIGURED SOURCE FILE DETECTED"
+            log "The source file '$source_file' exists in your project at:"
+            log "  => '$ABSOLUTE_INPUT_FOLDER'"
+            log "But it is NOT configured in '$TX_CONFIG_FILE'."
+            log ""
+            log "ACTION REQUIRED:"
+            log "1. Add this resource to your Transifex project."
+            log "2. Update '$TX_CONFIG_FILE' with the new resource details."
+            log "   (You can often do this by running 'tx push -s' locally once)."
+            log "------------------------------------------------------------"
+            unconfigured_found=true
+        fi
+    done
+
+    if [ "$unconfigured_found" = true ]; then
+        log "Error: Found unconfigured source files. Halting script to prevent incomplete translation push."
+        log "Please address the warnings above."
+        exit 1
+    else
+        log "Transifex configuration is up to date with source files. Proceeding."
+    fi
+fi
+
+# Stash any local changes to avoid conflicts, but do this carefully
+log "Stashing any existing local changes in $TARGET_PROJECT_ROOT"
+git stash push -- i18n/src/main/resources/
 
 # Save the current branch (should be main as set by entrypoint)
 ORIGINAL_BRANCH=$(git branch --show-current)
@@ -267,28 +314,6 @@ log "Current branch (should be main): $ORIGINAL_BRANCH"
 if [ "$ORIGINAL_BRANCH" != "main" ]; then
     log "Warning: Expected to be on main branch, but on $ORIGINAL_BRANCH. Checking out main."
     git checkout main
-fi
-
-# Stash any unexpected local changes (though entrypoint should have left it clean)
-log "Stashing any lingering changes to ensure a clean state..."
-log "DEBUG: Before stash command"
-set +e
-STASH_RESULT=$(git stash push -u -m "Auto-stashed by update-translations.sh" 2>&1)
-STASH_EXIT_CODE=$?
-log "DEBUG: After stash command"
-set -e
-log "DEBUG: git stash exit code: $STASH_EXIT_CODE"
-log "DEBUG: git stash output: $STASH_RESULT"
-if [[ $STASH_EXIT_CODE -ne 0 ]]; then
-    log "Warning: git stash failed with exit code $STASH_EXIT_CODE. Output: $STASH_RESULT"
-fi
-log "DEBUG: After stash result logic"
-STASH_NEEDED=0
-if [[ $STASH_RESULT != "No local changes to save" ]]; then
-    STASH_NEEDED=1
-    log "Lingering changes were stashed."
-else
-    log "No lingering changes to stash; repository is clean."
 fi
 
 # The entrypoint script already reset main to upstream/main and updated submodules.
@@ -437,7 +462,7 @@ git submodule init
 git submodule update --recursive
 
 # Pop the stash if we stashed changes earlier
-if [ $STASH_NEEDED -eq 1 ]; then
+if [ -n "$(git stash list)" ]; then
     log "Popping stashed changes"
     git stash pop
 fi

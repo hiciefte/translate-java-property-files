@@ -230,6 +230,18 @@ else
             log "Warning: FORK_REPO_NAME not set. Cannot ensure origin URL is SSH for existing repo. Push might fail for appuser."
         fi
 
+        echo "[Entrypoint] /target_repo/.git exists. Fetching updates..."
+        cd "$TARGET_REPO_DIR" || exit
+        echo "[Entrypoint] Current commit before fetch:"
+        git rev-parse HEAD
+        git fetch upstream
+        git reset --hard upstream/main
+        echo "[Entrypoint] Current commit after reset to upstream/main:"
+        git rev-parse HEAD
+        echo "[Entrypoint] Verifying contents of i18n/src/main/resources post-update:"
+        ls -la i18n/src/main/resources
+        cd /
+
     else
         # For initial clone by root, use FORK_REPO_URL_FOR_ROOT_CLONE if FORK_REPO_URL is not set.
         # If FORK_REPO_URL is set in .env (e.g. to an SSH URL), it will be used here.
@@ -279,6 +291,18 @@ else
         else
             log "Warning: FORK_REPO_NAME not set in environment. Cannot change origin URL to SSH. Push will likely use HTTPS."
         fi
+
+        echo "[Entrypoint] /target_repo/.git exists. Fetching updates..."
+        cd "$TARGET_REPO_DIR" || exit
+        echo "[Entrypoint] Current commit before fetch:"
+        git rev-parse HEAD
+        git fetch upstream
+        git reset --hard upstream/main
+        echo "[Entrypoint] Current commit after reset to upstream/main:"
+        git rev-parse HEAD
+        echo "[Entrypoint] Verifying contents of i18n/src/main/resources post-update:"
+        ls -la i18n/src/main/resources
+        cd /
     fi
 
     log "Final check and setting of system-wide Git safe.directory for $TARGET_REPO_DIR (if not already caught above)"
@@ -349,7 +373,8 @@ else
         for arg in "$@"; do
             log "  $arg"
         done
-        exec "$@"
+        log "Handing off execution to appuser..."
+        exec /usr/sbin/gosu appuser /app/docker/docker-entrypoint.sh "$@"
     else
         log "No specific command provided to entrypoint. Defaulting to 'sleep infinity'."
         exec sleep infinity

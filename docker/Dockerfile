@@ -17,26 +17,31 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends software-properties-common && \
     add-apt-repository ppa:deadsnakes/ppa && \
     apt-get update && \
-    apt-get install -y --no-install-recommends \
-        git \
-        openssh-client \
-        gnupg \
-        curl \
-        python3.9 \
-        python3.9-venv \
-        python3-pip \
-        cron \
-        procps \
-        psmisc && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    cron \
+    curl \
+    git \
+    gnupg \
+    jq \
+    python3.9 \
+    python3.9-venv \
+    python3-pip \
+    openssh-client && \
     #
     # Install GitHub CLI
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
     apt-get update && \
     apt-get install -y gh --no-install-recommends && \
-    #
-    # Clean up apt cache to reduce image size
-    rm -rf /var/lib/apt/lists/* && \
+    # Download and install gosu for user switching
+    GOSU_VERSION=1.17 && \
+    curl -sSL "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture)" -o /usr/sbin/gosu && \
+    chmod +x /usr/sbin/gosu && \
+    # Clean up
+    apt-get remove -y software-properties-common && \
+    apt-get autoremove -y && \
     #
     # Create a non-root user with the --no-log-init flag
     groupadd -o -g ${HOST_GID:-1000} appuser && \
