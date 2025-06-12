@@ -130,27 +130,18 @@ class TestPythonScriptIntegration(unittest.IsolatedAsyncioTestCase):
         # 3. Mock the AI's response
         async def mock_create(*args, **kwargs):
             user_content = kwargs['messages'][1]['content']
-            
-            lines = user_content.splitlines()
-            value_with_placeholders = ""
-            try:
-                value_line_index = next(i for i, line in enumerate(lines) if line.strip().startswith("Value:"))
-                value_with_placeholders = lines[value_line_index].split("Value:", 1)[1].strip()
-                for i in range(value_line_index + 1, len(lines)):
-                    if lines[i].strip().startswith("Provide the translation"):
-                        break
-                    # This logic incorrectly adds a trailing \\n because of a blank line in the prompt
-                    value_with_placeholders += "\\n" + lines[i]
-            except (StopIteration, IndexError):
-                pass
-            
-            key_for_lookup = re.sub(r'__PH_.*?__', 'PLACEHOLDER', value_with_placeholders)
-            
-            # FIX: The parsing logic above incorrectly adds a trailing "\\n".
-            # We remove it here before the lookup.
-            if key_for_lookup.endswith('\\n'):
-                key_for_lookup = key_for_lookup[:-2]
+    
+            # Use a robust, non-greedy regex to extract the value between 'Value:' and the next instruction.
+            # This is more reliable than capturing everything and then splitting.
+            match = re.search(r"Value:\s*(.*?)\s*Provide the translation", user_content, re.DOTALL)
+            key_for_lookup_raw = ""
+            if match:
+                key_for_lookup_raw = match.group(1).strip()
 
+            # The value from the prompt has had placeholders (__PH_...) applied by the script.
+            # We must simulate the key generation that the test expects for the lookup table.
+            key_for_lookup = re.sub(r'__PH_.*?__', 'PLACEHOLDER', key_for_lookup_raw)
+    
             mock_lookup = {
                 "My App": "Meine App",
                 "Hello World": "Hallo Welt",
