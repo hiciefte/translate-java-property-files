@@ -163,9 +163,18 @@ class TestPythonScriptIntegration(unittest.IsolatedAsyncioTestCase):
             mock_response.choices = [MagicMock(message=MagicMock(content=response_text))]
             return mock_response
 
+        # Define mock language codes to be patched into the script,
+        # ensuring the script can identify the language from the filename.
+        mock_language_codes = {
+            "de": "German",
+            "es": "Spanish",
+            "pt_BR": "Brazilian Portuguese"
+        }
+
         # 4. Run the function under test, ensuring DRY_RUN is False
         with patch('src.translate_localization_files.client.chat.completions.create', new=mock_create), \
              patch('src.translate_localization_files.INPUT_FOLDER', self.test_input_folder), \
+             patch('src.translate_localization_files.LANGUAGE_CODES', mock_language_codes), \
              patch('src.translate_localization_files.DRY_RUN', False):
             await src.translate_localization_files.process_translation_queue(
                 translation_queue_folder=self.test_translation_queue_folder,
