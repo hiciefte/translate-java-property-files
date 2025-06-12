@@ -35,6 +35,11 @@ jobs:
           pip install pip-audit
           pip-audit -r requirements.txt
 
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
       - name: Run unit tests with pytest
         run: |
           pip install -r requirements.txt pytest

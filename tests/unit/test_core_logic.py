@@ -130,8 +130,8 @@ class TestCoreLogic(unittest.TestCase):
 
             # Dynamically calculate token counts based on the mock function
             # to make the test self-verifying.
-            glossary_len = mock_count_tokens(f'"term" should be translated as "gloss"', model_name)
-            example1_len = mock_count_tokens(f'key1 = "translation1"', model_name)
+            glossary_len = mock_count_tokens('"term" should be translated as "gloss"', model_name)
+            example1_len = mock_count_tokens('key1 = "translation1"', model_name)
             # Function reserves 1000 tokens for the response.
             reserved_len = 1000
 

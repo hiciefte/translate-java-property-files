@@ -36,12 +36,26 @@ RUN apt-get update && \
     apt-get update && \
     apt-get install -y gh --no-install-recommends && \
     # Download and install gosu for user switching
-    GOSU_VERSION=1.17 && \
-    curl -sSL "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture)" -o /usr/sbin/gosu && \
-    chmod +x /usr/sbin/gosu && \
-    # Clean up
+    set -eux; \
+    GOSU_VERSION=1.17; \
+    GOSU_ARCH="$(dpkg --print-architecture)"; \
+    wget -O /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$GOSU_ARCH"; \
+    if [ "$GOSU_ARCH" = "amd64" ]; then \
+        GOSU_SHA256="13216035334b341f235555c15ee4f6e6d15cc95a0455ce778f9e99cba4839848"; \
+    elif [ "$GOSU_ARCH" = "arm64" ]; then \
+        GOSU_SHA256="e46162123a63531b26284f22849e75fab7b9d62d294025b902047321e1a49298"; \
+    else \
+        echo "Unsupported architecture: $GOSU_ARCH" >&2; \
+        exit 1; \
+    fi; \
+    echo "$GOSU_SHA256 /usr/local/bin/gosu" | sha256sum -c -; \
+    chmod +x /usr/local/bin/gosu && \
+    #
+    # Clean up apt cache and remove temporary dependencies
+    rm -rf /var/lib/apt/lists/* && \
     apt-get remove -y software-properties-common && \
     apt-get autoremove -y && \
+    apt-get clean && \
     #
     # Create a non-root user with the --no-log-init flag
     groupadd -o -g ${HOST_GID:-1000} appuser && \

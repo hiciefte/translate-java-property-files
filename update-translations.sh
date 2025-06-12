@@ -266,42 +266,45 @@ TX_CONFIG_FILE=".tx/config"
 if [ ! -f "$TX_CONFIG_FILE" ]; then
     log "Warning: Transifex config file not found at '$TARGET_PROJECT_ROOT/$TX_CONFIG_FILE'. Skipping verification."
 else
-    # Get the list of source files configured in Transifex.
-    # Example line: source_file = i18n/src/main/resources/app.properties
-    # We extract the path after "= " and then get just the filename.
-    CONFIGURED_SOURCES=$(grep 'source_file *=' "$TX_CONFIG_FILE" | awk -F'= *' '{print $2}' | xargs -n 1 basename)
+    # Check for unconfigured source files before proceeding.
+    # This prevents pulling translations for files that are no longer part of the source.
+    #
+    log "INFO" "Checking for source files that are not configured in Transifex..."
 
-    # Get the list of actual source .properties files on disk.
-    # This is more robust than the previous glob. It finds all .properties files,
-    # then filters out anything that looks like a translation file (e.g., _de, _pt_BR).
-    ACTUAL_SOURCES=$(find "$ABSOLUTE_INPUT_FOLDER" -maxdepth 1 -type f -name '*.properties' | grep -v -E '_[a-z]{2}(_[A-Z]{2})?\.properties$|_pcm\.properties$|_af_ZA\.properties$' | xargs -n 1 basename)
+    # Extract the 'source_file' for each resource from the Transifex config.
+    # This gives us the configured source files with their full paths relative to the repo root.
+    # Example: i18n/src/main/resources/BtcAddresses.properties
+    mapfile -t configured_sources < <(yq e '.main.projects.bisq.resources[].source_file' "$TX_CONFIG_FILE")
 
-    # Now, compare the two lists.
-    unconfigured_found=false
-    for source_file in $ACTUAL_SOURCES; do
-        if ! echo "$CONFIGURED_SOURCES" | grep -q -w "$source_file"; then
-            log "------------------------------------------------------------"
-            log "WARNING: UNCONFIGURED SOURCE FILE DETECTED"
-            log "The source file '$source_file' exists in your project at:"
-            log "  => '$ABSOLUTE_INPUT_FOLDER'"
-            log "But it is NOT configured in '$TX_CONFIG_FILE'."
-            log ""
-            log "ACTION REQUIRED:"
-            log "1. Add this resource to your Transifex project."
-            log "2. Update '$TX_CONFIG_FILE' with the new resource details."
-            log "   (You can often do this by running 'tx push -s' locally once)."
-            log "------------------------------------------------------------"
-            unconfigured_found=true
+    # Get the actual English source files present on disk.
+    # We use find and then remove the input folder prefix to get paths relative to the input folder,
+    # which should match the format in the Transifex config.
+    shopt -s globstar
+    mapfile -t actual_sources_full_path < <(find "$ABSOLUTE_INPUT_FOLDER" -type f -name '*_en.properties')
+
+    declare -A configured_relative_paths
+    for src in "${configured_sources[@]}"; do
+        configured_relative_paths["$src"]=1
+    done
+
+    unconfigured_files_found=false
+    for full_path in "${actual_sources_full_path[@]}"; do
+        # Make the path relative to the target project root to match the tx config format
+        relative_path=${full_path#"$TARGET_PROJECT_ROOT/"}
+        if [[ -z "${configured_relative_paths["$relative_path"]}" ]]; then
+            if ! $unconfigured_files_found; then
+                log "WARNING" "Found source files not configured in Transifex:"
+                unconfigured_files_found=true
+            fi
+            log "WARNING" "  - $relative_path"
         fi
     done
 
-    if [ "$unconfigured_found" = true ]; then
-        log "Error: Found unconfigured source files. Halting script to prevent incomplete translation push."
-        log "Please address the warnings above."
+    if $unconfigured_files_found; then
+        log "ERROR" "Aborting due to unconfigured source files. Please update the Transifex config at '$TX_CONFIG_FILE' and push the changes."
         exit 1
-    else
-        log "Transifex configuration is up to date with source files. Proceeding."
     fi
+    log "INFO" "All source files are correctly configured in Transifex."
 fi
 
 # Stash any local changes to avoid conflicts, but do this carefully
