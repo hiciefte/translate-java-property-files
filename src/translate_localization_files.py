@@ -665,7 +665,7 @@ Provide the translation **of the Value only**, following the instructions above.
                 else:
                     return index, text
             except Exception as general_exc:
-                logging.error(f"An unexpected error occurred: {general_exc}")
+                logging.error(f"An unexpected error occurred: {general_exc}", exc_info=True)
                 return index, text
 
         # Fallback return statement to satisfy linters and ensure explicit return

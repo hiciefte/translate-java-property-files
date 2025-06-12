@@ -85,7 +85,7 @@ class TestPythonScriptIntegration(unittest.IsolatedAsyncioTestCase):
                 f.write("dialog.title=Hello World\n")
                 f.write("error.message=An error has occurred.\n")
 
-        logging.disable(logging.CRITICAL)
+        # logging.disable(logging.CRITICAL)
 
     def tearDown(self):
         """
@@ -143,12 +143,12 @@ class TestPythonScriptIntegration(unittest.IsolatedAsyncioTestCase):
             key_for_lookup = re.sub(r'__PH_.*?__', 'PLACEHOLDER', key_for_lookup_raw)
     
             mock_lookup = {
-                "My App": "---TRANSLATED_APP_NAME---",
-                "Hello World": "---TRANSLATED_HELLO_WORLD---",
-                "An PLACEHOLDERerrorPLACEHOLDER has occurred.\\nOn a new line.": "---TRANSLATED_ERROR_MSG---"
+                "My App": "Meine App",
+                "Hello World": "Hallo Welt",
+                "An PLACEHOLDERerrorPLACEHOLDER has occurred.\\nOn a new line.": "Ein <b>error</b> ist aufgetreten.\\nAuf einer neuen Zeile."
             }
             
-            response_text = mock_lookup.get(key_for_lookup, "---KEY_NOT_FOUND---")
+            response_text = mock_lookup.get(key_for_lookup, "Untranslated")
 
             mock_response = MagicMock()
             mock_response.choices = [MagicMock(message=MagicMock(content=response_text))]
@@ -182,9 +182,9 @@ class TestPythonScriptIntegration(unittest.IsolatedAsyncioTestCase):
 
         expected_output_content = (
             "# This is a comment\n"
-            "app.name=---TRANSLATED_APP_NAME---\n"
-            "dialog.title=---TRANSLATED_HELLO_WORLD---\n"
-            "error.message=---TRANSLATED_ERROR_MSG---\n"
+            "app.name=Meine App\n"
+            "dialog.title=Hallo Welt\n"
+            "error.message=Ein <b>error</b> ist aufgetreten.\\nAuf einer neuen Zeile.\n"
         )
         self.assertEqual(output_content, expected_output_content)
 
