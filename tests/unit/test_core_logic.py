@@ -18,7 +18,8 @@ from src.translate_localization_files import (
     build_context,
     # Imported to assist in build_context testing
     normalize_value,
-    extract_texts_to_translate
+    extract_texts_to_translate,
+    extract_language_from_filename
 )
 
 
@@ -206,6 +207,25 @@ class TestCoreLogic(unittest.TestCase):
         self.assertEqual(sorted(texts), expected_texts, "Should identify untranslated and new keys.")
         self.assertEqual(sorted(keys), expected_keys, "Should identify the correct keys for translation.")
         self.assertEqual(indices, expected_indices, "Should return the correct original and new indices.")
+
+    def test_extract_language_from_filename(self):
+        """
+        Tests that `extract_language_from_filename` correctly identifies language codes.
+        """
+        supported_codes = ["de", "pt_BR", "af_ZA", "en"]
+
+        # Test case for the bug: filename with underscore in the name part
+        self.assertEqual(extract_language_from_filename("mu_sig_de.properties", supported_codes), "de")
+
+        # Standard cases
+        self.assertEqual(extract_language_from_filename("app_de.properties", supported_codes), "de")
+        self.assertEqual(extract_language_from_filename("app_pt_BR.properties", supported_codes), "pt_BR")
+        self.assertEqual(extract_language_from_filename("app_af_ZA.properties", supported_codes), "af_ZA")
+
+        # Cases that should not match
+        self.assertIsNone(extract_language_from_filename("app.properties", supported_codes))
+        self.assertIsNone(extract_language_from_filename("app_fr.properties", supported_codes)) # fr is not supported
+        self.assertIsNone(extract_language_from_filename("app_de.txt", supported_codes)) # wrong extension
 
 
 if __name__ == '__main__':

@@ -745,23 +745,24 @@ def reassemble_file(parsed_lines: List[Dict]) -> str:
     return ''.join(lines)
 
 
-def extract_language_from_filename(filename: str) -> Optional[str]:
+def extract_language_from_filename(filename: str, supported_codes: List[str]) -> Optional[str]:
     """
-    Extract the language code from a filename.
+    Extract the language code from a filename by checking against a list of supported codes.
 
     Args:
         filename (str): The filename.
+        supported_codes (List[str]): A list of supported language codes.
 
     Returns:
         Optional[str]: The language code if found, else None.
     """
-    match = re.search(r'_(\w{2,3}(?:_\w{2})?)\.properties$', filename)
-    if match:
-        # Extract the language code without the preceding underscore and file extension
-        lang_code = match.group(1)  # e.g., 'cs' from '_cs.properties'
-        return lang_code
-    else:
-        return None
+    # Sort codes by length, longest first, to handle cases like 'pt_BR' before 'pt'
+    # if 'pt' were ever a supported code.
+    sorted_codes = sorted(supported_codes, key=len, reverse=True)
+    for code in sorted_codes:
+        if filename.endswith(f'_{code}.properties'):
+            return code
+    return None
 
 
 def move_files_to_archive(input_folder_path: str, archive_folder_path: str):
@@ -940,7 +941,7 @@ async def process_translation_queue(
 
     for translation_file in properties_files:
         # Extract the language code from the filename
-        language_code = extract_language_from_filename(translation_file)
+        language_code = extract_language_from_filename(translation_file, list(LANGUAGE_CODES.keys()))
         if not language_code:
             logging.warning(f"Skipping file {translation_file}: unable to extract language code.")
             continue
