@@ -14,6 +14,9 @@ import re
 
 import yaml
 
+# Set a dummy API key before importing the main script to prevent SystemExit.
+os.environ['OPENAI_API_KEY'] = 'DUMMY_KEY_FOR_TESTING'
+
 # Assuming src.translate_localization_files will be importable.
 # The try-except block allows the tests to be run from the project root (e.g., make test)
 # or directly if the PYTHONPATH is configured.
