@@ -315,12 +315,16 @@ if command_exists tx; then
     fi
     
     # Pull translations with -t option
-    log "Using tx pull -t --use-git-timestamps command"
+    log "Using tx pull -t -f --use-git-timestamps command"
     log "Listing permissions for current directory ($(pwd)) before tx pull:"
     ls -la .
     log "Listing permissions for ./i18n/src/main/resources before tx pull:"
     ls -la ./i18n/src/main/resources
-    tx pull -t --use-git-timestamps || log "Failed to pull translations from Transifex, continuing with script"
+    tx pull -t -f --use-git-timestamps || {
+        log "Error during tx pull. Exiting."
+        exit 1
+    }
+    log "Successfully pulled translations"
 else
     log "Error: Transifex CLI not found. Please install it manually."
     exit 1
@@ -332,7 +336,7 @@ log "Returned to the translation script directory"
 
 # Step 3: Run the translation script with the virtual environment Python
 log "Running translation script"
-python src/translate_localization_files.py || {
+"$VENV_DIR/bin/python" src/translate_localization_files.py || {
     log "Error: Failed to run translation script. Exiting."
     exit 1
 }
