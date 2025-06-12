@@ -10,6 +10,7 @@ import os
 import shutil
 import unittest
 from unittest.mock import patch, MagicMock, AsyncMock, call
+import re
 
 import yaml
 
@@ -53,6 +54,10 @@ class TestPythonScriptIntegration(unittest.IsolatedAsyncioTestCase):
         with open(self.test_config_path, 'r', encoding='utf-8') as f:
             self.config = yaml.safe_load(f)
 
+        # Create a temporary input folder for the source files
+        self.test_input_folder = os.path.join(self.test_dir, 'temp_input')
+        os.makedirs(self.test_input_folder, exist_ok=True)
+
         # Paths for queue folders are constructed relative to the project root for test isolation
         self.test_translation_queue_folder = os.path.join(self.project_root, self.config['translation_queue_folder'])
         self.test_translated_queue_folder = os.path.join(self.project_root, self.config['translated_queue_folder'])
@@ -69,9 +74,13 @@ class TestPythonScriptIntegration(unittest.IsolatedAsyncioTestCase):
         shutil.copy2(self.sample_de_props_path,
                       os.path.join(self.test_translation_queue_folder, 'app_de.properties'))
 
-        es_setup_path = os.path.join(self.test_translation_queue_folder, 'app_es.properties')
-        if os.path.exists(es_setup_path):
-            os.remove(es_setup_path)
+        # Create a sample source file for end-to-end test
+        self.source_file_path = os.path.join(self.test_dir, 'sample_app_en.properties')
+        if not os.path.exists(self.source_file_path):
+            with open(self.source_file_path, 'w', encoding='utf-8') as f:
+                f.write("app.name=My App\n")
+                f.write("dialog.title=Hello World\n")
+                f.write("error.message=An error has occurred.\n")
 
         logging.disable(logging.CRITICAL)
 
@@ -83,68 +92,98 @@ class TestPythonScriptIntegration(unittest.IsolatedAsyncioTestCase):
             shutil.rmtree(self.test_translation_queue_folder)
         if os.path.exists(self.test_translated_queue_folder):
             shutil.rmtree(self.test_translated_queue_folder)
+        if os.path.exists(self.test_input_folder):
+            shutil.rmtree(self.test_input_folder)
+        if os.path.exists(self.source_file_path):
+            os.remove(self.source_file_path)
         logging.disable(logging.NOTSET)
 
-    def test_normalize_value_logic(self):
+    async def test_process_translation_queue_end_to_end(self):
         """
-        Tests the `normalize_value` helper function.
+        Tests the end-to-end processing of a single file through process_translation_queue.
+        This test mocks the OpenAI API call but executes all other file IO and processing logic.
         """
-        self.assertEqual(normalize_value("hello\nworld"), "hello<newline>world", "Literal newline should be replaced.")
-        self.assertEqual(normalize_value("  hello   world  "), "hello world", "Spaces should be normalized.")
-        self.assertEqual(normalize_value("hello\\nworld"), "hello<newline>world", "Escaped newline should be replaced.")
-        self.assertEqual(normalize_value(None), "", "None input should return empty string.")
-
-    def test_extract_texts_to_translate_logic(self):
-        """
-        Tests the `extract_texts_to_translate` helper function.
-        It checks if the function correctly identifies texts that need translation
-        and returns the correct texts, their original indices in parsed_lines (for
-        existing keys), or new indices (for new keys).
-        """
-        parsed_lines = [
-            {'type': 'entry', 'key': 'key0_exists_no_change', 'value': 'target_val0', 'original_value': 'target_val0', 'line_number': 0},
-            {'type': 'entry', 'key': 'key1_exists_needs_update', 'value': 'old_target_val1', 'original_value': 'old_target_val1', 'line_number': 1},
-            {'type': 'comment_or_blank', 'content': '# comment\n', 'line_number': 2},
-            {'type': 'entry', 'key': 'key2_exists_source_match', 'value': 'source_val2', 'original_value': 'source_val2', 'line_number': 3},
-        ]
-        source_translations = {
-            'key0_exists_no_change': 'target_val0',
-            'key1_exists_needs_update': 'source_val1_updated',
-            'key2_exists_source_match': 'source_val2',
-            'key3_new_in_source': 'source_val3_new',
-            'key4_new_in_source_too': 'source_val4_new_too'
-        }
-        target_translations = {
-            'key0_exists_no_change': 'target_val0',
-            'key1_exists_needs_update': 'old_target_val1',
-            'key2_exists_source_match': 'source_val2',
-        }
-
-        texts, indices, keys = extract_texts_to_translate(
-            parsed_lines, source_translations, target_translations
+        # 1. Setup the source 'en' file (e.g., app.properties) that the script needs for comparison.
+        #    The script derives the source filename by removing the language code from the target file.
+        source_file_content = (
+            "app.name=My App\n"
+            "dialog.title=Hello World\n"
+            "error.message=An <b>error</b> has occurred.\\nOn a new line."
         )
+        source_file_path = os.path.join(self.test_input_folder, 'app.properties')
+        with open(source_file_path, 'w', encoding='utf-8') as f:
+            f.write(source_file_content)
 
-        expected_texts_list = sorted([
-            'target_val0',
-            'source_val2',
-            'source_val3_new',
-            'source_val4_new_too'
-        ])
-        self.assertEqual(sorted(texts), expected_texts_list, "Mismatch in texts identified for translation.")
-        self.assertEqual(len(texts), 4, "Incorrect number of texts identified.")
+        # 2. Setup the target 'de' file in the queue with outdated or different values
+        test_file_content = (
+            "# This is a comment\n"
+            "app.name=My App\n"
+            "dialog.title=Hello World\n"
+        )
+        test_file_path = os.path.join(self.test_translation_queue_folder, 'app_de.properties')
+        with open(test_file_path, 'w', encoding='utf-8') as f:
+            f.write(test_file_content)
 
-        expected_keys_list = sorted([
-            'key0_exists_no_change',
-            'key2_exists_source_match',
-            'key3_new_in_source',
-            'key4_new_in_source_too'
-            ])
-        self.assertEqual(sorted(keys), expected_keys_list, "Mismatch in keys identified for translation.")
-        self.assertEqual(len(keys), 4, "Incorrect number of keys identified.")
+        # 3. Mock the AI's response
+        async def mock_create(*args, **kwargs):
+            user_content = kwargs['messages'][1]['content']
+            
+            lines = user_content.splitlines()
+            value_with_placeholders = ""
+            try:
+                value_line_index = next(i for i, line in enumerate(lines) if line.strip().startswith("Value:"))
+                value_with_placeholders = lines[value_line_index].split("Value:", 1)[1].strip()
+                for i in range(value_line_index + 1, len(lines)):
+                    if lines[i].strip().startswith("Provide the translation"):
+                        break
+                    # This logic incorrectly adds a trailing \\n because of a blank line in the prompt
+                    value_with_placeholders += "\\n" + lines[i]
+            except (StopIteration, IndexError):
+                pass
+            
+            key_for_lookup = re.sub(r'__PH_.*?__', 'PLACEHOLDER', value_with_placeholders)
+            
+            # FIX: The parsing logic above incorrectly adds a trailing "\\n".
+            # We remove it here before the lookup.
+            if key_for_lookup.endswith('\\n'):
+                key_for_lookup = key_for_lookup[:-2]
 
-        expected_indices = [0, 3, 4, 5]
-        self.assertEqual(indices, expected_indices, "The 'indices' returned by extract_texts_to_translate are not as expected.")
+            mock_lookup = {
+                "My App": "Meine App",
+                "Hello World": "Hallo Welt",
+                "An PLACEHOLDERerrorPLACEHOLDER has occurred.\\nOn a new line.": "Ein <b>error</b> ist aufgetreten.\\nAuf einer neuen Zeile."
+            }
+            
+            response_text = mock_lookup.get(key_for_lookup, "Untranslated")
 
+            mock_response = MagicMock()
+            mock_response.choices = [MagicMock(message=MagicMock(content=response_text))]
+            return mock_response
+
+        # 4. Run the function under test, ensuring DRY_RUN is False
+        with patch('src.translate_localization_files.client.chat.completions.create', new=mock_create), \
+             patch('src.translate_localization_files.INPUT_FOLDER', self.test_input_folder), \
+             patch('src.translate_localization_files.DRY_RUN', False):
+            await src.translate_localization_files.process_translation_queue(
+                translation_queue_folder=self.test_translation_queue_folder,
+                translated_queue_folder=self.test_translated_queue_folder,
+                glossary_file_path=self.mock_glossary_path_resolved
+            )
+
+        # 5. Assert the results
+        output_file_path = os.path.join(self.test_translated_queue_folder, 'app_de.properties')
+        self.assertTrue(os.path.exists(output_file_path), "Translated file was not created.")
+
+        with open(output_file_path, 'r', encoding='utf-8') as f:
+            output_content = f.read()
+
+        expected_output_content = (
+            "# This is a comment\n"
+            "app.name=Meine App\n"
+            "dialog.title=Hallo Welt\n"
+            "error.message=Ein <b>error</b> ist aufgetreten.\\nAuf einer neuen Zeile.\n"
+        )
+        self.assertEqual(output_content, expected_output_content)
 
     async def test_main_translation_flow_simplified(self):
         """

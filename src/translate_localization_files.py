@@ -320,37 +320,55 @@ def extract_texts_to_translate(
         target_translations: Dict[str, str]
 ) -> Tuple[List[str], List[int], List[str]]:
     """
-    Extract texts that need translation.
+    Identifies which texts need to be translated. A text needs translation if:
+    1. The key is new (exists in source, not in target).
+    2. The key exists in both, but the source and target values are identical,
+       indicating an untranslated string copied from the source by a tool like Transifex.
 
     Args:
-        parsed_lines (List[Dict]): Parsed lines from the target file.
-        source_translations (Dict[str, str]): Translations from the source file.
-        target_translations (Dict[str, str]): Translations from the target file.
+        parsed_lines: The parsed content of the target language file.
+        source_translations: A dictionary of key-value pairs from the source (e.g., English) file.
+        target_translations: A dictionary of key-value pairs from the target file being processed.
 
     Returns:
-        Tuple[List[str], List[int], List[str]]: Texts to translate, their indices, and keys.
+        A tuple containing the list of texts to translate, their corresponding indices, and their keys.
     """
     texts_to_translate = []
     indices = []
-    keys = []
-    key_to_index = {item['key']: idx for idx, item in enumerate(parsed_lines) if item['type'] == 'entry'}
-    next_index = len(parsed_lines)  # Start index for new entries
+    keys_to_translate = []
 
-    for key, source_value in source_translations.items():
-        target_value = target_translations.get(key)
-        normalized_source = normalize_value(source_value)
-        normalized_target = normalize_value(target_value)
-        if target_value is None or normalized_target == normalized_source:
-            # Needs translation
-            texts_to_translate.append(source_value)
-            if key in key_to_index:
-                indices.append(key_to_index[key])
-            else:
-                # Key is missing in target, will be appended
-                indices.append(next_index)
-                next_index += 1
-            keys.append(key)
-    return texts_to_translate, indices, keys
+    existing_keys_in_target = {line['key'] for line in parsed_lines if line['type'] == 'entry'}
+
+    # 1. Check existing keys for required updates.
+    # A key needs translation if the source value is THE SAME as the target value,
+    # as this indicates a fallback to the source language.
+    for i, line in enumerate(parsed_lines):
+        if line['type'] == 'entry':
+            key = line['key']
+            target_value = line.get('value', '')
+            source_value = source_translations.get(key)
+
+            # If key exists in source and the values are identical, it needs translation.
+            if source_value is not None and normalize_value(source_value) == normalize_value(target_value):
+                # The value to translate is the source value.
+                texts_to_translate.append(source_value)
+                indices.append(i)  # Use the line's actual index
+                keys_to_translate.append(key)
+
+    # 2. Find new keys that are in the source but not in the target file.
+    new_keys = source_translations.keys() - existing_keys_in_target
+
+    # Start indexing for new keys from after the last line of the parsed file
+    next_new_key_index = len(parsed_lines)
+
+    for key in sorted(list(new_keys)):  # Sort for deterministic order
+        source_value = source_translations[key]
+        texts_to_translate.append(source_value)
+        indices.append(next_new_key_index)
+        keys_to_translate.append(key)
+        next_new_key_index += 1
+
+    return texts_to_translate, indices, keys_to_translate
 
 
 def count_tokens(text: str, model_name: str = 'gpt-3.5-turbo') -> int:
