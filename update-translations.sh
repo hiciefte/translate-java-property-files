@@ -1,6 +1,10 @@
 #!/bin/bash
 
 set -e  # Exit immediately if a command exits with a non-zero status
+set -euo pipefail
+
+# Define a consistent prefix for translation branches
+TRANSLATION_BRANCH_PREFIX="translation-updates"
 
 # Repository Configuration - Read from environment variables with fallbacks
 FORK_REPO_NAME=${FORK_REPO_NAME:-hiciefte/bisq2} 
@@ -16,8 +20,50 @@ mkdir -p "$LOG_DIR"
 
 # Function to log messages
 log() {
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] [UPDATE_SCRIPT] $1" | tee -a "$LOG_FILE"
 }
+
+# --- Pull Request Gate ---
+# This gate prevents the script from running if there's already a pending PR.
+# It checks for two conditions:
+# 1. A manual block: Any open PR on the upstream repo with '[PIPELINE-BLOCK]' in its title.
+# 2. An automated block: An open PR from a previous run of this script.
+
+BLOCKING_KEYWORD="[PIPELINE-BLOCK]"
+log "Checking for manually-blocked PRs with keyword '$BLOCKING_KEYWORD' in the title..."
+# Use the 'search' flag to query PR titles on the upstream repo.
+# Filter by '@me' which gh resolves to the currently authenticated user.
+MANUAL_BLOCK_PR=$(gh pr list --state open --author "@me" --repo "$UPSTREAM_REPO_NAME" --search "in:title $BLOCKING_KEYWORD" --json number -q '.[0].number' || true)
+
+if [ -n "$MANUAL_BLOCK_PR" ]; then
+    log "Found manually-blocking PR #${MANUAL_BLOCK_PR} authored by the bot's account. Skipping current run."
+    # Ping health check to signal a successful skip.
+    if [ -n "$HEALTHCHECK_URL" ]; then
+        log "Sending successful (skipped) heartbeat to health check URL..."
+        curl -fsS --retry 3 --max-time 10 "$HEALTHCHECK_URL" > /dev/null || log "Warning: Health check ping failed on skipped run."
+    fi
+    exit 0
+fi
+log "No manually-blocked PRs found."
+
+log "Checking for existing open translation PRs on repo '$UPSTREAM_REPO_NAME'..."
+# Note: The 'gh pr list' command requires GITHUB_TOKEN to be in the environment.
+# We query by author ('@me') against the UPSTREAM repository, then filter by branch name prefix.
+# The '|| true' ensures the script doesn't exit if grep finds no matches.
+EXISTING_PR_BRANCH=$(gh pr list --state open --author "@me" --repo "$UPSTREAM_REPO_NAME" --json headRefName -q '.[].headRefName' | grep "^${TRANSLATION_BRANCH_PREFIX}" || true)
+
+if [ -n "$EXISTING_PR_BRANCH" ]; then
+    log "Found existing open translation PR from branch: $EXISTING_PR_BRANCH. Skipping current run."
+    # Ping the health check URL to signal a successful, albeit skipped, run.
+    # This prevents the monitoring service from reporting a failure.
+    if [ -n "$HEALTHCHECK_URL" ]; then
+        log "Sending successful (skipped) heartbeat to health check URL..."
+        curl -fsS --retry 3 --max-time 10 "$HEALTHCHECK_URL" > /dev/null || log "Warning: Health check ping failed on skipped run."
+    fi
+    exit 0
+else
+    log "No pending translation PRs found. Proceeding with translation check."
+fi
 
 log "Update script started. Checking for TX_TOKEN..."
 
@@ -389,7 +435,7 @@ TRANSLATION_CHANGES=$(git status --porcelain | grep -E "\.properties$|\.po$|\.mo
 
 if [ -n "$TRANSLATION_CHANGES" ]; then
     # There are translation changes to commit
-    BRANCH_NAME="translation-update-$(date +'%Y%m%d-%H%M%S')"
+    BRANCH_NAME="${TRANSLATION_BRANCH_PREFIX}-$(date +%Y-%m-%d-%H%M%S)"
     
     # Create a new branch
     log "Creating new branch: $BRANCH_NAME"
@@ -473,4 +519,15 @@ fi
 log "Deactivating virtual environment"
 deactivate || true
 
-log "Deployment process completed successfully" 
+log "Returning to the main branch..."
+git checkout main
+
+# Send a heartbeat ping to the health check URL if it is configured
+if [ -n "$HEALTHCHECK_URL" ]; then
+    log "Sending successful heartbeat to health check URL..."
+    # Use curl with options to fail silently and handle connection timeouts
+    curl -fsS --retry 3 --max-time 10 "$HEALTHCHECK_URL" > /dev/null || log "Warning: Health check ping failed."
+fi
+
+log "Translation update script finished successfully."
+exit 0 

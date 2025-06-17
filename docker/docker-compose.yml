@@ -12,6 +12,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - TX_TOKEN=${TX_TOKEN}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - HEALTHCHECK_URL=${HEALTHCHECK_URL}
       - FORK_REPO_NAME=${FORK_REPO_NAME:-hiciefte/bisq2} # For entrypoint to set SSH remote
       - HOST_UID=${HOST_UID:-1000}   # For runtime, ensures entrypoint uses correct UID
       - HOST_GID=${HOST_GID:-1000}   # For runtime, ensures entrypoint uses correct GID

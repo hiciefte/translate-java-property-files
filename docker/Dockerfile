@@ -36,6 +36,23 @@ RUN apt-get update && \
     apt-get update && \
     apt-get install -y gh --no-install-recommends && \
     #
+    # Download and install yq for YAML processing
+    set -eux; \
+    YQ_VERSION=v4.44.2; \
+    YQ_ARCH="$(dpkg --print-architecture)"; \
+    YQ_BINARY="yq_linux_${YQ_ARCH}"; \
+    curl -sSL -o /usr/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}"; \
+    if [ "$YQ_ARCH" = "amd64" ]; then \
+        YQ_SHA256="2a236a5119747372997f8f8b8a53e9261ea904791e57461460a5e82f73587b1c"; \
+    elif [ "$YQ_ARCH" = "arm64" ]; then \
+        YQ_SHA256="d05d9dae44503433e668d097143bfeb102ee7e2d486773ae23aaf81256ed54fd"; \
+    else \
+        echo "Unsupported architecture for yq: $YQ_ARCH" >&2; \
+        exit 1; \
+    fi; \
+    echo "$YQ_SHA256 /usr/bin/yq" | sha256sum -c -; \
+    chmod +x /usr/bin/yq; \
+    #
     # Download and install gosu for user switching
     set -eux; \
     GOSU_VERSION=1.17; \
@@ -114,8 +131,7 @@ COPY docker/translator-cron /etc/cron.d/translator-cron
 # COPY docker/gpg_test_script.sh /app/docker/gpg_test_script.sh
 
 # Set up cron and file permissions
-RUN chmod 0644 /app/docker/translator-cron && \
-    crontab /app/docker/translator-cron && \
+RUN chmod 0644 /etc/cron.d/translator-cron && \
     chmod +x /app/update-translations.sh /app/docker/docker-entrypoint.sh && \
     mkdir -p /app/logs /target_repo && \
     chown -R appuser:appuser /app/logs /target_repo
