@@ -40,7 +40,7 @@ RUN apt-get update && \
     set -eux; \
     GOSU_VERSION=1.17; \
     GOSU_ARCH="$(dpkg --print-architecture)"; \
-    curl -sSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$GOSU_ARCH"; \
+    curl -sSL -o /usr/sbin/gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$GOSU_ARCH"; \
     if [ "$GOSU_ARCH" = "amd64" ]; then \
         GOSU_SHA256="bbc4136d03ab138b1ad66fa4fc051bafc6cc7ffae632b069a53657279a450de3"; \
     elif [ "$GOSU_ARCH" = "arm64" ]; then \
@@ -49,8 +49,8 @@ RUN apt-get update && \
         echo "Unsupported architecture: $GOSU_ARCH" >&2; \
         exit 1; \
     fi; \
-    echo "$GOSU_SHA256 /usr/local/bin/gosu" | sha256sum -c -; \
-    chmod +x /usr/local/bin/gosu && \
+    echo "$GOSU_SHA256 /usr/sbin/gosu" | sha256sum -c -; \
+    chmod +x /usr/sbin/gosu && \
     #
     # Clean up apt cache and remove temporary dependencies
     rm -rf /var/lib/apt/lists/* && \

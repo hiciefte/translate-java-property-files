@@ -41,6 +41,12 @@ services:
       # Mount logs directory (in project root) for persistence
       - ../logs:/app/logs
 
+      # Mount a named volume for the target repository to persist it across restarts
+      - target-repo-data:/target_repo
+
+volumes:
+  target-repo-data:
+
 # Note: You will need a .env file in the project root directory
 # (translate-java-property-files) with API keys and HOST_UID/GID.
 # Example .env file:
