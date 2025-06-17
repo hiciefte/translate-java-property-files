@@ -527,4 +527,4 @@ if [ -n "$HEALTHCHECK_URL" ]; then
 fi
 
 log "Translation update script finished successfully."
-exit 0 
+exit 0

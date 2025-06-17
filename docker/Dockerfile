@@ -37,16 +37,16 @@ RUN apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
     apt-get update && \
-    apt-get install -y gh --no-install-recommends
-
-# Download and install yq for YAML processing
-RUN set -eux; \
+    apt-get install -y gh --no-install-recommends && \
+    #
+    # Download and install yq for YAML processing
+    set -eux; \
     YQ_VERSION=v4.44.2; \
     YQ_ARCH="$(dpkg --print-architecture)"; \
     YQ_BINARY="yq_linux_${YQ_ARCH}"; \
     curl -sSL -o /usr/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}"; \
     if [ "$YQ_ARCH" = "amd64" ]; then \
-        YQ_SHA256="246b781828353a59fb04ffaada241f78a8f3f25c623047b40306def1f6806e71"; \
+        YQ_SHA256="2a236a5119747372997f8f8b8a53e9261ea904791e57461460a5e82f73587b1c"; \
     elif [ "$YQ_ARCH" = "arm64" ]; then \
         YQ_SHA256="d05d9dae44503433e668d097143bfeb102ee7e2d486773ae23aaf81256ed54fd"; \
     else \
@@ -54,10 +54,10 @@ RUN set -eux; \
         exit 1; \
     fi; \
     echo "$YQ_SHA256 /usr/bin/yq" | sha256sum -c -; \
-    chmod +x /usr/bin/yq
-
-# Download and install gosu for user switching
-RUN set -eux; \
+    chmod +x /usr/bin/yq; \
+    #
+    # Download and install gosu for user switching
+    set -eux; \
     GOSU_VERSION=1.17; \
     GOSU_ARCH="$(dpkg --print-architecture)"; \
     curl -sSL -o /usr/sbin/gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$GOSU_ARCH"; \
