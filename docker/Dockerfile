@@ -46,7 +46,7 @@ RUN set -eux; \
     YQ_BINARY="yq_linux_${YQ_ARCH}"; \
     curl -sSL -o /usr/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}"; \
     if [ "$YQ_ARCH" = "amd64" ]; then \
-        YQ_SHA256="2a236a5119747372997f8f8b8a53e9261ea904791e57461460a5e82f73587b1c"; \
+        YQ_SHA256="246b781828353a59fb04ffaada241f78a8f3f25c623047b40306def1f6806e71"; \
     elif [ "$YQ_ARCH" = "arm64" ]; then \
         YQ_SHA256="d05d9dae44503433e668d097143bfeb102ee7e2d486773ae23aaf81256ed54fd"; \
     else \
