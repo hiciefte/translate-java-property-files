@@ -1,4 +1,4 @@
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 # Set SHELL to fail on pipeline errors
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -37,10 +37,10 @@ RUN apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
     apt-get update && \
-    apt-get install -y gh --no-install-recommends && \
-    #
-    # Download and install yq for YAML processing
-    set -eux; \
+    apt-get install -y gh --no-install-recommends
+
+# Download and install yq for YAML processing
+RUN set -eux; \
     YQ_VERSION=v4.44.2; \
     YQ_ARCH="$(dpkg --print-architecture)"; \
     YQ_BINARY="yq_linux_${YQ_ARCH}"; \
@@ -54,10 +54,10 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | g
         exit 1; \
     fi; \
     echo "$YQ_SHA256 /usr/bin/yq" | sha256sum -c -; \
-    chmod +x /usr/bin/yq; \
-    #
-    # Download and install gosu for user switching
-    set -eux; \
+    chmod +x /usr/bin/yq
+
+# Download and install gosu for user switching
+RUN set -eux; \
     GOSU_VERSION=1.17; \
     GOSU_ARCH="$(dpkg --print-architecture)"; \
     curl -sSL -o /usr/sbin/gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$GOSU_ARCH"; \
