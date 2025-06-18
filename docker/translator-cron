@@ -1,5 +1,5 @@
 # cron job for the translation service
 # Runs daily at 2:00 AM
-0 2 * * * /app/docker/docker-entrypoint.sh /app/update-translations.sh >> /app/logs/cron_job.log 2>&1
+0 2 * * * appuser /app/docker/docker-entrypoint.sh /app/update-translations.sh >> /app/logs/cron_job.log 2>&1
 
 # An empty line is required at the end of this file for cron to process it correctly. 

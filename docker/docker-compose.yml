@@ -12,6 +12,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - TX_TOKEN=${TX_TOKEN}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - HEALTHCHECK_URL=${HEALTHCHECK_URL}
       - FORK_REPO_NAME=${FORK_REPO_NAME:-hiciefte/bisq2} # For entrypoint to set SSH remote
       - HOST_UID=${HOST_UID:-1000}   # For runtime, ensures entrypoint uses correct UID
       - HOST_GID=${HOST_GID:-1000}   # For runtime, ensures entrypoint uses correct GID
@@ -40,6 +41,12 @@ services:
       
       # Mount logs directory (in project root) for persistence
       - ../logs:/app/logs
+
+      # Mount a named volume for the target repository to persist it across restarts
+      - target-repo-data:/target_repo
+
+volumes:
+  target-repo-data:
 
 # Note: You will need a .env file in the project root directory
 # (translate-java-property-files) with API keys and HOST_UID/GID.

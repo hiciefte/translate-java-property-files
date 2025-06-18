@@ -11,15 +11,18 @@ ARG SKIP_GPG_IMPORT=false
 ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies, CLIs, and create non-root user in a single RUN layer to reduce image size
+# Install core utilities and GPG first, as it's needed for adding repositories
 RUN apt-get update && \
-    # Install base dependencies and add PPA for Python 3.9
-    apt-get install -y --no-install-recommends software-properties-common && \
+    apt-get install -y --no-install-recommends ca-certificates curl gnupg
+
+# Add PPA for Python
+RUN apt-get install -y --no-install-recommends software-properties-common && \
     add-apt-repository ppa:deadsnakes/ppa && \
-    apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    apt-get update
+
+# Install main application packages
+RUN apt-get install -y --no-install-recommends \
     build-essential \
-    ca-certificates \
     cron \
     curl \
     git \
@@ -28,19 +31,36 @@ RUN apt-get update && \
     python3.9 \
     python3.9-venv \
     python3-pip \
-    openssh-client && \
-    #
-    # Install GitHub CLI
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+    openssh-client
+
+# Install GitHub CLI
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
     apt-get update && \
-    apt-get install -y gh --no-install-recommends && \
-    #
-    # Download and install gosu for user switching
-    set -eux; \
+    apt-get install -y gh --no-install-recommends
+
+# Download and install yq for YAML processing
+RUN set -eux; \
+    YQ_VERSION=v4.44.2; \
+    YQ_ARCH="$(dpkg --print-architecture)"; \
+    YQ_BINARY="yq_linux_${YQ_ARCH}"; \
+    curl -sSL -o /usr/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}"; \
+    if [ "$YQ_ARCH" = "amd64" ]; then \
+        YQ_SHA256="246b781828353a59fb04ffaada241f78a8f3f25c623047b40306def1f6806e71"; \
+    elif [ "$YQ_ARCH" = "arm64" ]; then \
+        YQ_SHA256="d05d9dae44503433e668d097143bfeb102ee7e2d486773ae23aaf81256ed54fd"; \
+    else \
+        echo "Unsupported architecture for yq: $YQ_ARCH" >&2; \
+        exit 1; \
+    fi; \
+    echo "$YQ_SHA256 /usr/bin/yq" | sha256sum -c -; \
+    chmod +x /usr/bin/yq
+
+# Download and install gosu for user switching
+RUN set -eux; \
     GOSU_VERSION=1.17; \
     GOSU_ARCH="$(dpkg --print-architecture)"; \
-    curl -sSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$GOSU_ARCH"; \
+    curl -sSL -o /usr/sbin/gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$GOSU_ARCH"; \
     if [ "$GOSU_ARCH" = "amd64" ]; then \
         GOSU_SHA256="bbc4136d03ab138b1ad66fa4fc051bafc6cc7ffae632b069a53657279a450de3"; \
     elif [ "$GOSU_ARCH" = "arm64" ]; then \
@@ -49,19 +69,17 @@ RUN apt-get update && \
         echo "Unsupported architecture: $GOSU_ARCH" >&2; \
         exit 1; \
     fi; \
-    echo "$GOSU_SHA256 /usr/local/bin/gosu" | sha256sum -c -; \
-    chmod +x /usr/local/bin/gosu && \
-    #
-    # Clean up apt cache and remove temporary dependencies
-    rm -rf /var/lib/apt/lists/* && \
+    echo "$GOSU_SHA256 /usr/sbin/gosu" | sha256sum -c -; \
+    chmod +x /usr/sbin/gosu
+
+# Clean up apt cache, remove temporary dependencies, and create non-root user
+RUN rm -rf /var/lib/apt/lists/* && \
     apt-get remove -y software-properties-common && \
     apt-get autoremove -y && \
     apt-get clean && \
-    #
-    # Create a non-root user with the --no-log-init flag
+    # Create a non-root user
     groupadd -o -g ${HOST_GID:-1000} appuser && \
     useradd --no-log-init -o -u ${HOST_UID:-1000} -g appuser -s /bin/bash -m appuser && \
-    #
     # Create directories for GPG and set permissions
     mkdir -p /home/appuser/.gnupg /run/user/${HOST_UID:-1000}/gnupg && \
     chown -R ${HOST_UID:-1000}:${HOST_GID:-1000} /home/appuser/.gnupg /run/user/${HOST_UID:-1000} && \
@@ -114,8 +132,7 @@ COPY docker/translator-cron /etc/cron.d/translator-cron
 # COPY docker/gpg_test_script.sh /app/docker/gpg_test_script.sh
 
 # Set up cron and file permissions
-RUN chmod 0644 /app/docker/translator-cron && \
-    crontab /app/docker/translator-cron && \
+RUN chmod 0644 /etc/cron.d/translator-cron && \
     chmod +x /app/update-translations.sh /app/docker/docker-entrypoint.sh && \
     mkdir -p /app/logs /target_repo && \
     chown -R appuser:appuser /app/logs /target_repo
