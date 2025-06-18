@@ -519,9 +519,6 @@ fi
 log "Deactivating virtual environment"
 deactivate || true
 
-log "Returning to the main branch..."
-git checkout main
-
 # Send a heartbeat ping to the health check URL if it is configured
 if [ -n "$HEALTHCHECK_URL" ]; then
     log "Sending successful heartbeat to health check URL..."
