@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:22.04
 
 # Set SHELL to fail on pipeline errors
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
