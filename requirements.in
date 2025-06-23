@@ -9,4 +9,5 @@ httpx
 tiktoken
 tqdm
 python-slugify
-requests 
+requests
+aiolimiter
