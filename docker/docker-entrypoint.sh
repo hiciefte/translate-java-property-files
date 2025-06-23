@@ -133,6 +133,15 @@ else
     # --- ROOT EXECUTION BLOCK ---
     log "Starting initial entrypoint setup as root..."
 
+    # Check if this is a cron job being mistakenly run as root.
+    # The cron job's command is '/app/update-translations.sh'.
+    if [ "$#" -eq 1 ] && [ "$1" = "/app/update-translations.sh" ]; then
+        log "Detected cron job command ($1) running as root. This is unusual, but attempting to recover."
+        log "Handing off directly to appuser context via gosu..."
+        # We need to re-invoke the entrypoint as appuser so the GPG/env setup runs correctly
+        exec /usr/sbin/gosu appuser /app/docker/docker-entrypoint.sh "$@"
+    fi
+
     TARGET_REPO_DIR="/target_repo"
     # Use HTTPS for default initial clone by root if FORK_REPO_URL is not set in .env
     # The script will later change origin to SSH format if FORK_REPO_NAME is set.
