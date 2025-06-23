@@ -11,33 +11,31 @@ ARG SKIP_GPG_IMPORT=false
 ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install core utilities and GPG first, as it's needed for adding repositories
+# Install system dependencies, add repositories, and clean up in a single layer.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates curl gnupg
-
-# Add PPA for Python
-RUN apt-get install -y --no-install-recommends software-properties-common && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        gnupg \
+        software-properties-common && \
     add-apt-repository ppa:deadsnakes/ppa && \
-    apt-get update
-
-# Install main application packages
-RUN apt-get install -y --no-install-recommends \
-    build-essential \
-    cron \
-    curl \
-    git \
-    gnupg \
-    jq \
-    python3.9 \
-    python3.9-venv \
-    python3-pip \
-    openssh-client
-
-# Install GitHub CLI
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
     apt-get update && \
-    apt-get install -y gh --no-install-recommends
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        cron \
+        gh \
+        git \
+        jq \
+        python3.9 \
+        python3.9-venv \
+        python3-pip \
+        openssh-client && \
+    apt-get remove -y software-properties-common && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Download and install yq for YAML processing
 RUN set -eux; \
@@ -72,13 +70,8 @@ RUN set -eux; \
     echo "$GOSU_SHA256 /usr/sbin/gosu" | sha256sum -c -; \
     chmod +x /usr/sbin/gosu
 
-# Clean up apt cache, remove temporary dependencies, and create non-root user
-RUN rm -rf /var/lib/apt/lists/* && \
-    apt-get remove -y software-properties-common && \
-    apt-get autoremove -y && \
-    apt-get clean && \
-    # Create a non-root user
-    groupadd -o -g ${HOST_GID:-1000} appuser && \
+# Create non-root user
+RUN groupadd -o -g ${HOST_GID:-1000} appuser && \
     useradd --no-log-init -o -u ${HOST_UID:-1000} -g appuser -s /bin/bash -m appuser && \
     # Create directories for GPG and set permissions
     mkdir -p /home/appuser/.gnupg /run/user/${HOST_UID:-1000}/gnupg && \

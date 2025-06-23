@@ -1,6 +1,5 @@
 #!/bin/bash
 
-set -e  # Exit immediately if a command exits with a non-zero status
 set -euo pipefail
 
 # Define a consistent prefix for translation branches
@@ -20,7 +19,22 @@ mkdir -p "$LOG_DIR"
 
 # Function to log messages
 log() {
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] [UPDATE_SCRIPT] $1" | tee -a "$LOG_FILE"
+    # Use "$*" to log all arguments as a single string
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] [UPDATE_SCRIPT] $*" | tee -a "$LOG_FILE"
+}
+
+# Helper function to check for blocking PRs and exit if found.
+# It also pings a health check URL on a successful skip.
+# Arguments:
+#   $1: The reason for skipping (e.g., "Found manually-blocking PR #123").
+check_and_exit_if_blocked() {
+    local reason="$1"
+    log "$reason. Skipping current run."
+    if [ -n "${HEALTHCHECK_URL:-}" ]; then
+        log "Sending successful (skipped) heartbeat to health check URL..."
+        curl -fsS --retry 3 --max-time 10 "$HEALTHCHECK_URL" > /dev/null || log "Warning: Health check ping failed on skipped run."
+    fi
+    exit 0
 }
 
 # --- Pull Request Gate ---
@@ -36,13 +50,7 @@ log "Checking for manually-blocked PRs with keyword '$BLOCKING_KEYWORD' in the t
 MANUAL_BLOCK_PR=$(gh pr list --state open --author "@me" --repo "$UPSTREAM_REPO_NAME" --search "in:title $BLOCKING_KEYWORD" --json number -q '.[0].number' || true)
 
 if [ -n "$MANUAL_BLOCK_PR" ]; then
-    log "Found manually-blocking PR #${MANUAL_BLOCK_PR} authored by the bot's account. Skipping current run."
-    # Ping health check to signal a successful skip.
-    if [ -n "$HEALTHCHECK_URL" ]; then
-        log "Sending successful (skipped) heartbeat to health check URL..."
-        curl -fsS --retry 3 --max-time 10 "$HEALTHCHECK_URL" > /dev/null || log "Warning: Health check ping failed on skipped run."
-    fi
-    exit 0
+    check_and_exit_if_blocked "Found manually-blocking PR #${MANUAL_BLOCK_PR} authored by the bot's account"
 fi
 log "No manually-blocked PRs found."
 
@@ -50,20 +58,14 @@ log "Checking for existing open translation PRs on repo '$UPSTREAM_REPO_NAME'...
 # Note: The 'gh pr list' command requires GITHUB_TOKEN to be in the environment.
 # We query by author ('@me') against the UPSTREAM repository, then filter by branch name prefix.
 # The '|| true' ensures the script doesn't exit if grep finds no matches.
-EXISTING_PR_BRANCH=$(gh pr list --state open --author "@me" --repo "$UPSTREAM_REPO_NAME" --json headRefName -q '.[].headRefName' | grep "^${TRANSLATION_BRANCH_PREFIX}" || true)
+# 'head -n 1' ensures we only ever get one branch name, even if something unexpected happens.
+EXISTING_PR_BRANCH=$(gh pr list --state open --author "@me" --repo "$UPSTREAM_REPO_NAME" --json headRefName -q '.[].headRefName' | grep "^${TRANSLATION_BRANCH_PREFIX}" | head -n 1 || true)
 
 if [ -n "$EXISTING_PR_BRANCH" ]; then
-    log "Found existing open translation PR from branch: $EXISTING_PR_BRANCH. Skipping current run."
-    # Ping the health check URL to signal a successful, albeit skipped, run.
-    # This prevents the monitoring service from reporting a failure.
-    if [ -n "$HEALTHCHECK_URL" ]; then
-        log "Sending successful (skipped) heartbeat to health check URL..."
-        curl -fsS --retry 3 --max-time 10 "$HEALTHCHECK_URL" > /dev/null || log "Warning: Health check ping failed on skipped run."
-    fi
-    exit 0
-else
-    log "No pending translation PRs found. Proceeding with translation check."
+    check_and_exit_if_blocked "Found existing open translation PR from branch: $EXISTING_PR_BRANCH"
 fi
+
+log "No pending translation PRs found. Proceeding with translation check."
 
 log "Update script started. Checking for TX_TOKEN..."
 
