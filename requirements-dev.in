@@ -1,0 +1,8 @@
+# High-level development/testing dependencies
+# Run 'pip-compile' to generate requirements-dev.txt
+
+-r requirements.in
+
+pytest
+pytest-asyncio
+pip-tools 

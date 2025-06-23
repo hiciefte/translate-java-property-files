@@ -26,7 +26,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt', '**/requirements-dev.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
@@ -34,6 +34,7 @@ jobs:
         run: |
           pip install pip-audit
           pip-audit -r requirements.txt
+          pip-audit -r requirements-dev.txt
 
       - name: Set up Python 3.9
         uses: actions/setup-python@v5
@@ -42,7 +43,7 @@ jobs:
 
       - name: Run unit tests with pytest
         run: |
-          pip install -r requirements.txt pytest
+          pip install -r requirements-dev.txt
           pytest
 
       - name: Set up Docker Buildx

@@ -1,0 +1,12 @@
+# High-level production dependencies
+# Run 'pip-compile' to generate requirements.txt
+
+openai
+python-dotenv
+PyYAML
+GitPython
+httpx
+tiktoken
+tqdm
+python-slugify
+requests 
