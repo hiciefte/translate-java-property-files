@@ -118,7 +118,10 @@ translate-java-property-files/
 ├── .env.example                  # Example environment file -> NOW MOVED TO docker/.env.example
 ├── docker/.env.example           # Example environment file
 ├── glossary.json                 # Glossary for translations
-├── requirements.txt              # Python dependencies
+├── requirements.in               # Production dependency definitions
+├── requirements.txt              # Production dependency lockfile
+├── requirements-dev.in           # Development dependency definitions
+├── requirements-dev.txt          # Development dependency lockfile
 ├── update-translations.sh        # Main orchestration script
 ├── README.md                     # This file
 └── .gitignore
@@ -139,6 +142,7 @@ Before you begin, ensure you have:
 * An OpenAI API Key.
 * A Transifex account and API Token.
 * GPG installed on your local machine (for generating the bot's GPG key).
+* `pip-tools` for managing dependencies locally (install with `pip install pip-tools`).
 
 ## ⚙️ Detailed Setup and Configuration
 
@@ -163,8 +167,9 @@ The service is configured primarily through environment variables defined in a `
     * `FORK_REPO_URL`: SSH URL of your fork of the target repository (e.g.,
       `git@github.com:translationbot/target-repo.git`). The bot needs write access here.
     * `UPSTREAM_REPO_URL`: HTTPS URL of the main upstream repository (e.g.,
-      `https://github.com/original-owner/target-repo.git`). This is used by root for read-only fetches and by `gh` for
-      PR targeting.
+      `https://github.com/original-owner/target-repo.git`). It's
+      used by the entrypoint script (as root) for read-only operations and by the `gh` CLI for creating pull requests (
+      which handles its own authentication via `GITHUB_TOKEN`).
     * `FORK_REPO_NAME`: Short form, e.g., `translationbot/target-repo`.
     * `UPSTREAM_REPO_NAME`: Short form, e.g., `original-owner/target-repo`.
     * `TARGET_BRANCH_FOR_PR`: Usually `main` or `develop`.
@@ -181,7 +186,40 @@ The service is configured primarily through environment variables defined in a `
        used by the entrypoint script (as root) for read-only operations and by the `gh` CLI for creating pull requests (
        which handles its own authentication via `GITHUB_TOKEN`).
 
-### 2. SSH Key for GitHub Access (Bot & Server)
+### 2. Dependency Management (pip-tools)
+
+This project uses `pip-tools` to manage Python dependencies for reproducible builds.
+
+*   **Source of Truth (`.in` files)**:
+    *   `requirements.in`: Defines the high-level **production** dependencies needed for the Docker container.
+    *   `requirements-dev.in`: Defines dependencies for **local development and testing**, including `pytest` and
+        `pip-tools` itself. It also includes all production dependencies via `-r requirements.in`.
+
+*   **Lockfiles (`.txt` files)**:
+    *   `requirements.txt` and `requirements-dev.txt` are **auto-generated lockfiles**. They contain the exact, pinned
+        versions of all direct and transitive dependencies.
+    *   **Do not edit the `.txt` files directly.**
+
+**Workflow for Updating Dependencies:**
+
+1.  **Modify the `.in` file(s)**: Add, remove, or change a version specifier in `requirements.in` or
+    `requirements-dev.in`.
+
+2.  **Compile the Lockfile(s)**:
+    *   To update production dependencies:
+        ```bash
+        pip-compile requirements.in -o requirements.txt --upgrade --no-header --no-annotate
+        ```
+    *   To update development dependencies:
+        ```bash
+        pip-compile requirements-dev.in -o requirements-dev.txt --upgrade --no-header --no-annotate
+        ```
+    *   The `--upgrade` flag ensures all packages are updated to their latest compatible versions.
+    *   The `--no-header --no-annotate` flags keep the generated lockfiles clean and portable.
+
+3.  **Commit the changes**: Commit both the modified `.in` file and the newly generated `.txt` lockfile to Git.
+
+### 3. SSH Key for GitHub Access (Bot & Server)
 
 The `translationbot` user on your server needs an SSH key to:
 
@@ -234,7 +272,7 @@ The `translationbot` user on your server needs an SSH key to:
    You should see a success message including your GitHub username associated with the key, or the deploy key's
    username.
 
-### 3. Bot GPG Key Setup (for Verified Commits)
+### 4. Bot GPG Key Setup (for Verified Commits)
 
 The bot signs Git commits with a GPG key. This setup is done once on your **local machine**, and the keys are then
 copied to the server.
@@ -278,7 +316,7 @@ copied to the server.
    `/opt/translate-java-property-files/secrets/` on the server.
    The `Dockerfile` copies these into the image. Ensure `secrets/` is in your `.gitignore`.
 
-### 4. Application Configuration (`config.yaml` vs `docker/config.docker.yaml`)
+### 5. Application Configuration (`config.yaml` vs `docker/config.docker.yaml`)
 
 * **`config.yaml` (Root)**: For manual/local runs outside Docker. Uses paths relevant to your local system.
 * **`docker/config.docker.yaml`**: Specifically for Docker.
@@ -288,7 +326,7 @@ copied to the server.
     * `glossary_file_path`: Points to `/app/glossary.json`.
     * Queue folders (for processing) are created in `appuser`'s home inside the container.
 
-### 5. Glossary (`glossary.json`)
+### 6. Glossary (`glossary.json`)
 
 Place your translation glossary in `glossary.json` in the project root. Example:
 
@@ -304,7 +342,7 @@ Place your translation glossary in `glossary.json` in the project root. Example:
 }
 ```
 
-### 6. Transifex Project Configuration
+### 7. Transifex Project Configuration
 
 Ensure the target repository (cloned into `/target_repo` in Docker) has a valid `.tx/config` file for Transifex.
 Example:
@@ -470,7 +508,12 @@ This method is for debugging the Python script locally, outside Docker.
    python3 -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
-4. **Install Dependencies**: `pip install -r requirements.txt`
+4. **Install Dependencies**:
+   Install `pip-tools` first, then use it to sync your environment with the development lockfile.
+   ```bash
+   pip install pip-tools
+   pip-sync requirements-dev.txt
+   ```
 5. **Set Environment Variables**: Export `OPENAI_API_KEY`, `TX_TOKEN`.
 6. **Configure `config.yaml`**: Edit `config.yaml` (in project root) with local paths.
 7. **Run Python Script**: `python src/translate_localization_files.py`
