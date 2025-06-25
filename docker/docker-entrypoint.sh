@@ -220,7 +220,11 @@ else
         fi
 
         log "Fetching all from origin and upstream..."
-        git fetch origin --prune || log "Warning: Git fetch origin failed."
+        # Fetching as appuser (using gosu) because appuser has the SSH key for the fork (origin)
+        # Root will still fetch from upstream, which is a public HTTPS URL.
+        log "Fetching from origin (fork) as appuser..."
+        gosu appuser git fetch origin --prune || log "Warning: Git fetch origin as appuser failed."
+        log "Fetching from upstream (public repo) as root..."
         git fetch upstream --prune || log "Warning: Git fetch upstream failed."
 
         log "Checking out main branch and resetting to upstream/main..."
@@ -351,6 +355,13 @@ else
     chmod 755 "$LOGS_DIR" # Ensure appuser can write, and others can read/execute (needed for directory listing)
     log "Log directory $LOGS_DIR prepared."
     ls -ld "$LOGS_DIR"
+
+    # Ensure log files exist and have correct permissions for appuser.
+    # This prevents failures if the logs are created by root during debugging.
+    log "Ensuring critical log files exist with correct ownership..."
+    touch "$LOGS_DIR/cron_job.log" "$LOGS_DIR/deployment_log.log" "$LOGS_DIR/translation_log.log"
+    chown "${APPUSER_UID}:${APPUSER_GID}" "$LOGS_DIR"/*.log
+    log "Log file permissions verified."
 
     # Ensure cron daemon is started
     CRON_PID_FILE="/var/run/cron.pid" # Corrected PID file for Debian/Ubuntu
