@@ -700,6 +700,7 @@ def integrate_translations(
         if translation_idx < len(parsed_lines):
             # Update existing entry
             parsed_lines[translation_idx]['value'] = value  # type: ignore[arg-type]
+            parsed_lines[translation_idx]['original_value'] = value  # type: ignore[arg-type]
         else:
             # Add new entry
             parsed_lines.append({
