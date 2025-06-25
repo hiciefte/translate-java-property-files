@@ -102,6 +102,55 @@ class TestCoreLogic(unittest.TestCase):
         # The reassemble function uses '\\n' literally, so we compare directly.
         self.assertEqual(final_content, expected_content)
 
+    def test_translation_overwrites_original_value_with_newlines(self):
+        """
+        Ensure that an entry whose original_value contained an escaped newline
+        does not retain that escape after being updated with a single-line
+        translation.
+        """
+        initial_parsed_lines = [
+            {
+                'type': 'entry',
+                'key': 'key.one',
+                'value': 'old\\nvalue',
+                'original_value': 'old\\nvalue',
+                'line_number': 0
+            }
+        ]
+
+        translations = ['new value']
+        indices = [0]
+        keys = ['key.one']
+
+        updated_lines = integrate_translations(initial_parsed_lines, translations, indices, keys)
+        final_content = reassemble_file(updated_lines)
+
+        self.assertEqual(final_content, 'key.one=new value\n')
+
+    def test_integrate_translations_updates_original_value(self):
+        """Ensure original_value is updated when integrating translations."""
+        initial_lines = [
+            {
+                'type': 'entry',
+                'key': 'multi.key',
+                'value': 'old line1\\nold line2',
+                'original_value': 'old line1\\nold line2',
+                'line_number': 0
+            }
+        ]
+
+        translations = ['new line1\nnew line2']
+        indices = [0]
+        keys = ['multi.key']
+
+        updated = integrate_translations(initial_lines, translations, indices, keys)
+
+        self.assertEqual(updated[0]['value'], translations[0])
+        self.assertEqual(updated[0]['original_value'], translations[0])
+
+        assembled = reassemble_file(updated)
+        self.assertEqual(assembled, 'multi.key=new line1\\\nnew line2\n')
+
     def test_build_context_respects_token_limit(self):
         """
         Tests that build_context correctly limits the number of examples

@@ -525,7 +525,7 @@ Contributions are welcome! Please fork, branch, commit, and send a pull request.
 
 ## License
 
-This project is licensed under the MIT License.
+This project uses the [GNU Affero General Public License](LICENSE).
 
 ## Updates and Maintenance
 
@@ -569,5 +569,3 @@ If you need to manually interact with the Docker service:
     ```bash
     docker compose -f docker/docker-compose.yml build --no-cache
     ```
-
-   
