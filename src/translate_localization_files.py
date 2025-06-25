@@ -372,18 +372,27 @@ def extract_texts_to_translate(
 
 
 def count_tokens(text: str, model_name: str = 'gpt-3.5-turbo') -> int:
-    """
-    Count the number of tokens in a text for a specific model.
+    """Count the number of tokens in ``text`` for ``model_name``.
 
-    Args:
-        text (str): The text to count tokens in.
-        model_name (str): The model name.
-
-    Returns:
-        int: The number of tokens.
+    ``tiktoken.encoding_for_model`` occasionally attempts a network request to
+    download model data if it is not already cached. Network access is not
+    guaranteed in all environments (e.g., in CI). If obtaining the encoding for
+    the requested model fails, the function falls back to ``gpt2`` which ships
+    with ``tiktoken``. As a last resort, a simple whitespace split is used.
     """
-    encoding = tiktoken.encoding_for_model(model_name)
-    return len(encoding.encode(text))
+
+    try:
+        encoding = tiktoken.encoding_for_model(model_name)
+    except Exception:
+        try:
+            encoding = tiktoken.get_encoding("gpt2")
+        except Exception:
+            return len(text.split())
+
+    try:
+        return len(encoding.encode(text))
+    except Exception:
+        return len(text.split())
 
 
 def build_context(
