@@ -361,6 +361,7 @@ else
     log "Ensuring critical log files exist with correct ownership..."
     touch "$LOGS_DIR/cron_job.log" "$LOGS_DIR/deployment_log.log" "$LOGS_DIR/translation_log.log"
     chown "${APPUSER_UID}:${APPUSER_GID}" "$LOGS_DIR"/*.log
+    chmod 644 "$LOGS_DIR"/*.log
     log "Log file permissions verified."
 
     # Ensure cron daemon is started
