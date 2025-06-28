@@ -144,6 +144,9 @@ for locale in locales_list:
         LANGUAGE_CODES[code] = name
         NAME_TO_CODE[name.lower()] = code
 
+# Concurrency configuration
+MAX_CONCURRENT_API_CALLS = config.get('max_concurrent_api_calls', 1)
+
 
 def language_code_to_name(language_code: str) -> Optional[str]:
     """
@@ -943,6 +946,10 @@ async def process_translation_queue(
     # Load the glossary from the JSON file
     glossary = load_glossary(glossary_file_path)
 
+    # Set up a single semaphore for all API calls to control concurrency globally.
+    # A value of 1 ensures that only one API request is active at any time.
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_API_CALLS)
+
     # Initialize rate limiter (e.g., 60 requests per minute)
     rate_limit = 60  # Number of allowed requests
     rate_period = 60  # Time period in seconds
@@ -983,9 +990,6 @@ async def process_translation_queue(
         if not texts_to_translate:
             logging.info(f"No texts to translate in file '{translation_file}'.")
             continue
-
-        # Set up semaphore for API rate limiting
-        semaphore = asyncio.Semaphore(2)  # Reduced concurrency
 
         # Gather all translation tasks
         tasks = [
