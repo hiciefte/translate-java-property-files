@@ -364,6 +364,11 @@ else
     chmod 644 "$LOGS_DIR"/*.log
     log "Log file permissions verified."
 
+    # Make environment variables from docker-compose available to cron jobs
+    log "Dumping environment variables to /etc/environment for cron..."
+    printenv | grep -E '^(GITHUB_TOKEN|OPENAI_API_KEY|TX_TOKEN|GIT_AUTHOR_NAME|GIT_AUTHOR_EMAIL|GIT_SIGNING_KEY|FORK_REPO_NAME|UPSTREAM_REPO_NAME|TARGET_BRANCH_FOR_PR)=' > /etc/environment
+    log "Environment file for cron created."
+
     # Ensure cron daemon is started
     CRON_PID_FILE="/var/run/cron.pid" # Corrected PID file for Debian/Ubuntu
     log "Checking cron daemon status (PID file: $CRON_PID_FILE)..."
