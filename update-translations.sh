@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+# Ensure the PATH includes /usr/local/bin where the Transifex CLI is installed.
+export PATH="/usr/local/bin:$PATH"
+
 # Define a consistent prefix for translation branches
 TRANSLATION_BRANCH_PREFIX="translation-updates"
 
@@ -184,11 +187,12 @@ setup_venv() {
 # Load configuration from YAML file
 CONFIG_FILE="config.yaml" # This should be /app/config.yaml, which is config.docker.yaml mounted
 
-# Helper function to parse values from config.yaml robustly using awk
+# Helper function to parse values from config.yaml robustly using yq
 get_config_value() {
     local key="$1"
     local config_file="$2"
-    awk -F': *| *#.*' -v k="^$key:" '$0 ~ k {gsub(/^[ \t'"'"'"]+|[ \t'"'"'"]+$/, "", $2); print $2; exit}' "$config_file"
+    # Use yq to safely read the value. The -e flag exits with non-zero status if the key is not found.
+    yq -e ".$key" "$config_file"
 }
 
 TARGET_PROJECT_ROOT=$(get_config_value "target_project_root" "$CONFIG_FILE")
