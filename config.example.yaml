@@ -10,7 +10,7 @@ input_folder: "/path/to/properties/files"
 glossary_file_path: "glossary.json"
 
 # OpenAI model to use
-model_name: "gpt-4"
+model_name: "gpt-4o-mini"
 
 # Translation queue folders
 translation_queue_folder: "translation_queue"
@@ -18,6 +18,13 @@ translated_queue_folder: "translated_queue"
 
 # If true, the script logs actions without altering files
 dry_run: false
+
+# Concurrency setting for OpenAI API calls.
+# This controls how many API requests can be active at the same time.
+# A lower value (e.g., 1 or 2) is safer to avoid API rate limits.
+# A higher value can speed up translation but may lead to "429 Too Many Requests" errors.
+# Default value if not specified is 1.
+max_concurrent_api_calls: 1
 
 # Each locale has a 'code' and a human-readable 'name'
 supported_locales:
