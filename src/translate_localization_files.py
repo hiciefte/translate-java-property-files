@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import uuid
 from typing import Dict, List, Tuple, Optional
 
@@ -115,16 +116,14 @@ MODEL_NAME = config.get('model_name', 'gpt-4')
 MAX_MODEL_TOKENS = 4000  # You can modify this if needed
 
 # Define the translation queue folders
-# Get appuser's home directory, default to /home/appuser if not found (e.g., during testing outside container)
-APPUSER_HOME = os.path.expanduser("~")  # This will be /home/appuser inside the container when run as appuser
-if not os.path.isdir(APPUSER_HOME) or APPUSER_HOME == '/':  # Basic check if expanduser fails weirdly or returns root
-    APPUSER_HOME = "/home/appuser"
+# Use the system's temporary directory for transient data
+TEMP_DIR = tempfile.gettempdir() # This will be /tmp inside the container
 
 _translation_queue_name = config.get('translation_queue_folder', 'translation_queue')
 _translated_queue_name = config.get('translated_queue_folder', 'translated_queue')
 
-TRANSLATION_QUEUE_FOLDER = os.path.join(APPUSER_HOME, _translation_queue_name)
-TRANSLATED_QUEUE_FOLDER = os.path.join(APPUSER_HOME, _translated_queue_name)
+TRANSLATION_QUEUE_FOLDER = os.path.join(TEMP_DIR, _translation_queue_name)
+TRANSLATED_QUEUE_FOLDER = os.path.join(TEMP_DIR, _translated_queue_name)
 
 # Dry run configuration (if True, files won't be moved/copied, etc.)
 DRY_RUN = config.get('dry_run', False)
