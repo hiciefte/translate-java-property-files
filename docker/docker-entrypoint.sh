@@ -29,6 +29,15 @@ if [ "$(id -u)" -ne 0 ]; then
         echo "[$(date +'%Y-%m-%d %H:%M:%S')] [Entrypoint/appuser-exec ($APPUSER_LOGIN_NAME)] $1"
     }
 
+    # Configure SSH for non-interactive use by disabling strict host key checking.
+    # This prevents errors when the host's ~/.ssh is mounted read-only.
+    log_appuser_exec "Configuring SSH for non-interactive use..."
+    mkdir -p "$HOME/.ssh"
+    chmod 700 "$HOME/.ssh"
+    echo -e "Host *\\n  StrictHostKeyChecking no\\n  UserKnownHostsFile=/dev/null" > "$HOME/.ssh/config"
+    chmod 600 "$HOME/.ssh/config"
+    log_appuser_exec "SSH configured."
+
     log_appuser_exec "Running as appuser ($(id -u):$(id -g)). Preparing to execute command."
     if [ "$#" -gt 0 ]; then
         log_appuser_exec "Command and arguments to execute:"
