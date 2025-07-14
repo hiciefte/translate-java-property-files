@@ -29,6 +29,26 @@ if [ "$(id -u)" -ne 0 ]; then
         echo "[$(date +'%Y-%m-%d %H:%M:%S')] [Entrypoint/appuser-exec ($APPUSER_LOGIN_NAME)] $1"
     }
 
+    # Configure SSH for non-interactive use by ensuring a 'github.com' entry exists.
+    # This avoids overwriting the user's entire config and only targets the host we need.
+    log_appuser_exec "Checking and configuring SSH for non-interactive use with github.com..."
+    ssh_config_file="$HOME/.ssh/config"
+    mkdir -p "$(dirname "$ssh_config_file")"
+    touch "$ssh_config_file" # Ensure the file exists
+    chmod 700 "$(dirname "$ssh_config_file")"
+    chmod 600 "$ssh_config_file"
+
+    # Use grep to check if a 'Host github.com' entry already exists.
+    # The regex allows for flexible whitespace.
+    if ! grep -q -E "^\s*Host\s+github\.com\s*$" "$ssh_config_file"; then
+        log_appuser_exec "No existing SSH config for 'github.com' found. Appending non-interactive settings."
+        # Append the necessary settings for github.com
+        echo -e "\nHost github.com\n  StrictHostKeyChecking no\n  UserKnownHostsFile /dev/null\n" >> "$ssh_config_file"
+        log_appuser_exec "Appended SSH config for github.com."
+    else
+        log_appuser_exec "Existing SSH config for 'github.com' found. No changes made."
+    fi
+
     log_appuser_exec "Running as appuser ($(id -u):$(id -g)). Preparing to execute command."
     if [ "$#" -gt 0 ]; then
         log_appuser_exec "Command and arguments to execute:"
