@@ -148,6 +148,53 @@ for locale in locales_list:
 MAX_CONCURRENT_API_CALLS = config.get('max_concurrent_api_calls', 1)
 
 
+def lint_properties_file(file_path: str) -> List[str]:
+    """
+    Lints a .properties file to check for common issues.
+
+    Args:
+        file_path: The path to the .properties file.
+
+    Returns:
+        A list of error messages. An empty list means no errors were found.
+    """
+    errors = []
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            for i, line in enumerate(f, 1):
+                line = line.strip()
+                if not line or line.startswith('#') or line.startswith('!'):
+                    continue
+
+                if '=' in line:
+                    key, value = line.split('=', 1)
+                    key = key.strip()
+
+                    # Check for malformed keys (e.g., double dots)
+                    if '..' in key:
+                        errors.append(f"Linter Error: Malformed key '{key}' with double dots found on line {i}.")
+
+                    # Check for invalid escape sequences in the value.
+                    # A backslash not followed by a valid escape char or 'u' is an error.
+                    # This is a simplified check; a full Java properties parser is complex.
+                    # We are specifically looking for the '\' followed by a non-special character.
+                    if '\\' in value:
+                        # Find all occurrences of a backslash
+                        for m in re.finditer(r'\\', value):
+                            char_after = value[m.start() + 1] if len(value) > m.start() + 1 else None
+                            # Common valid escapes in .properties files. This is not exhaustive.
+                            valid_escapes = ['t', 'n', 'f', 'r', '\\', 'u', '=', ':', '#', '!', ' ']
+                            if char_after and char_after not in valid_escapes:
+                                # A more specific check for the Unicode error seen in reviews
+                                if char_after.isalpha() and char_after != 'u':
+                                     errors.append(f"Linter Error: Invalid escape sequence '\\{char_after}' in value for key '{key}' on line {i}.")
+
+    except Exception as e:
+        errors.append(f"Linter Error: Could not read or process file {file_path}. Reason: {e}")
+
+    return errors
+
+
 def language_code_to_name(language_code: str) -> Optional[str]:
     """
     Convert a language code to a language name.
@@ -618,6 +665,8 @@ You are an expert translator specializing in software localization. Translate th
 
 **Instructions**:
 - **Do not translate or modify placeholder tokens**: Any text enclosed within double underscores `__` (e.g., `__PH_abc123__`) should remain exactly as is.
+- **Strictly follow the glossary**: Do not translate terms that are defined in the glossary (e.g., brand names).
+- **Escape single quotes for Java**: For languages that use single quotes (apostrophes), you MUST escape them by doubling them. For example, 'don't' becomes 'don''t'. This is critical for Java's `MessageFormat` parser.
 - **Maintain placeholders**: Keep placeholders like `{{0}}`, `{{1}}` unchanged.
 - **Preserve formatting**: Keep special characters and formatting such as `\\n` and `\\t`.
 - **Do not add** any additional characters or punctuation (e.g., no square brackets, quotation marks, etc.).
@@ -967,6 +1016,16 @@ async def process_translation_queue(
             logging.warning(f"Skipping file {translation_file}: unsupported language code '{language_code}'.")
             continue
         logging.info(f"Processing file '{translation_file}' for language '{target_language}'...")
+
+        # --- Pre-flight Linter Check ---
+        # Before processing, lint the file to catch basic syntax errors.
+        lint_errors = lint_properties_file(os.path.join(translation_queue_folder, translation_file))
+        if lint_errors:
+            logging.error(f"Linter found errors in '{translation_file}'. Skipping translation for this file.")
+            for error in lint_errors:
+                logging.error(f"  - {error}")
+            continue
+        # --- End Linter Check ---
 
         # Define full paths
         translation_file_path = os.path.join(translation_queue_folder, translation_file)
