@@ -257,6 +257,38 @@ class TestCoreLogic(unittest.TestCase):
         self.assertEqual(sorted(keys), expected_keys, "Should identify the correct keys for translation.")
         self.assertEqual(indices, expected_indices, "Should return the correct original and new indices.")
 
+    def test_should_not_retranslate_existing_translations(self):
+        """
+        Tests that keys with existing, valid translations are not re-translated.
+        This is the core of the bug we are seeing where all keys are being re-translated.
+        """
+        # Scenario: A target file that is already correctly translated.
+        # `key1` and `key2` have different values in target vs. source.
+        parsed_lines = [
+            {'type': 'entry', 'key': 'key1', 'value': 'Zielwert 1', 'line_number': 0},
+            {'type': 'entry', 'key': 'key2', 'value': 'Zielwert 2', 'line_number': 1},
+        ]
+
+        target_translations = {
+            'key1': 'Zielwert 1',
+            'key2': 'Zielwert 2',
+        }
+
+        # The source file has different values.
+        source_translations = {
+            'key1': 'Source Value 1',
+            'key2': 'Source Value 2',
+        }
+
+        texts, _, _ = extract_texts_to_translate(
+            parsed_lines, source_translations, target_translations
+        )
+
+        # There should be NO texts to translate in this scenario.
+        # If this test fails, it means the logic is incorrectly flagging
+        # existing translations as needing an update.
+        self.assertEqual(len(texts), 0, "Should not re-translate keys that already have a valid translation.")
+
     def test_extract_language_from_filename(self):
         """
         Tests that `extract_language_from_filename` correctly identifies language codes.
