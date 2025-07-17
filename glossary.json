@@ -100,7 +100,8 @@
     "strike": "Strike",
     "swift": "SWIFT",
     "ach": "ACH",
-    "cips": "CIPS"
+    "cips": "CIPS",
+    "commit_hash": "Commit-Hash"
   },
   "es": {
     "overview": "Índice",
@@ -203,7 +204,8 @@
     "strike": "Strike",
     "swift": "SWIFT",
     "ach": "ACH",
-    "cips": "CIPS"
+    "cips": "CIPS",
+    "commit_hash": "Hash de commit"
   },
   "it": {
     "overview": "Panoramica",
@@ -306,10 +308,11 @@
     "strike": "Strike",
     "swift": "SWIFT",
     "ach": "ACH",
-    "cips": "CIPS"
+    "cips": "CIPS",
+    "commit_hash": "Hash di commit"
   },
   "pcm": {
-    "overview": "Overview",
+    "overview": "Ova-view",
     "learn_more": "Learn more",
     "balance": "Balance",
     "send": "Send",
@@ -409,7 +412,8 @@
     "strike": "Strike",
     "swift": "SWIFT",
     "ach": "ACH",
-    "cips": "CIPS"
+    "cips": "CIPS",
+    "commit_hash": "Commit hash"
   },
   "pt_BR": {
     "overview": "Visão Geral",
@@ -472,7 +476,48 @@
     "cross_border_interbank_payment_system": "Cross-Border Interbank Payment System",
     "liquid": "Liquid",
     "swift_international_wire_transfer": "SWIFT International Wire Transfer",
-    "tor": "Tor"
+    "tor": "Tor",
+    "uphold": "Uphold",
+    "money_beam": "MoneyBeam (N26)",
+    "popmoney": "Popmoney",
+    "revolut": "Revolut",
+    "cash_app": "Cash App",
+    "perfect_money": "Perfect Money",
+    "ali_pay": "AliPay",
+    "wechat_pay": "WeChat Pay",
+    "sepa": "SEPA",
+    "sepa_instant": "SEPA Instant",
+    "swish": "Swish",
+    "zelle": "Zelle",
+    "chase_quick_pay": "Chase QuickPay",
+    "interac_e_transfer": "Interac e-Transfer",
+    "hal_cash": "HalCash",
+    "prompt_pay": "PromptPay",
+    "advanced_cash": "Advanced Cash",
+    "wise": "Wise",
+    "wise_usd": "Wise-USD",
+    "paysera": "Paysera",
+    "paxum": "Paxum",
+    "neft": "India/NEFT",
+    "rtgs": "India/RTGS",
+    "imps": "India/IMPS",
+    "upi": "India/UPI",
+    "paytm": "India/PayTM",
+    "nequi": "Nequi",
+    "bizum": "Bizum",
+    "pix": "Pix",
+    "amazon_gift_card": "Amazon eGift Card",
+    "capitual": "Capitual",
+    "celpay": "CelPay",
+    "monese": "Monese",
+    "satispay": "Satispay",
+    "tikkie": "Tikkie",
+    "verse": "Verse",
+    "strike": "Strike",
+    "swift": "SWIFT",
+    "ach": "ACH",
+    "cips": "CIPS",
+    "commit_hash": "Hash do commit"
   },
   "cs": {
     "overview": "Přehled",
@@ -528,7 +573,12 @@
     "cross_border_interbank_payment_system": "Cross-Border Interbank Payment System",
     "liquid": "Liquid",
     "swift_international_wire_transfer": "SWIFT International Wire Transfer",
-    "tor": "Tor"
+    "tor": "Tor",
+    "uphold": "Uphold",
+    "swift": "SWIFT",
+    "ach": "ACH",
+    "cips": "CIPS",
+    "commit_hash": "Hash revize"
   },
   "ru": {
     "overview": "Обзор",
@@ -591,7 +641,12 @@
     "cross_border_interbank_payment_system": "Cross-Border Interbank Payment System",
     "liquid": "Liquid",
     "swift_international_wire_transfer": "SWIFT International Wire Transfer",
-    "tor": "Tor"
+    "tor": "Tor",
+    "uphold": "Uphold",
+    "swift": "SWIFT",
+    "ach": "ACH",
+    "cips": "CIPS",
+    "commit_hash": "хэш коммита"
   },
   "af_ZA": {
     "overview": "Oorsig",
@@ -654,6 +709,11 @@
     "cross_border_interbank_payment_system": "Cross-Border Interbank Payment System",
     "liquid": "Liquid",
     "swift_international_wire_transfer": "SWIFT International Wire Transfer",
-    "tor": "Tor"
+    "tor": "Tor",
+    "uphold": "Uphold",
+    "swift": "SWIFT",
+    "ach": "ACH",
+    "cips": "CIPS",
+    "commit_hash": "Commit hash"
   }
 }
