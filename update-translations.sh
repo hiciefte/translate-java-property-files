@@ -360,9 +360,14 @@ else
 fi
 
 # Reset the repository to a clean state to avoid any conflicts or leftover files.
-log "Resetting local repository to a clean state in $TARGET_PROJECT_ROOT"
-git reset --hard HEAD
-git clean -fd
+log "Resetting local repository to a clean state against upstream/main in $TARGET_PROJECT_ROOT"
+# Fetch the latest from upstream to ensure our reference is current.
+git fetch upstream
+# Reset to the upstream main branch, discarding all local changes and commits.
+git reset --hard upstream/main
+# Clean untracked files and directories, but exclude critical local dev files.
+log "Cleaning untracked files, excluding development directories..."
+git clean -fde "venv/" -e ".idea/" -e "*.iml" -e "secrets/" -e "docker/.env"
 
 # Save the current branch (should be main as set by entrypoint)
 ORIGINAL_BRANCH=$(git branch --show-current)
