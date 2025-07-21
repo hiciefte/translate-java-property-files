@@ -326,7 +326,7 @@ else
     # Extract the 'source_file' for each resource from the Transifex config.
     # This gives us the configured source files with their full paths relative to the repo root.
     # Example: i18n/src/main/resources/BtcAddresses.properties
-    mapfile -t configured_sources < <(yq e '.main.projects.bisq.resources[].source_file' "$TX_CONFIG_FILE")
+    mapfile -t configured_sources < <(yq e '.[].projects.bisq.resources[].source_file' "$TX_CONFIG_FILE")
 
     # Get the actual English source files present on disk.
     # We use find and then remove the input folder prefix to get paths relative to the input folder,
@@ -359,9 +359,15 @@ else
     log "INFO" "All source files are correctly configured in Transifex."
 fi
 
-# Stash any local changes to avoid conflicts, but do this carefully
-log "Stashing any existing local changes in $TARGET_PROJECT_ROOT"
-git stash push -- i18n/src/main/resources/
+# Reset the repository to a clean state to avoid any conflicts or leftover files.
+log "Resetting local repository to a clean state against upstream/main in $TARGET_PROJECT_ROOT"
+# Fetch the latest from upstream to ensure our reference is current.
+git fetch upstream
+# Reset to the upstream main branch, discarding all local changes and commits.
+git reset --hard upstream/main
+# Clean untracked files and directories, but exclude critical local dev files.
+log "Cleaning untracked files, excluding development directories..."
+git clean -fde "venv/" -e ".idea/" -e "*.iml" -e "secrets/" -e "docker/.env"
 
 # Save the current branch (should be main as set by entrypoint)
 ORIGINAL_BRANCH=$(git branch --show-current)
@@ -515,12 +521,6 @@ git checkout --force "$ORIGINAL_BRANCH"
 log "Re-initializing and updating git submodules after returning to original branch"
 git submodule init
 git submodule update --recursive
-
-# Pop the stash if we stashed changes earlier
-if [ -n "$(git stash list)" ]; then
-    log "Popping stashed changes"
-    git stash pop
-fi
 
 log "Deactivating virtual environment"
 deactivate || true
