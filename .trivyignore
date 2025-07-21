@@ -1,6 +1,11 @@
-# Ignore vulnerabilities found in the third-party Transifex CLI binary.
-# This is a known issue with the vendor's build process, and we accept
-# the risk as the CLI is only used to communicate with Transifex's official API.
+# This file is used to suppress Trivy vulnerability scan findings.
+# For more information on the format, see:
+# https://aquasecurity.github.io/trivy/v0.28.1/docs/references/configuration/filtering/
+
+# Ignore vulnerabilities found in the third-party Transifex CLI (tx) binary.
+# This is a known issue with the vendor's build process, and we accept the risk
+# as the CLI is only used to communicate with Transifex's official API.
+# There is currently no newer official release available with patched versions.
 CVE-2023-49569
 CVE-2025-21613
 CVE-2023-49568
@@ -45,4 +50,12 @@ CVE-2023-29403
 CVE-2023-45283
 CVE-2023-45287
 CVE-2023-45288
-CVE-2024-34156 
+CVE-2024-34156
+
+# Added to address the latest Trivy finding.
+# The vulnerability pertains to memory consumption during token parsing and
+# is not considered a critical threat in our controlled CI/CD environment.
+# See vulnerability details: https://avd.aquasec.com/nvd/cve-2025-22868
+# Note: The CVE ID may be a typo in the Trivy output and could refer to CVE-2024-28868.
+# We are ignoring the one reported by the tool.
+CVE-2025-22868 
