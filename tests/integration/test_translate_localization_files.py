@@ -58,6 +58,7 @@ async def test_process_translation_queue_end_to_end(integration_test_environment
         final_content = f.read()
         assert "key.two=Wert zwei" in final_content
         assert "key.one=Wert eins" in final_content
+        assert len(final_content.strip().split('\n')) == 2
 
 @pytest.mark.asyncio
 async def test_handles_already_escaped_quotes_correctly(integration_test_environment):
