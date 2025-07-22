@@ -11,6 +11,7 @@ import pytest
 def integration_test_paths():
     """Session-scoped fixture to define the absolute paths for test directories."""
     tests_root = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(tests_root, '..'))
     # Place temp dirs in the root of the tests folder for simplicity
     input_dir = os.path.join(tests_root, 'temp_integration_input')
     translation_queue_dir = os.path.join(tests_root, 'temp_integration_translation_queue')
@@ -21,7 +22,8 @@ def integration_test_paths():
         "input_folder": input_dir,
         "translation_queue_folder": translation_queue_dir,
         "translated_queue_folder": translated_queue_dir,
-        "mock_glossary_path": mock_glossary_path
+        "mock_glossary_path": mock_glossary_path,
+        "project_root": project_root
     }
 
 
@@ -37,11 +39,18 @@ def setup_global_test_environment(integration_test_paths):
     for folder in [paths['input_folder'], paths['translation_queue_folder'], paths['translated_queue_folder']]:
         os.makedirs(folder, exist_ok=True)
 
+    # Mock language configuration to avoid dependency on config.yaml in tests
+    mock_language_codes = {"de": "German", "es": "Spanish", "fr": "French"}
+    mock_name_to_code = {"german": "de", "spanish": "es", "french": "fr"}
+
     patches = [
         patch('src.translate_localization_files.INPUT_FOLDER', paths['input_folder']),
         patch('src.translate_localization_files.TRANSLATION_QUEUE_FOLDER', paths['translation_queue_folder']),
         patch('src.translate_localization_files.TRANSLATED_QUEUE_FOLDER', paths['translated_queue_folder']),
-        patch('src.translate_localization_files.DRY_RUN', False)
+        patch('src.translate_localization_files.DRY_RUN', False),
+        patch('src.translate_localization_files.REPO_ROOT', paths['project_root']),
+        patch('src.translate_localization_files.LANGUAGE_CODES', mock_language_codes),
+        patch('src.translate_localization_files.NAME_TO_CODE', mock_name_to_code)
     ]
     started_patches = []
     try:
