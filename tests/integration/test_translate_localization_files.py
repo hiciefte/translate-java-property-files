@@ -262,11 +262,11 @@ class TestPythonScriptIntegration(unittest.IsolatedAsyncioTestCase):
         # 3. Run the core processing logic with mocks, bypassing the linter for this specific test
         with patch('src.translate_localization_files.lint_properties_file', return_value=[]), \
              patch('src.translate_localization_files.client.chat.completions.create', new=mock_create), \
-             patch('src.translate_localization_files.INPUT_FOLDER', self.test_input_folder), \
+             patch('src.translate_localization_files.INPUT_FOLDER', os.path.abspath(self.test_input_folder)), \
              patch('src.translate_localization_files.DRY_RUN', False):
             await src.translate_localization_files.process_translation_queue(
-                translation_queue_folder=self.test_translation_queue_folder,
-                translated_queue_folder=self.test_translated_queue_folder,
+                translation_queue_folder=os.path.abspath(self.test_translation_queue_folder),
+                translated_queue_folder=os.path.abspath(self.test_translated_queue_folder),
                 glossary_file_path=self.mock_glossary_path_resolved
             )
 
