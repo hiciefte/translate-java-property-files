@@ -15,7 +15,7 @@ class TestHelperFunctions(unittest.TestCase):
         processed, mapping = extract_placeholders(original)
         # Ensure placeholders replaced with tokens
         self.assertNotIn('<b>', processed)
-        self.assertEqual(len(mapping), 2)
+        self.assertEqual(len(mapping), 3)
         restored = restore_placeholders(processed, mapping)
         self.assertEqual(restored, original)
 

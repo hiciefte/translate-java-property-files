@@ -515,8 +515,8 @@ def extract_placeholders(text: str) -> Tuple[str, Dict[str, str]]:
     if not isinstance(text, str):
         raise ValueError("Input text must be a string.")
 
-    # Pattern to match placeholders and tags
-    pattern = re.compile(r'(<[^<>]+>)|(\\{[^{}]+\\})')  # type: ignore
+    # Pattern to match placeholders like `{0}` or `{name}` and HTML-like tags
+    pattern = re.compile(r'(<[^<>]+>)|({[^{}]+})')
     placeholder_mapping = {}
 
     def replace_placeholder(match):
@@ -525,7 +525,7 @@ def extract_placeholders(text: str) -> Tuple[str, Dict[str, str]]:
         placeholder_mapping[placeholder_token] = full_match
         return placeholder_token
 
-    processed_text = pattern.sub(replace_placeholder, text)  # type: ignore
+    processed_text = pattern.sub(replace_placeholder, text)
     return processed_text, placeholder_mapping
 
 
@@ -666,7 +666,6 @@ You are an expert translator specializing in software localization. Translate th
 **Instructions**:
 - **Do not translate or modify placeholder tokens**: Any text enclosed within double underscores `__` (e.g., `__PH_abc123__`) should remain exactly as is.
 - **Strictly follow the glossary**: Do not translate terms that are defined in the glossary (e.g., brand names).
-- **Escape single quotes for Java**: For languages that use single quotes (apostrophes), you MUST escape them by doubling them. For example, 'don't' becomes 'don''t'. This is critical for Java's `MessageFormat` parser.
 - **Maintain placeholders**: Keep placeholders like `{{0}}`, `{{1}}` unchanged.
 - **Preserve formatting**: Keep special characters and formatting such as `\\n` and `\\t`.
 - **Do not add** any additional characters or punctuation (e.g., no square brackets, quotation marks, etc.).
@@ -740,7 +739,8 @@ def integrate_translations(
         parsed_lines: List[Dict],
         translations: List[str],
         indices: List[int],
-        keys: List[str]
+        keys: List[str],
+        source_translations: Dict[str, str]
 ) -> List[Dict]:
     """
     Integrate translated texts back into the parsed lines.
@@ -750,26 +750,39 @@ def integrate_translations(
         translations (List[str]): The list of translated texts.
         indices (List[int]): The indices where the translations should be inserted.
         keys (List[str]): The keys associated with the translations.
+        source_translations (Dict[str, str]): The source translations for context.
 
     Returns:
         List[Dict]: The updated parsed lines.
     """
-    for idx, translation_idx in enumerate(indices):
-        key = keys[idx]  # type: ignore[arg-type]
-        value = translations[idx]  # type: ignore[arg-type]
+    for idx, (translation_idx, key) in enumerate(zip(indices, keys)):
+        translated_text = translations[idx]
+        original_source_text = source_translations.get(key, "")
+
+        # If the original source text contained placeholders, it's likely for MessageFormat,
+        # which requires single quotes to be escaped.
+        if '{' in original_source_text and '}' in original_source_text:
+            # Escape single quotes that are not already escaped.
+            translated_text = re.sub(r"(?<!')'", "''", translated_text)
+
         if translation_idx < len(parsed_lines):
             # Update existing entry
-            parsed_lines[translation_idx]['value'] = value  # type: ignore[arg-type]
-            parsed_lines[translation_idx]['original_value'] = value  # type: ignore[arg-type]
+            line_info = parsed_lines[translation_idx]
+            line_info['value'] = translated_text
+            logging.debug(f"Integrated translation for key '{key}': '{translated_text}'")
         else:
-            # Add new entry
+            # This logic branch for adding completely new keys might need refinement
+            # if we expect new keys to also require quote escaping. For now, we assume
+            # they follow the same logic based on their source_text.
             parsed_lines.append({
                 'type': 'entry',
                 'key': key,
-                'value': value,
-                'original_value': value,  # Assuming new entries don't have an original value
+                'value': translated_text,
+                'original_value': translated_text,
                 'line_number': translation_idx
             })
+            logging.debug(f"Appended new translation for key '{key}': '{translated_text}'")
+
     return parsed_lines
 
 
@@ -1077,7 +1090,13 @@ async def process_translation_queue(
         translations = [result for _, result in results]  # type: ignore[arg-type]
 
         # Integrate translations into the parsed lines
-        updated_lines = integrate_translations(parsed_lines, translations, indices, keys_to_translate)
+        updated_lines = integrate_translations(
+            parsed_lines,
+            translations,
+            indices,
+            keys_to_translate,
+            source_translations
+        )
         new_file_content = reassemble_file(updated_lines)
         translated_file_path = os.path.join(translated_queue_folder, translation_file)
 

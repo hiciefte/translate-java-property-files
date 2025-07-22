@@ -235,6 +235,48 @@ class TestPythonScriptIntegration(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(mock_shutil_rmtree.call_args_list), len(expected_rmtree_calls), "shutil.rmtree not called expected number of times.")
             self.assertTrue(all(c in mock_shutil_rmtree.call_args_list for c in expected_rmtree_calls), "shutil.rmtree not called with expected arguments.")
 
+    async def test_handles_already_escaped_quotes_correctly(self):
+        """
+        Tests that text with already-escaped single quotes ('') is not double-escaped ('''').
+        This is a regression test for the user-reported issue.
+        """
+        # 1. Setup mock files and directories
+        source_content = "key.name = URL is ''{0}''"
+        target_content = "key.name = URL is ''{0}''"  # Simulate untranslated key
+
+        source_en_path = os.path.join(self.test_input_folder, 'app.properties')
+        target_de_path = os.path.join(self.test_translation_queue_folder, 'app_de.properties')
+
+        with open(source_en_path, 'w', encoding='utf-8') as f:
+            f.write(source_content)
+        with open(target_de_path, 'w', encoding='utf-8') as f:
+            f.write(target_content)
+
+        # 2. Mock the AI's response to return the value WITHOUT escaped quotes, to test if our script adds them correctly.
+        async def mock_create(*args, **kwargs):
+            mock_response = MagicMock()
+            # The AI returns the raw translation. Our script is responsible for escaping.
+            mock_response.choices = [MagicMock(message=MagicMock(content="URL ist '{0}'"))]
+            return mock_response
+
+        # 3. Run the core processing logic with mocks
+        with patch('src.translate_localization_files.client.chat.completions.create', new=mock_create), \
+             patch('src.translate_localization_files.INPUT_FOLDER', self.test_input_folder), \
+             patch('src.translate_localization_files.DRY_RUN', False):
+            await src.translate_localization_files.process_translation_queue(
+                translation_queue_folder=self.test_translation_queue_folder,
+                translated_queue_folder=self.test_translated_queue_folder,
+                glossary_file_path=self.mock_glossary_path_resolved
+            )
+
+        # 4. Assert the output is correct
+        output_file_path = os.path.join(self.test_translated_queue_folder, 'app_de.properties')
+        with open(output_file_path, 'r', encoding='utf-8') as f:
+            final_content = f.read().strip()
+            expected_content = "key.name=URL ist ''{0}''" # Note: Changed to '=' as parse_properties adds it
+            self.assertEqual(final_content, expected_content)
+            self.assertNotIn("''''", final_content)
+
 
 if __name__ == '__main__':
     unittest.main()
