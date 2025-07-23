@@ -366,7 +366,7 @@ else
 
     # Make environment variables from docker-compose available to cron jobs
     log "Dumping environment variables to /etc/environment for cron..."
-    printenv | grep -E '^(GITHUB_TOKEN|OPENAI_API_KEY|TX_TOKEN|GIT_AUTHOR_NAME|GIT_AUTHOR_EMAIL|GIT_SIGNING_KEY|FORK_REPO_NAME|UPSTREAM_REPO_NAME|TARGET_BRANCH_FOR_PR)=' > /etc/environment
+    printenv | grep -E '^(HEALTHCHECK_URL|GITHUB_TOKEN|OPENAI_API_KEY|TX_TOKEN|GIT_AUTHOR_NAME|GIT_AUTHOR_EMAIL|GIT_SIGNING_KEY|FORK_REPO_NAME|UPSTREAM_REPO_NAME|TARGET_BRANCH_FOR_PR)=' > /etc/environment
     log "Environment file for cron created."
 
     # Ensure cron daemon is started
