@@ -569,3 +569,31 @@ If you need to manually interact with the Docker service:
     ```bash
     docker compose -f docker/docker-compose.yml build --no-cache
     ```
+
+## Improving Translation Quality
+
+The quality and consistency of automated translations heavily depend on the provided `glossary.json` file. This file serves as the single source of truth for terminology, brand names, and other specific phrases that must not be translated or must be translated in a very specific way.
+
+### How to Contribute to the Glossary
+
+If you notice a term that is consistently mistranslated or a brand name that should be protected, you can improve future translations by adding it to the glossary.
+
+1.  **Open the `glossary.json` file**: This file is located in the root of the project.
+2.  **Find the correct language section**: The glossary is organized by language code (e.g., `"de"` for German, `"af_ZA"` for Afrikaans).
+3.  **Add the new term**: Add a new key-value pair to the language's dictionary.
+    - The **key** should be the English source text.
+    - The **value** should be the desired, correct translation.
+    - For terms that should **not** be translated (e.g., brand names), the key and value should be identical.
+
+**Example**:
+
+To ensure that "seed words" is always translated to "Seed-Wörter" in German, you would add the following to the `"de"` section:
+
+```json
+"de": {
+  "seed words": "Seed-Wörter",
+  ...
+}
+```
+
+By continuously updating the glossary, you will significantly reduce the number of manual corrections required and improve the overall quality of the localization.
