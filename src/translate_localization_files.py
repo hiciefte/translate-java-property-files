@@ -665,8 +665,8 @@ You are an expert translator specializing in software localization. Translate th
 
 **Instructions**:
 - **Do not translate or modify placeholder tokens**: Any text enclosed within double underscores `__` (e.g., `__PH_abc123__`) should remain exactly as is.
-- **Strictly follow the glossary**: Do not translate terms that are defined in the glossary (e.g., brand names).
-- **Maintain placeholders**: Keep placeholders like `{{0}}`, `{{1}}` unchanged.
+- **Strictly follow the glossary**: The glossary provides key-value pairs for specific terms. You must use the provided translation for these terms. The matching of terms from the source text to the keys in the glossary should be case-insensitive. For example, if the source text contains "Backup Seeds" and the glossary has an entry for "backup seeds", you must use the translation from that glossary entry.
+- **Maintain placeholders**: Keep placeholders like `{0}`, `{1}` unchanged.
 - **Preserve formatting**: Keep special characters and formatting such as `\\n` and `\\t`.
 - **Do not add** any additional characters or punctuation (e.g., no square brackets, quotation marks, etc.).
 - **Provide only** the translated text corresponding to the Value.
