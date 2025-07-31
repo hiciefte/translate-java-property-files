@@ -1,6 +1,7 @@
 #!/bin/bash
 
 set -e  # Exit immediately if a command exits with a non-zero status
+set -o pipefail # Exit on pipeline failures
 
 # Log file
 LOG_FILE="setup_log.log"
@@ -32,9 +33,28 @@ curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg -
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
 apt-get update && apt-get install -y gh
 
-# Install Transifex CLI
-log "Installing Transifex CLI"
-curl -o- https://raw.githubusercontent.com/transifex/cli/master/install.sh | bash
+# Define a variable for the installer path and set a trap to clean it up on exit.
+# The trap will execute on any script exit, ensuring the temp file is removed.
+INSTALLER_PATH="/tmp/install_tx.sh"
+trap 'rm -f -- "$INSTALLER_PATH"' EXIT
+
+# Install Transifex CLI securely
+log "Installing Transifex CLI securely..."
+TX_INSTALLER_URL="https://raw.githubusercontent.com/transifex/cli/v1.6.17/install.sh"
+TX_INSTALLER_SHA256="39fe480b525880aa842a097f8315100c3d5a19233a71befec904ce319205d392"
+
+curl -sSL --fail "$TX_INSTALLER_URL" -o "$INSTALLER_PATH"
+
+# Verify the installer's checksum. The `||` construct allows us to run a block of
+# code on failure without `set -e` terminating the script prematurely.
+echo "$TX_INSTALLER_SHA256  $INSTALLER_PATH" | sha256sum -c - || {
+    log "FATAL: Transifex installer checksum mismatch. Aborting for security."
+    exit 1
+}
+
+# Run the installer with flags to make it exit on errors and unset variables.
+bash -euo pipefail "$INSTALLER_PATH"
+log "Transifex CLI installed successfully."
 
 # Check if bisquser exists
 if ! id -u bisquser &>/dev/null; then
