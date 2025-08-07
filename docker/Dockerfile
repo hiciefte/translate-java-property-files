@@ -28,8 +28,8 @@ RUN apt-get update && \
         gh \
         git \
         jq \
-        python3.9 \
-        python3.9-venv \
+        python3.11 \
+        python3.11-venv \
         python3-pip \
         openssh-client && \
     apt-get remove -y software-properties-common && \
@@ -78,8 +78,8 @@ RUN groupadd -o -g ${HOST_GID:-1000} appuser && \
     chown -R ${HOST_UID:-1000}:${HOST_GID:-1000} /home/appuser/.gnupg /run/user/${HOST_UID:-1000} && \
     chmod -R 700 /home/appuser/.gnupg /run/user/${HOST_UID:-1000}
 
-# Make python3.9 the default python3
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1
+# Make python3.11 the default python3
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 
 # Install Transifex CLI
 RUN TX_VERSION="v1.6.17" && \
@@ -114,7 +114,7 @@ WORKDIR /app
 
 # Copy source and install python dependencies
 COPY requirements.txt .
-RUN python3.9 -m pip install --no-cache-dir -r requirements.txt
+RUN python3.11 -m pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Copy cron file (from docker/ in project root, copied relative to /app in container)

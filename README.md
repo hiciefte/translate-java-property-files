@@ -135,6 +135,7 @@ Key files are described in more detail in relevant setup sections.
 
 Before you begin, ensure you have:
 
+* **Python 3.9 or newer**.
 * Access to a server or local machine with `sudo` or `root` privileges for initial setup.
 * Docker and Docker Compose installed.
 * Git installed.
@@ -572,28 +573,35 @@ If you need to manually interact with the Docker service:
 
 ## Improving Translation Quality
 
-The quality and consistency of automated translations heavily depend on the provided `glossary.json` file. This file serves as the single source of truth for terminology, brand names, and other specific phrases that must not be translated or must be translated in a very specific way.
+The quality and consistency of automated translations depend entirely on the provided `glossary.json` file. This file serves as the single source of truth for terminology, brand names, and other specific phrases that must be translated in a specific way.
 
 ### How to Contribute to the Glossary
 
-If you notice a term that is consistently mistranslated or a brand name that should be protected, you can improve future translations by adding it to the glossary.
+If you notice a term that is consistently mistranslated, you can improve future translations by adding it to the glossary.
 
-1.  **Open the `glossary.json` file**: This file is located in the root of the project.
-2.  **Find the correct language section**: The glossary is organized by language code (e.g., `"de"` for German, `"af_ZA"` for Afrikaans).
-3.  **Add the new term**: Add a new key-value pair to the language's dictionary.
-    - The **key** should be the English source text.
-    - The **value** should be the desired, correct translation.
-    - For terms that should **not** be translated (e.g., brand names), the key and value should be identical.
+1.  **Open `glossary.json`**: This file is located in the root of the project.
+2.  **Find the language section**: The glossary is organized by language code (e.g., `"de"` for German, `"es"` for Spanish).
+3.  **Add the new term**: Add a new key-value pair.
+    * The **key** should be the English source text (ideally lowercase).
+    * The **value** should be the desired, correct translation.
+    * For terms that should **not** be translated (e.g., brand names), the key and value should be identical.
 
-**Example**:
+By continuously improving the glossary, you directly enhance the quality and consistency of all future automated translations.
 
-To ensure that "seed words" is always translated to "Seed-Wörter" in German, you would add the following to the `"de"` section:
+## Advanced Translation Quality Engine
 
-```json
-"de": {
-  "seed words": "Seed-Wörter",
-  ...
-}
-```
+This service uses a sophisticated, two-step process to ensure high-quality translations.
 
-By continuously updating the glossary, you will significantly reduce the number of manual corrections required and improve the overall quality of the localization.
+### Two-Step Process: Translate -> Review
+
+1.  **Step 1: Initial Batch Translation**: The system first generates an initial translation for all new or changed text. This step uses a powerful AI prompt enriched with:
+    *   **Glossary Enforcement**: Strictly adheres to the terms defined in `glossary.json`.
+    *   **Contextual Examples**: Uses existing high-quality translations from the same file as a stylistic guide.
+    *   **Language-Specific Rules**: Follows a detailed checklist of grammatical and stylistic rules for each target language (e.g., formal address in German).
+
+2.  **Step 2: Holistic AI Review**: After the initial draft is complete, the entire translated file is sent to a second, specialized AI "lead editor". This reviewer is tasked with performing a holistic check of the newly translated strings, comparing them against the original English file. Its goals are to:
+    *   **Ensure Consistency**: Check for consistent use of terminology across the entire file.
+    *   **Verify Accuracy and Tone**: Correct any remaining grammatical errors or awkward phrasing.
+    *   **Return Structured Data**: The reviewer returns its corrections as a structured JSON object. This is a critical safety feature that prevents the AI from altering the `.properties` file structure. Our script then safely integrates these verified corrections.
+
+This two-step process allows the system to be both efficient and thorough, significantly reducing the need for manual correction.
