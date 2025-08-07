@@ -11,6 +11,7 @@ import tempfile
 import uuid
 from typing import Dict, List, Tuple, Optional
 
+import jsonschema
 import tiktoken
 import yaml
 from aiolimiter import AsyncLimiter
@@ -28,6 +29,16 @@ from openai.types.chat import (
     ChatCompletionUserMessageParam
 )
 from tqdm.asyncio import tqdm_asyncio
+
+# Define the expected JSON schema for the AI's response in the holistic review.
+# This ensures that the AI returns a dictionary where every value is a string.
+LOCALIZATION_SCHEMA = {
+    "type": "object",
+    "patternProperties": {
+        "^.*$": {"type": "string"}
+    },
+    "additionalProperties": False
+}
 
 # Determine the correct path to config.yaml relative to the script's location
 SCRIPT_REAL_PATH = os.path.realpath(__file__)
@@ -798,8 +809,16 @@ You are a lead editor and quality assurance specialist for software localization
     ```
 2.  **Apply All Quality Rules**: Meticulously apply the language-specific quality checklist to every key in your scope.
 3.  **Do Not Escape Single Quotes**: The system will handle all necessary escaping for Java `MessageFormat`. Return single quotes (') as literal characters in the JSON values.
-4.  **Output JSON Only**: Your final output **must** be a single, valid JSON object. This object should contain ONLY the keys listed in the "Strictly Limited Scope" section above, with their final, corrected translations as the values.
+4.  **Output JSON Only**: Your final output **must** be a single, valid JSON object that adheres to the required schema. This object should contain ONLY the keys listed in the "Strictly Limited Scope" section above, with their final, corrected translations as the values.
 5.  **Do Not Add Explanations**: Do not output any text, markdown, or explanations before or after the JSON object.
+
+**JSON Output Example**:
+```json
+{{
+  "key.one": "Corrected translation for key one.",
+  "key.two": "Corrected translation for key two."
+}}
+```
 
 **Language-Specific Quality Checklist**:
 - **For German ("de")**:
@@ -840,14 +859,24 @@ Return a JSON object containing the fully corrected translations for the followi
                     ],
                     temperature=0.1,
                     response_format={"type": "json_object"},
+                    max_tokens=4096  # Increase tokens to avoid truncation
                 )
                 response_text = response.choices[0].message.content.strip()
-                # The response should be a JSON string. Parse it.
-                return json.loads(response_text)
+                
+                # The response should be a JSON string. Parse and validate it.
+                parsed_json = json.loads(response_text)
+                jsonschema.validate(instance=parsed_json, schema=LOCALIZATION_SCHEMA)
+                return parsed_json
+
             except json.JSONDecodeError as json_exc:
                 logging.error(f"Holistic review failed: AI did not return valid JSON. Error: {json_exc}")
-                logging.debug(f"Invalid AI response: {response_text}")
-                return None  # Failed to get valid JSON
+                logging.debug(f"Invalid AI response (JSON Decode Error):\n---\n{response_text}\n---")
+                # Fall through to retry logic
+            except jsonschema.ValidationError as schema_exc:
+                logging.error(f"Holistic review failed: AI response did not match the required JSON schema. Error: {schema_exc.message}")
+                logging.debug(f"Invalid AI response (Schema Error):\n---\n{response_text}\n---")
+                # Fall through to retry logic
+
             except (RateLimitError, APITimeoutError, APIConnectionError, APIStatusError, OpenAIError) as api_exc:
                 logging.warning(f"API error during holistic review: {api_exc}")
                 should_retry = await _handle_retry(attempt, max_retries, base_delay, "holistic_review", api_exc)
@@ -855,7 +884,13 @@ Return a JSON object containing the fully corrected translations for the followi
                     return None
             except Exception as e:
                 logging.error(f"Unexpected error during holistic review: {e}", exc_info=True)
+                return None # Do not retry on unexpected errors
+
+            # If we're here, it means a JSON or Schema error occurred. We should retry.
+            should_retry = await _handle_retry(attempt, max_retries, base_delay, "holistic_review_validation")
+            if not should_retry:
                 return None
+        
         return None  # Fallback after all retries
 
 
@@ -883,10 +918,14 @@ def integrate_translations(
         translated_text = translations[idx]
         original_source_text = source_translations.get(key, "")
 
-        # Escaping is now handled later, after the holistic review.
-        # if '{' in original_source_text and '}' in original_source_text:
-        #     # Escape single quotes that are not already escaped.
-        #     translated_text = re.sub(r"(?<!')'", "''", translated_text)
+        # This is the definitive, final point for escaping.
+        # If the original English text had a placeholder, we assume it's for Java's MessageFormat
+        # and requires that any single quotes in the *translated* text be escaped.
+        if '{' in original_source_text and '}' in original_source_text:
+            # First, un-escape any pre-escaped quotes from the AI to normalize the string.
+            translated_text = translated_text.replace("''", "'")
+            # Then, escape all single quotes to be compliant with MessageFormat.
+            translated_text = translated_text.replace("'", "''")
 
         if translation_idx < len(parsed_lines):
             # Update existing entry
@@ -1243,42 +1282,35 @@ async def process_translation_queue(
             logging.info("Holistic review successful. Applying corrected translations.")
             logging.debug(f"--- CORRECTED JSON FROM REVIEW ---\n{json.dumps(corrected_translations, indent=2)}")
 
-            # Find which values were actually changed by the review
-            draft_translations_dict = {line['key']: line['value'] for line in draft_lines if line['type'] == 'entry'}
-            changed_keys = []
-            for key, corrected_value in corrected_translations.items():
-                draft_value = draft_translations_dict.get(key)
-                if draft_value is not None and draft_value != corrected_value:
-                    changed_keys.append(key)
-
-            if changed_keys:
-                logging.info(f"Holistic review changed {len(changed_keys)} value(s). Keys changed: {', '.join(changed_keys)}")
-            else:
-                logging.info("Holistic review completed without making changes to the draft translation.")
-
             # The corrected_translations dict is the new source of truth.
-            # We iterate through our master file structure `parsed_lines` and update it in-place.
-            for line_info in parsed_lines:
+            # We iterate through our master file structure `draft_lines` and update it in-place.
+            # Note: The `draft_lines` already has the initial translations. We're overwriting them.
+            changed_keys_count = 0
+            for line_info in draft_lines:
                 if line_info['type'] == 'entry':
                     key = line_info['key']
                     if key in corrected_translations:
                         new_value = corrected_translations[key]
-                        # This is the definitive, final point for escaping.
-                        # If the original English text had a placeholder, we assume it's for Java's MessageFormat
-                        # and requires that any single quotes in the *translated* text be escaped.
                         original_source_text = source_translations.get(key, "")
+
+                        # Apply the same escaping logic to the corrected value
                         if '{' in original_source_text and '}' in original_source_text:
-                            # First, un-escape any pre-escaped quotes from the AI to normalize the string.
                             new_value = new_value.replace("''", "'")
-                            # Then, escape all single quotes to be compliant with MessageFormat.
                             new_value = new_value.replace("'", "''")
-                        line_info['value'] = new_value
-            
-            # The structure was modified in-place, so it's our final version.
-            updated_lines = parsed_lines
+
+                        if line_info['value'] != new_value:
+                            changed_keys_count += 1
+                            logging.debug(f"Review changed key '{key}': FROM '{line_info['value']}' TO '{new_value}'")
+                            line_info['value'] = new_value
+            if changed_keys_count > 0:
+                logging.info(f"Holistic review changed {changed_keys_count} value(s).")
+            else:
+                logging.info("Holistic review completed without making changes to the draft translation.")
+
+            updated_lines = draft_lines
         else:
             logging.warning("Holistic review failed or returned no corrections. Proceeding with initial translations.")
-            # If review fails, we use the original draft from the first translation pass.
+            # If review fails, we use the original draft which was already correctly escaped.
             updated_lines = draft_lines
         new_file_content = reassemble_file(updated_lines)
         translated_file_path = os.path.join(translated_queue_folder, translation_file)

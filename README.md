@@ -581,9 +581,9 @@ If you notice a term that is consistently mistranslated, you can improve future 
 1.  **Open `glossary.json`**: This file is located in the root of the project.
 2.  **Find the language section**: The glossary is organized by language code (e.g., `"de"` for German, `"es"` for Spanish).
 3.  **Add the new term**: Add a new key-value pair.
-    - The **key** should be the English source text (ideally lowercase).
-    - The **value** should be the desired, correct translation.
-    - For terms that should **not** be translated (e.g., brand names), the key and value should be identical.
+    * The **key** should be the English source text (ideally lowercase).
+    * The **value** should be the desired, correct translation.
+    * For terms that should **not** be translated (e.g., brand names), the key and value should be identical.
 
 By continuously improving the glossary, you directly enhance the quality and consistency of all future automated translations.
 
