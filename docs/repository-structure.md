@@ -44,7 +44,7 @@ This document outlines the structure and purpose of the files and directories wi
 
 - **`docker/docker-entrypoint.sh`**: Script that runs on container start. It handles cloning/updating the target repository, setting up the `appuser` environment (GPG, Git), and starting the `cron` daemon.
 
-- **`src/translate_localization_files.py`**: The core Python script that loads configuration, parses `.properties` files, interacts with the OpenAI API for translations, and writes the results.
+- **`src/translate_localization_files.py`**: The core Python script. It loads configuration, parses `.properties` files, and manages a two-step translation process: 1) It translates new text using the OpenAI API, guided by a detailed prompt and glossary. 2) It then submits the full draft translation for a holistic AI review to ensure consistency and quality, safely integrating the final corrections.
 
 - **`update-translations.sh`**: The main orchestration script. It sets up a Python virtual environment, installs dependencies from the `requirements.txt` lockfile, pulls from Transifex, runs the translation script, and manages the Git workflow (branching, committing, creating a PR, and pushing to Transifex).
 

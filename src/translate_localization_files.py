@@ -245,7 +245,6 @@ def load_glossary(glossary_file_path: str) -> Dict[str, Dict[str, str]]:
         logging.error(f"An unexpected error occurred while loading the glossary: {general_exc}")
         return {}
 
-
 def load_source_properties_file(source_file_path: str) -> Dict[str, str]:
     """
     Load translations from a source .properties file.
@@ -397,8 +396,10 @@ def extract_texts_to_translate(
             target_value = line.get('value', '')
             source_value = source_translations.get(key)
 
-            # If key exists in source and the values are identical, it needs translation.
-            if source_value is not None and normalize_value(source_value) == normalize_value(target_value):
+            # If key exists in source and the values are identical (a direct string comparison),
+            # it needs translation. This handles cases where Transifex might have copied
+            # the source English text into the target file.
+            if source_value is not None and source_value.strip() == target_value.strip():
                 # The value to translate is the source value.
                 texts_to_translate.append(source_value)
                 indices.append(i)  # Use the line's actual index
@@ -670,6 +671,7 @@ You are an expert translator specializing in software localization. Translate th
 - **Preserve formatting**: Keep special characters and formatting such as `\\n` and `\\t`.
 - **Do not add** any additional characters or punctuation (e.g., no square brackets, quotation marks, etc.).
 - **Provide only** the translated text corresponding to the Value.
+- **Do not escape single quotes**: Treat single quotes (') as literal characters. The system will handle necessary escaping.
 
 Use the translations specified in the glossary for the given terms. Ensure the translation reads naturally and is culturally appropriate for the target audience.
 
@@ -696,7 +698,7 @@ Use the translations specified in the glossary for the given terms. Ensure the t
 The translation is for a desktop trading app called Bisq. Keep the translations brief and consistent with typical software terminology. On Bisq, you can buy and sell bitcoin for fiat (or other cryptocurrencies) privately and securely using Bisq's peer-to-peer network and open-source desktop software. "Bisq Easy" is a brand name and should not be translated.
 """
 
-        prompt = f"""
+        prompt = """
 **Glossary:**
 {glossary_text}
 
@@ -720,7 +722,12 @@ Provide the translation **of the Value only**, following the instructions above.
                     model=MODEL_NAME,
                     messages=[
                         ChatCompletionSystemMessageParam(role="system", content=system_prompt),
-                        ChatCompletionUserMessageParam(role="user", content=prompt)
+                        ChatCompletionUserMessageParam(role="user", content=prompt.format(
+                            glossary_text=glossary_text,
+                            context_examples_text=context_examples_text,
+                            key=key,
+                            processed_text=processed_text
+                        ))
                     ],
                     temperature=0.3,
                 )
@@ -755,6 +762,103 @@ Provide the translation **of the Value only**, following the instructions above.
         return index, text
 
 
+async def holistic_review_async(
+        source_content: str,
+        translated_content: str,
+        target_language: str,
+        keys_to_review: List[str],
+        semaphore: asyncio.Semaphore,
+        rate_limiter: AsyncLimiter
+) -> Optional[Dict[str, str]]:
+    """
+    Performs a holistic review of an entire translated file and returns corrections
+    as a JSON object.
+
+    Args:
+        source_content (str): The full content of the source (English) .properties file.
+        translated_content (str): The full content of the draft translated .properties file.
+        target_language (str): The target language of the translation.
+        keys_to_review (List[str]): The specific list of keys to review and return.
+        semaphore (asyncio.Semaphore): For concurrency control.
+        rate_limiter (AsyncLimiter): For rate limiting.
+
+    Returns:
+        Optional[Dict[str, str]]: A dictionary of corrected key-value pairs, or None if review fails.
+    """
+    keys_to_review_text = "\n".join([f"- {k}" for k in keys_to_review])
+
+    async with semaphore, rate_limiter:
+        review_system_prompt = f"""
+You are a lead editor and quality assurance specialist for software localization. Your task is to review a list of newly translated keys within a `.properties` file for {target_language}. You are given the full source and translated files for context, but you MUST only review and return the keys specified.
+
+**Critical Instructions**:
+1.  **Strictly Limited Scope**: You MUST only review and provide corrected translations for the following keys. Do NOT output any other keys in your final JSON.
+    ```
+    {keys_to_review_text}
+    ```
+2.  **Apply All Quality Rules**: Meticulously apply the language-specific quality checklist to every key in your scope.
+3.  **Do Not Escape Single Quotes**: The system will handle all necessary escaping for Java `MessageFormat`. Return single quotes (') as literal characters in the JSON values.
+4.  **Output JSON Only**: Your final output **must** be a single, valid JSON object. This object should contain ONLY the keys listed in the "Strictly Limited Scope" section above, with their final, corrected translations as the values.
+5.  **Do Not Add Explanations**: Do not output any text, markdown, or explanations before or after the JSON object.
+
+**Language-Specific Quality Checklist**:
+- **For German ("de")**:
+    - Must use the formal "Sie" form of address.
+    - Check for correct pluralization of "Bitcoin" (e.g., 'die Bitcoins').
+- **For Spanish ("es")**:
+    - For warnings, ensure negative statements use natural phrasing (e.g., 'Esta operación no se puede deshacer').
+- **For Italian ("it")**:
+    - 'Bitcoin' must be capitalized.
+- **For Nigerian Pidgin ("pcm")**:
+    - 'Bitcoin' must be capitalized.
+    - Ensure consistent use of 'Account age' vs. 'Profile age'.
+    - Correct spacing errors like 'deymatch' -> 'dey match'.
+- **For Russian ("ru")**:
+    - "Bitcoin" must be lowercase ("биткойн") when used as a common noun.
+
+**Review Request**:
+Return a JSON object containing the fully corrected translations for the following files.
+
+**Source (English) File**:
+```properties
+{source_content}
+```
+
+**Translated ({target_language}) File to Review**:
+```properties
+{translated_content}
+```
+"""
+        max_retries = 3
+        base_delay = 5  # Longer delay for a potentially larger task
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = await client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=[
+                        ChatCompletionSystemMessageParam(role="system", content=review_system_prompt)
+                    ],
+                    temperature=0.1,
+                    response_format={"type": "json_object"},
+                )
+                response_text = response.choices[0].message.content.strip()
+                # The response should be a JSON string. Parse it.
+                return json.loads(response_text)
+            except json.JSONDecodeError as json_exc:
+                logging.error(f"Holistic review failed: AI did not return valid JSON. Error: {json_exc}")
+                logging.debug(f"Invalid AI response: {response_text}")
+                return None  # Failed to get valid JSON
+            except (RateLimitError, APITimeoutError, APIConnectionError, APIStatusError, OpenAIError) as api_exc:
+                logging.warning(f"API error during holistic review: {api_exc}")
+                should_retry = await _handle_retry(attempt, max_retries, base_delay, "holistic_review", api_exc)
+                if not should_retry:
+                    return None
+            except Exception as e:
+                logging.error(f"Unexpected error during holistic review: {e}", exc_info=True)
+                return None
+        return None  # Fallback after all retries
+
+
 def integrate_translations(
         parsed_lines: List[Dict],
         translations: List[str],
@@ -779,11 +883,10 @@ def integrate_translations(
         translated_text = translations[idx]
         original_source_text = source_translations.get(key, "")
 
-        # If the original source text contained placeholders, it's likely for MessageFormat,
-        # which requires single quotes to be escaped.
-        if '{' in original_source_text and '}' in original_source_text:
-            # Escape single quotes that are not already escaped.
-            translated_text = re.sub(r"(?<!')'", "''", translated_text)
+        # Escaping is now handled later, after the holistic review.
+        # if '{' in original_source_text and '}' in original_source_text:
+        #     # Escape single quotes that are not already escaped.
+        #     translated_text = re.sub(r"(?<!')'", "''", translated_text)
 
         if translation_idx < len(parsed_lines):
             # Update existing entry
@@ -1106,17 +1209,77 @@ async def process_translation_queue(
             results.append((index, result))
 
         # Sort results by index to ensure correct order
-        results.sort(key=lambda x: x[0])  # type: ignore[arg-type]
-        translations = [result for _, result in results]  # type: ignore[arg-type]
+        results.sort(key=lambda x: x[0])
+        translations = [result for _, result in results]
 
-        # Integrate translations into the parsed lines
-        updated_lines = integrate_translations(
+        # Integrate initial translations to create a draft file for review
+        draft_lines = integrate_translations(
             parsed_lines,
             translations,
             indices,
             keys_to_translate,
             source_translations
         )
+        draft_content = reassemble_file(draft_lines)
+
+        # --- Holistic Review Step ---
+        logging.info(f"Performing holistic review for '{translation_file}'...")
+        with open(source_file_path, 'r', encoding='utf-8') as f:
+            source_content = f.read()
+
+        logging.debug(f"--- SOURCE CONTENT FOR REVIEW ---\n{source_content}")
+        logging.debug(f"--- DRAFT CONTENT FOR REVIEW ---\n{draft_content}")
+
+        corrected_translations = await holistic_review_async(
+            source_content=source_content,
+            translated_content=draft_content,
+            target_language=target_language,
+            keys_to_review=keys_to_translate, # Pass the specific keys
+            semaphore=semaphore,
+            rate_limiter=rate_limiter
+        )
+
+        if corrected_translations:
+            logging.info("Holistic review successful. Applying corrected translations.")
+            logging.debug(f"--- CORRECTED JSON FROM REVIEW ---\n{json.dumps(corrected_translations, indent=2)}")
+
+            # Find which values were actually changed by the review
+            draft_translations_dict = {line['key']: line['value'] for line in draft_lines if line['type'] == 'entry'}
+            changed_keys = []
+            for key, corrected_value in corrected_translations.items():
+                draft_value = draft_translations_dict.get(key)
+                if draft_value is not None and draft_value != corrected_value:
+                    changed_keys.append(key)
+
+            if changed_keys:
+                logging.info(f"Holistic review changed {len(changed_keys)} value(s). Keys changed: {', '.join(changed_keys)}")
+            else:
+                logging.info("Holistic review completed without making changes to the draft translation.")
+
+            # The corrected_translations dict is the new source of truth.
+            # We iterate through our master file structure `parsed_lines` and update it in-place.
+            for line_info in parsed_lines:
+                if line_info['type'] == 'entry':
+                    key = line_info['key']
+                    if key in corrected_translations:
+                        new_value = corrected_translations[key]
+                        # This is the definitive, final point for escaping.
+                        # If the original English text had a placeholder, we assume it's for Java's MessageFormat
+                        # and requires that any single quotes in the *translated* text be escaped.
+                        original_source_text = source_translations.get(key, "")
+                        if '{' in original_source_text and '}' in original_source_text:
+                            # First, un-escape any pre-escaped quotes from the AI to normalize the string.
+                            new_value = new_value.replace("''", "'")
+                            # Then, escape all single quotes to be compliant with MessageFormat.
+                            new_value = new_value.replace("'", "''")
+                        line_info['value'] = new_value
+            
+            # The structure was modified in-place, so it's our final version.
+            updated_lines = parsed_lines
+        else:
+            logging.warning("Holistic review failed or returned no corrections. Proceeding with initial translations.")
+            # If review fails, we use the original draft from the first translation pass.
+            updated_lines = draft_lines
         new_file_content = reassemble_file(updated_lines)
         translated_file_path = os.path.join(translated_queue_folder, translation_file)
 
@@ -1146,11 +1309,17 @@ async def main():
         return
     logging.info(f"Detected {len(changed_files)} changed translation file(s).")
 
-    # Step 2: Copy changed files to translation queue
+    # Step 2: Archive original changed files *before* processing
+    archive_folder_path = os.path.join(INPUT_FOLDER, 'archive')
     copy_files_to_translation_queue(changed_files, INPUT_FOLDER, TRANSLATION_QUEUE_FOLDER)
-    logging.info(f"Copied changed files to '{TRANSLATION_QUEUE_FOLDER}'.")
+    move_files_to_archive(TRANSLATION_QUEUE_FOLDER, archive_folder_path)
+    logging.info(f"Archived original files to '{archive_folder_path}'.")
 
-    # Step 3: Process translation queue
+    # Step 3: Copy the same set of changed files again for processing
+    copy_files_to_translation_queue(changed_files, INPUT_FOLDER, TRANSLATION_QUEUE_FOLDER)
+    logging.info(f"Copied changed files to '{TRANSLATION_QUEUE_FOLDER}' for processing.")
+
+    # Step 4: Process translation queue
     await process_translation_queue(
         translation_queue_folder=TRANSLATION_QUEUE_FOLDER,
         translated_queue_folder=TRANSLATED_QUEUE_FOLDER,
@@ -1158,14 +1327,9 @@ async def main():
     )
     logging.info(f"Completed translations. Translated files are in '{TRANSLATED_QUEUE_FOLDER}'.")
 
-    # Step 4: Copy translated files back to input folder
+    # Step 5: Copy translated files back to input folder
     copy_translated_files_back(TRANSLATED_QUEUE_FOLDER, INPUT_FOLDER)
     logging.info("Copied translated files back to the input folder.")
-
-    # Step 5: Archive original changed files
-    archive_folder_path = os.path.join(INPUT_FOLDER, 'archive')
-    move_files_to_archive(TRANSLATION_QUEUE_FOLDER, archive_folder_path)
-    logging.info(f"Archived original files to '{archive_folder_path}'.")
 
     # Optional: Clean up translation queue folders
     if DRY_RUN:
