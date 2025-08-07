@@ -781,33 +781,16 @@ Provide the translation **of the Value only**, following the instructions above.
         return index, text
 
 
-async def holistic_review_async(
-        source_content: str,
-        translated_content: str,
-        target_language: str,
-        keys_to_review: List[str],
-        semaphore: asyncio.Semaphore,
-        rate_limiter: AsyncLimiter
-) -> Optional[Dict[str, str]]:
-    """
-    Performs a holistic review of an entire translated file and returns corrections
-    as a JSON object.
-
-    Args:
-        source_content (str): The full content of the source (English) .properties file.
-        translated_content (str): The full content of the draft translated .properties file.
-        target_language (str): The target language of the translation.
-        keys_to_review (List[str]): The specific list of keys to review and return.
-        semaphore (asyncio.Semaphore): For concurrency control.
-        rate_limiter (AsyncLimiter): For rate limiting.
-
-    Returns:
-        Optional[Dict[str, str]]: A dictionary of corrected key-value pairs, or None if review fails.
-    """
+def _build_holistic_review_system_prompt(
+    target_language: str,
+    keys_to_review: List[str],
+    source_content: str,
+    translated_content: str,
+) -> str:
+    """Builds the system prompt for the holistic review API call."""
     keys_to_review_text = "\n".join([f"- {k}" for k in keys_to_review])
 
-    async with semaphore, rate_limiter:
-        review_system_prompt = f"""
+    return f"""
 You are a lead editor and quality assurance specialist for software localization. Your task is to review a list of newly translated keys within a `.properties` file for {target_language}. You are given the full source and translated files for context, but you MUST only review and return the keys specified.
 
 **Critical Instructions**:
@@ -856,6 +839,38 @@ Return a JSON object containing the fully corrected translations for the followi
 {translated_content}
 ```
 """
+
+
+async def holistic_review_async(
+        source_content: str,
+        translated_content: str,
+        target_language: str,
+        keys_to_review: List[str],
+        semaphore: asyncio.Semaphore,
+        rate_limiter: AsyncLimiter
+) -> Optional[Dict[str, str]]:
+    """
+    Performs a holistic review of an entire translated file and returns corrections
+    as a JSON object.
+
+    Args:
+        source_content (str): The full content of the source (English) .properties file.
+        translated_content (str): The full content of the draft translated .properties file.
+        target_language (str): The target language of the translation.
+        keys_to_review (List[str]): The specific list of keys to review and return.
+        semaphore (asyncio.Semaphore): For concurrency control.
+        rate_limiter (AsyncLimiter): For rate limiting.
+
+    Returns:
+        Optional[Dict[str, str]]: A dictionary of corrected key-value pairs, or None if review fails.
+    """
+    async with semaphore, rate_limiter:
+        review_system_prompt = _build_holistic_review_system_prompt(
+            target_language=target_language,
+            keys_to_review=keys_to_review,
+            source_content=source_content,
+            translated_content=translated_content
+        )
         max_retries = 3
         base_delay = 5  # Longer delay for a potentially larger task
         for attempt in range(1, max_retries + 1):
