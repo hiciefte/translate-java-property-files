@@ -12,9 +12,9 @@ import uuid
 from typing import Dict, List, Tuple, Optional
 
 # --- Python Version Check ---
-# This script requires Python 3.9 or newer for features like modern asyncio.
-if sys.version_info < (3, 9):
-    sys.stderr.write("Error: This script requires Python 3.9 or newer.\n")
+# This script requires Python 3.11 or newer for features like modern asyncio.
+if sys.version_info < (3, 11):
+    sys.stderr.write("Error: This script requires Python 3.11 or newer.\n")
     sys.stderr.write(f"You are running Python {sys.version.split()[0]}.\n")
     sys.exit(1)
 # --- End Version Check ---
