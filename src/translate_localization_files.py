@@ -1348,6 +1348,30 @@ async def process_translation_queue(
             logging.info(f"Translated file saved to '{translated_file_path}'.\n")
 
 
+def archive_original_files(
+    changed_files: List[str],
+    input_folder_path: str,
+    archive_folder_path: str
+):
+    """
+    Copies the original changed files to the archive folder.
+    """
+    os.makedirs(archive_folder_path, exist_ok=True)
+    for filename in changed_files:
+        source_path = os.path.join(input_folder_path, filename)
+        dest_path = os.path.join(archive_folder_path, filename)
+
+        if not os.path.exists(source_path):
+            logging.warning(f"Original file '{filename}' not found for archiving. Skipping.")
+            continue
+
+        if DRY_RUN:
+            logging.info(f"[Dry Run] Would archive '{source_path}' to '{dest_path}'.")
+        else:
+            shutil.copy2(source_path, dest_path)
+            logging.info(f"Archived original file '{source_path}' to '{dest_path}'.")
+
+
 async def main():
     """
     Main function to orchestrate the translation process.
@@ -1364,17 +1388,16 @@ async def main():
         return
     logging.info(f"Detected {len(changed_files)} changed translation file(s).")
 
-    # Step 2: Archive original changed files *before* processing
+    # Step 2: Archive the original files before any processing.
     archive_folder_path = os.path.join(INPUT_FOLDER, 'archive')
-    copy_files_to_translation_queue(changed_files, INPUT_FOLDER, TRANSLATION_QUEUE_FOLDER)
-    move_files_to_archive(TRANSLATION_QUEUE_FOLDER, archive_folder_path)
-    logging.info(f"Archived original files to '{archive_folder_path}'.")
+    archive_original_files(changed_files, INPUT_FOLDER, archive_folder_path)
+    logging.info(f"Successfully archived original files to '{archive_folder_path}'.")
 
-    # Step 3: Copy the same set of changed files again for processing
+    # Step 3: Copy changed files to the translation queue for processing.
     copy_files_to_translation_queue(changed_files, INPUT_FOLDER, TRANSLATION_QUEUE_FOLDER)
     logging.info(f"Copied changed files to '{TRANSLATION_QUEUE_FOLDER}' for processing.")
 
-    # Step 4: Process translation queue
+    # Step 4: Process the files in the translation queue.
     await process_translation_queue(
         translation_queue_folder=TRANSLATION_QUEUE_FOLDER,
         translated_queue_folder=TRANSLATED_QUEUE_FOLDER,
@@ -1382,11 +1405,11 @@ async def main():
     )
     logging.info(f"Completed translations. Translated files are in '{TRANSLATED_QUEUE_FOLDER}'.")
 
-    # Step 5: Copy translated files back to input folder
+    # Step 5: Copy translated files back to the input folder, overwriting the originals.
     copy_translated_files_back(TRANSLATED_QUEUE_FOLDER, INPUT_FOLDER)
     logging.info("Copied translated files back to the input folder.")
 
-    # Optional: Clean up translation queue folders
+    # Optional: Clean up translation queue folders.
     if DRY_RUN:
         logging.info("Dry run enabled; skipping cleanup of translation queue folders.")
     else:
