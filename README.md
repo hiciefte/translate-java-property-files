@@ -135,6 +135,7 @@ Key files are described in more detail in relevant setup sections.
 
 Before you begin, ensure you have:
 
+* **Python 3.9 or newer**.
 * Access to a server or local machine with `sudo` or `root` privileges for initial setup.
 * Docker and Docker Compose installed.
 * Git installed.
