@@ -38,6 +38,13 @@ from openai.types.chat import (
 )
 from tqdm.asyncio import tqdm_asyncio
 
+from src.properties_parser import parse_properties_file, reassemble_file
+from src.translation_validator import (
+    check_placeholder_parity,
+    check_encoding_and_mojibake,
+    synchronize_keys
+)
+
 # Define the expected JSON schema for the AI's response in the holistic review.
 # This ensures that the AI returns a dictionary where every value is a string.
 LOCALIZATION_SCHEMA = {
@@ -130,6 +137,7 @@ REPO_ROOT = config.get('target_project_root', '/path/to/default/repo/root')
 INPUT_FOLDER = config.get('input_folder', '/path/to/default/input_folder')
 GLOSSARY_FILE_PATH = config.get('glossary_file_path', 'glossary.json')
 MODEL_NAME = config.get('model_name', 'gpt-4')
+REVIEW_MODEL_NAME = config.get('review_model_name', MODEL_NAME)
 
 # Decide maximum tokens based on model name or custom logic
 MAX_MODEL_TOKENS = 4000  # You can modify this if needed
@@ -165,6 +173,9 @@ for locale in locales_list:
 
 # Concurrency configuration
 MAX_CONCURRENT_API_CALLS = config.get('max_concurrent_api_calls', 1)
+
+# (Optional) Load language-specific style rules
+STYLE_RULES = config.get('style_rules', {})
 
 
 def lint_properties_file(file_path: str) -> List[str]:
@@ -303,61 +314,6 @@ def load_source_properties_file(source_file_path: str) -> Dict[str, str]:
             else:
                 i += 1
     return source_translations
-
-
-def parse_properties_file(file_path: str) -> Tuple[List[Dict], Dict[str, str]]:
-    """
-    Parse a .properties file.
-
-    Args:
-        file_path (str): The path to the .properties file.
-
-    Returns:
-        Tuple[List[Dict], Dict[str, str]]: A list of parsed lines and a dictionary of translations.
-    """
-    with open(file_path, 'r', encoding='utf-8') as file:
-        lines = file.readlines()
-
-    parsed_lines = []
-    target_translations = {}
-    i = 0
-    while i < len(lines):
-        line = lines[i].rstrip('\n')
-        if line.startswith('#') or line.strip() == '':
-            parsed_lines.append({'type': 'comment_or_blank', 'content': lines[i]})
-            i += 1
-        else:
-            match = re.match(r'([^=]+)=(.*)', line)
-            if match:
-                key = match.group(1).strip()
-                value = match.group(2)
-                line_number = i
-                original_value_lines = [value]
-                # Handle multiline values
-                while value.endswith('\\'):
-                    value = value[:-1]  # Remove the backslash
-                    i += 1
-                    if i < len(lines):
-                        next_line = lines[i].rstrip('\n')
-                        original_value_lines.append(next_line)
-                        value += next_line.lstrip()
-                    else:
-                        break
-                else:
-                    i += 1
-                original_value = ''.join(original_value_lines)
-                target_translations[key] = value
-                parsed_lines.append({
-                    'type': 'entry',
-                    'key': key,
-                    'value': value,
-                    'original_value': original_value,
-                    'line_number': line_number
-                })
-            else:
-                parsed_lines.append({'type': 'unknown', 'content': lines[i]})
-                i += 1
-    return parsed_lines, target_translations
 
 
 def normalize_value(value: Optional[str]) -> str:
@@ -628,6 +584,118 @@ async def _handle_retry(attempt: int, max_retries: int, base_delay: float, key: 
         return False
 
 
+async def run_pre_translation_validation(target_file_path: str, source_file_path: str) -> bool:
+    """
+    Runs a series of validation and preparation checks on a target properties file.
+    - Synchronizes keys with the source file (adds missing, removes extra).
+    - Checks for encoding issues and placeholder mismatches.
+
+    Args:
+        target_file_path: The absolute path to the target language .properties file.
+        source_file_path: The absolute path to the source English .properties file.
+
+    Returns:
+        True if all non-fixable checks pass, False otherwise.
+    """
+    is_valid = True
+    filename = os.path.basename(target_file_path)
+    logging.info(f"Running pre-translation validation for '{filename}'...")
+
+    # 1. Synchronize keys (add missing, remove extra)
+    try:
+        synchronize_keys(target_file_path, source_file_path)
+        logging.info(f"Key synchronization complete for '{filename}'.")
+    except Exception as e:
+        logging.error(f"Failed to synchronize keys for '{filename}'. Reason: {e}")
+        return False # Fail hard if we can't even sync the file
+
+    # 2. Check encoding and mojibake on the (potentially modified) file
+    encoding_errors = check_encoding_and_mojibake(target_file_path)
+    if encoding_errors:
+        is_valid = False
+        for error in encoding_errors:
+            logging.error(f"Validation failed for '{filename}': {error}")
+
+    # Load file content for placeholder check
+    try:
+        # Re-parse the files as they might have been changed by synchronize_keys
+        _, target_translations = parse_properties_file(target_file_path)
+        _, source_translations = parse_properties_file(source_file_path)
+    except Exception as e:
+        logging.error(f"Validation failed for '{filename}': Could not parse properties file after key sync. Reason: {e}")
+        return False
+
+    # 3. Check placeholder parity
+    common_keys = set(source_translations.keys()).intersection(set(target_translations.keys()))
+    for key in common_keys:
+        source_value = source_translations.get(key, "")
+        target_value = target_translations.get(key, "")
+        if not check_placeholder_parity(source_value, target_value):
+            is_valid = False
+            logging.error(f"Validation failed for '{filename}': Placeholder mismatch for key '{key}'.")
+
+    if is_valid:
+        logging.info(f"Pre-translation validation passed for '{filename}'.")
+    else:
+        logging.error(f"Pre-translation validation failed for '{filename}'. See logs for details.")
+        
+    return is_valid
+
+
+def run_post_translation_validation(
+    final_content: str,
+    source_translations: Dict[str, str],
+    filename: str
+) -> bool:
+    """
+    Runs a series of validation checks on the final translated file content.
+
+    Args:
+        final_content: The string content of the fully translated file.
+        source_translations: The original source (English) translations dictionary.
+        filename: The name of the file being validated.
+
+    Returns:
+        True if all checks pass, False otherwise.
+    """
+    is_valid = True
+    logging.info(f"Running post-translation validation for '{filename}'...")
+
+    # For post-translation checks, we work with the final string content.
+    # We can write it to a temporary file to reuse our existing file-based validators.
+    with tempfile.NamedTemporaryFile(mode='w+', delete=True, suffix='.properties', encoding='utf-8') as temp_f:
+        temp_f.write(final_content)
+        temp_f.seek(0)
+        
+        # 1. Check encoding and mojibake on the final content
+        encoding_errors = check_encoding_and_mojibake(temp_f.name)
+        if encoding_errors:
+            is_valid = False
+            for error in encoding_errors:
+                logging.error(f"Post-translation validation failed for '{filename}': {error}")
+        
+        # 2. Check placeholder parity on the final content
+        try:
+            _, final_translations = parse_properties_file(temp_f.name)
+            common_keys = set(source_translations.keys()).intersection(set(final_translations.keys()))
+            for key in common_keys:
+                source_value = source_translations.get(key, "")
+                target_value = final_translations.get(key, "")
+                if not check_placeholder_parity(source_value, target_value):
+                    is_valid = False
+                    logging.error(f"Post-translation validation failed for '{filename}': Placeholder mismatch for key '{key}'.")
+        except Exception as e:
+            is_valid = False
+            logging.error(f"Post-translation validation failed for '{filename}': Could not parse final properties content. Reason: {e}")
+
+    if is_valid:
+        logging.info(f"Post-translation validation passed for '{filename}'.")
+    else:
+        logging.error(f"Post-translation validation failed for '{filename}'. AI-generated content is invalid and will be discarded.")
+
+    return is_valid
+
+
 async def translate_text_async(
         text: str,
         key: str,
@@ -668,6 +736,13 @@ async def translate_text_async(
         # Get the glossary for the current language
         language_glossary = glossary.get(language_code, {})
 
+        # Get language-specific style rules
+        lang_style_rules = STYLE_RULES.get(language_code, [])
+        style_rules_text = ""
+        if lang_style_rules:
+            rules_list = "\n".join([f"- {rule}" for rule in lang_style_rules])
+            style_rules_text = f"**Language-Specific Quality Checklist ({target_language})**:\n{rules_list}"
+
         # Build the context and glossary text
         context_examples_text, glossary_text = build_context(
             existing_translations,
@@ -685,7 +760,9 @@ You are an expert translator specializing in software localization. Translate th
 
 **Instructions**:
 - **Do not translate or modify placeholder tokens**: Any text enclosed within double underscores `__` (e.g., `__PH_abc123__`) should remain exactly as is.
-- **Strictly follow the glossary**: The glossary provides key-value pairs for specific terms. You must use the provided translation for these terms. The matching of terms from the source text to the keys in the glossary should be case-insensitive. For example, if the source text contains "Backup Seeds" and the glossary has an entry for "backup seeds", you must use the translation from that glossary entry.
+- **Strictly follow all glossaries**:
+  - **Brand/Technical Glossary**: These terms MUST NOT be translated. Preserve their original casing and form.
+  - **Translation Glossary**: These terms are non-negotiable. You MUST use the provided translation, matching the source term case-insensitively.
 - **Maintain placeholders**: Keep placeholders like `{0}`, `{1}` unchanged.
 - **Preserve formatting**: Keep special characters and formatting such as `\\n` and `\\t`.
 - **Do not add** any additional characters or punctuation (e.g., no square brackets, quotation marks, etc.).
@@ -699,26 +776,20 @@ Use the translations specified in the glossary for the given terms. Ensure the t
 - **No Mixed Languages**: Do not mix English terms with the target language in a single phrase (e.g., "Seed Words Confermati!"). The translation should be fully localized.
 - **Language-Specific Conventions**: Adhere to conventions of the target language.
 
-**Language-Specific Quality Checklist**:
-- **For German ("de")**:
-    - Always use the formal "Sie" form of address.
-    - When referring to multiple units of Bitcoin, use the plural form 'die Bitcoins' where grammatically appropriate.
-- **For Spanish ("es")**:
-    - For negative statements of warning, prefer a more natural structure like 'Esta operación no se puede deshacer' over 'No puede deshacer esta operación'.
-- **For Italian ("it")**:
-    - The word 'Bitcoin' must always be capitalized.
-- **For Nigerian Pidgin ("pcm")**:
-    - 'Bitcoin' must always be capitalized.
-    - Use 'Account age' for the age of an account and 'Profile age' for the age of a profile. Do not mix them.
-    - Pay close attention to spacing. Correct common concatenated words: 'deymatch' must be 'dey match', 'likegovernment' must be 'like government'. Proofread carefully for similar errors.
-- **For Russian ("ru")**:
-    - "Bitcoin" should be lowercase ("биткойн") when used as a common noun.
+{style_rules_text}
 
 The translation is for a desktop trading app called Bisq. Keep the translations brief and consistent with typical software terminology. On Bisq, you can buy and sell bitcoin for fiat (or other cryptocurrencies) privately and securely using Bisq's peer-to-peer network and open-source desktop software. "Bisq Easy" is a brand name and should not be translated.
 """
 
         prompt = """
-**Glossary:**
+**Brand/Technical Glossary (Do NOT translate these terms):**
+- MuSig
+- Bisq
+- Lightning
+- I2P
+- Tor
+
+**Translation Glossary:**
 {glossary_text}
 
 **Context (Existing Translations):**
@@ -745,7 +816,8 @@ Provide the translation **of the Value only**, following the instructions above.
                             glossary_text=glossary_text,
                             context_examples_text=context_examples_text,
                             key=key,
-                            processed_text=processed_text
+                            processed_text=processed_text,
+                            style_rules_text=style_rules_text
                         ))
                     ],
                     temperature=0.3,
@@ -790,6 +862,14 @@ def _build_holistic_review_system_prompt(
     """Builds the system prompt for the holistic review API call."""
     keys_to_review_text = "\n".join([f"- {k}" for k in keys_to_review])
 
+    # Get language-specific style rules for the review prompt
+    language_code = language_name_to_code(target_language)
+    lang_style_rules = STYLE_RULES.get(language_code, []) if language_code else []
+    style_rules_text = ""
+    if lang_style_rules:
+        rules_list = "\n".join([f"- {rule}" for rule in lang_style_rules])
+        style_rules_text = f"**Language-Specific Quality Checklist ({target_language})**:\n{rules_list}"
+
     return f"""
 You are a lead editor and quality assurance specialist for software localization. Your task is to review a list of newly translated keys within a `.properties` file for {target_language}. You are given the full source and translated files for context, but you MUST only review and return the keys specified.
 
@@ -803,6 +883,8 @@ You are a lead editor and quality assurance specialist for software localization
 4.  **Output JSON Only**: Your final output **must** be a single, valid JSON object that adheres to the required schema. This object should contain ONLY the keys listed in the "Strictly Limited Scope" section above, with their final, corrected translations as the values.
 5.  **Do Not Add Explanations**: Do not output any text, markdown, or explanations before or after the JSON object.
 
+{style_rules_text}
+
 **JSON Output Example**:
 ```json
 {{
@@ -810,21 +892,6 @@ You are a lead editor and quality assurance specialist for software localization
   "key.two": "Corrected translation for key two."
 }}
 ```
-
-**Language-Specific Quality Checklist**:
-- **For German ("de")**:
-    - Must use the formal "Sie" form of address.
-    - Check for correct pluralization of "Bitcoin" (e.g., 'die Bitcoins').
-- **For Spanish ("es")**:
-    - For warnings, ensure negative statements use natural phrasing (e.g., 'Esta operación no se puede deshacer').
-- **For Italian ("it")**:
-    - 'Bitcoin' must be capitalized.
-- **For Nigerian Pidgin ("pcm")**:
-    - 'Bitcoin' must be capitalized.
-    - Ensure consistent use of 'Account age' vs. 'Profile age'.
-    - Correct spacing errors like 'deymatch' -> 'dey match'.
-- **For Russian ("ru")**:
-    - "Bitcoin" must be lowercase ("биткойн") when used as a common noun.
 
 **Review Request**:
 Return a JSON object containing the fully corrected translations for the following files.
@@ -876,7 +943,7 @@ async def holistic_review_async(
         for attempt in range(1, max_retries + 1):
             try:
                 response = await client.chat.completions.create(
-                    model=MODEL_NAME,
+                    model=REVIEW_MODEL_NAME,
                     messages=[
                         ChatCompletionSystemMessageParam(role="system", content=review_system_prompt)
                     ],
@@ -969,39 +1036,6 @@ def integrate_translations(
             logging.debug(f"Appended new translation for key '{key}': '{translated_text}'")
 
     return parsed_lines
-
-
-def reassemble_file(parsed_lines: List[Dict]) -> str:
-    """
-    Reassemble the file content from parsed lines.
-
-    Args:
-        parsed_lines (List[Dict]): The parsed lines.
-
-    Returns:
-        str: The reassembled file content.
-    """
-    lines = []
-    for item in parsed_lines:
-        if item['type'] == 'entry':
-            value = item['value']
-            # Preserve original formatting if possible
-            if '\\n' in item.get('original_value', ''):
-                # Use escaped newline characters
-                value = value.replace('\n', '\\n')
-                line = f"{item['key']}={value}\n"
-            elif '\n' in value or '\\\n' in item.get('original_value', ''):
-                # Handle multiline values with line continuations
-                lines_value = value.split('\n')
-                formatted_value = '\\\n'.join(lines_value)
-                line = (f"{item['key']}="
-                        f"{formatted_value}\n")
-            else:
-                line = f"{item['key']}={value}\n"
-            lines.append(line)
-        else:
-            lines.append(item['content'])
-    return ''.join(lines)
 
 
 def extract_language_from_filename(filename: str, supported_codes: List[str]) -> Optional[str]:
@@ -1213,18 +1247,7 @@ async def process_translation_queue(
         if not target_language:
             logging.warning(f"Skipping file {translation_file}: unsupported language code '{language_code}'.")
             continue
-        logging.info(f"Processing file '{translation_file}' for language '{target_language}'...")
-
-        # --- Pre-flight Linter Check ---
-        # Before processing, lint the file to catch basic syntax errors.
-        lint_errors = lint_properties_file(os.path.join(translation_queue_folder, translation_file))
-        if lint_errors:
-            logging.error(f"Linter found errors in '{translation_file}'. Skipping translation for this file.")
-            for error in lint_errors:
-                logging.error(f"  - {error}")
-            continue
-        # --- End Linter Check ---
-
+        
         # Define full paths
         translation_file_path = os.path.join(translation_queue_folder, translation_file)
         source_file_name = re.sub(r'_[a-z]{2,3}(?:_[A-Z]{2})?\.properties$', '.properties', translation_file)
@@ -1233,6 +1256,25 @@ async def process_translation_queue(
         if not os.path.exists(source_file_path):
             logging.warning(f"Source file '{source_file_name}' not found in '{INPUT_FOLDER}'. Skipping.")
             continue
+        
+        logging.info(f"Processing file '{translation_file}' for language '{target_language}'...")
+
+        # --- Pre-flight Validator ---
+        is_file_valid = await run_pre_translation_validation(translation_file_path, source_file_path)
+        if not is_file_valid:
+            logging.error(f"Skipping translation for '{translation_file}' due to validation errors.")
+            continue
+        # --- End Validator ---
+
+        # --- Pre-flight Linter Check ---
+        # Before processing, lint the file to catch basic syntax errors.
+        lint_errors = lint_properties_file(translation_file_path)
+        if lint_errors:
+            logging.error(f"Linter found errors in '{translation_file}'. Skipping translation for this file.")
+            for error in lint_errors:
+                logging.error(f"  - {error}")
+            continue
+        # --- End Linter Check ---
 
         # Load files
         parsed_lines, target_translations = parse_properties_file(translation_file_path)
@@ -1336,6 +1378,18 @@ async def process_translation_queue(
             # If review fails, we use the original draft which was already correctly escaped.
             updated_lines = draft_lines
         new_file_content = reassemble_file(updated_lines)
+
+        # --- Post-translation Validator ---
+        is_final_content_valid = run_post_translation_validation(
+            final_content=new_file_content,
+            source_translations=source_translations,
+            filename=translation_file
+        )
+        if not is_final_content_valid:
+            logging.error(f"Discarding invalid translation for '{translation_file}'. The original file will be used.")
+            continue # Skip to the next file
+        # --- End Post-translation Validator ---
+
         translated_file_path = os.path.join(translated_queue_folder, translation_file)
 
         if DRY_RUN:
