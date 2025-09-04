@@ -661,14 +661,18 @@ def run_post_translation_validation(
     is_valid = True
     logging.info(f"Running post-translation validation for '{filename}'...")
 
-    # For post-translation checks, we work with the final string content.
-    # We can write it to a temporary file to reuse our existing file-based validators.
-    with tempfile.NamedTemporaryFile(mode='w+', delete=True, suffix='.properties', encoding='utf-8') as temp_f:
-        temp_f.write(final_content)
-        temp_f.seek(0)
+    temp_file_path = None
+    try:
+        # Create a temporary file with delete=False to control its lifecycle.
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.properties', encoding='utf-8') as temp_f:
+            temp_file_path = temp_f.name
+            temp_f.write(final_content)
+            temp_f.flush()
+
+        # Now the file is closed, but still exists. We can pass its path to validators.
         
         # 1. Check encoding and mojibake on the final content
-        encoding_errors = check_encoding_and_mojibake(temp_f.name)
+        encoding_errors = check_encoding_and_mojibake(temp_file_path)
         if encoding_errors:
             is_valid = False
             for error in encoding_errors:
@@ -676,7 +680,7 @@ def run_post_translation_validation(
         
         # 2. Check placeholder parity on the final content
         try:
-            _, final_translations = parse_properties_file(temp_f.name)
+            _, final_translations = parse_properties_file(temp_file_path)
             common_keys = set(source_translations.keys()).intersection(set(final_translations.keys()))
             for key in common_keys:
                 source_value = source_translations.get(key, "")
@@ -687,6 +691,11 @@ def run_post_translation_validation(
         except Exception as e:
             is_valid = False
             logging.error(f"Post-translation validation failed for '{filename}': Could not parse final properties content. Reason: {e}")
+
+    finally:
+        # Ensure the temporary file is cleaned up
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
 
     if is_valid:
         logging.info(f"Post-translation validation passed for '{filename}'.")

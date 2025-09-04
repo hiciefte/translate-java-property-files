@@ -115,6 +115,6 @@ def check_encoding_and_mojibake(file_path: str) -> List[str]:
 
     # 3. Check for the Unicode replacement character
     if '\uFFFD' in content:
-        errors.append(f"File '{file_path}' contains the official Unicode replacement character (), indicating a previous encoding/decoding error.")
+        errors.append(f"File '{file_path}' contains the official Unicode replacement character (\uFFFD), indicating a previous encoding/decoding error.")
         
     return errors
