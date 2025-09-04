@@ -58,4 +58,5 @@ CVE-2024-34156
 # See vulnerability details: https://avd.aquasec.com/nvd/cve-2025-22868
 # Note: The CVE ID may be a typo in the Trivy output and could refer to CVE-2024-28868.
 # We are ignoring the one reported by the tool.
-CVE-2025-22868 
+CVE-2025-22868
+CVE-2025-47907
