@@ -137,7 +137,7 @@ REPO_ROOT = config.get('target_project_root', '/path/to/default/repo/root')
 INPUT_FOLDER = config.get('input_folder', '/path/to/default/input_folder')
 GLOSSARY_FILE_PATH = config.get('glossary_file_path', 'glossary.json')
 MODEL_NAME = config.get('model_name', 'gpt-4')
-REVIEW_MODEL_NAME = config.get('review_model_name', MODEL_NAME)
+REVIEW_MODEL_NAME = os.environ.get('REVIEW_MODEL_NAME', config.get('review_model_name', MODEL_NAME))
 
 # Decide maximum tokens based on model name or custom logic
 MAX_MODEL_TOKENS = 4000  # You can modify this if needed
@@ -229,7 +229,7 @@ def lint_properties_file(file_path: str) -> List[str]:
                                 if char_after.isalpha() and char_after != 'u':
                                      errors.append(f"Linter Error: Invalid escape sequence '\\{char_after}' in value for key '{key}' on line {i}.")
 
-    except (IOError, OSError) as e:
+    except (IOError, OSError, UnicodeDecodeError) as e:
         errors.append(f"Linter Error: Could not read or process file {file_path}. Reason: {e}")
 
     return errors
@@ -744,7 +744,6 @@ You are an expert translator specializing in software localization. Translate th
 - **Strictly follow all glossaries**:
   - **Brand/Technical Glossary**: These terms MUST NOT be translated. Preserve their original casing and form.
   - **Translation Glossary**: These terms are non-negotiable. You MUST use the provided translation, matching the source term case-insensitively.
-- **Maintain placeholders**: Keep Java MessageFormat placeholders like `{{0}}`, `{{1}}` unchanged.
 - **Preserve formatting**: Keep special characters and formatting such as `\\n` and `\\t`.
 - **Do not add** any additional characters or punctuation (e.g., no square brackets, quotation marks, etc.).
 - **Provide only** the translated text corresponding to the Value.
@@ -799,6 +798,7 @@ Provide the translation **of the Value only**, following the instructions above.
                         ))
                     ],
                     temperature=0.3,
+                    timeout=60.0,
                 )
 
                 translated_text = response.choices[0].message.content.strip() # type: ignore[arg-type]
@@ -927,7 +927,8 @@ async def holistic_review_async(
                     ],
                     temperature=0.1,
                     response_format={"type": "json_object"},
-                    max_tokens=4096  # Increase tokens to avoid truncation
+                    max_tokens=4096,  # Increase tokens to avoid truncation
+                    timeout=120.0,
                 )
                 response_text = response.choices[0].message.content.strip()
                 

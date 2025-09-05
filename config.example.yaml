@@ -52,6 +52,7 @@ supported_locales:
 
 # (Optional) Language-specific style and formatting rules to be injected into the AI prompt.
 # Use this to guide the AI on tone, casing, terminology, and other stylistic conventions.
+# NOTE: Keys here must be language codes present in supported_locales (e.g., de, pt_BR).
 style_rules:
   de:
     - "Use the formal 'Sie' form of address."

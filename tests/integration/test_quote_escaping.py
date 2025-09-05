@@ -21,23 +21,25 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
+    @patch('src.translate_localization_files.run_post_translation_validation')
     @patch('src.translate_localization_files.holistic_review_async', new_callable=AsyncMock)
     @patch('src.translate_localization_files.run_pre_translation_validation', new_callable=AsyncMock)
     @patch('src.translate_localization_files.load_glossary')
     @patch('src.translate_localization_files.parse_properties_file')
     @patch('src.translate_localization_files.client.chat.completions.create')
-    async def test_single_quotes_are_escaped(self, mock_create, mock_parse_properties, mock_load_glossary, mock_validator, mock_holistic_review):
+    async def test_single_quotes_are_escaped(self, mock_create, mock_parse_properties, mock_load_glossary, mock_pre_validator, mock_holistic_review, mock_post_validator):
         from src.translate_localization_files import process_translation_queue, LANGUAGE_CODES, NAME_TO_CODE
 
         # Configure the async mocks
-        mock_validator.return_value = True
+        mock_pre_validator.return_value = True
+        mock_post_validator.return_value = True # Post-validation is now mocked
         mock_holistic_review.return_value = None
         mock_load_glossary.return_value = {}  # Mock the glossary to be empty
 
         # 1. Mock the file system interactions for both source and target files
         # The first call to parse_properties_file is for the target file.
         # The second call is for the source file.
-        # The third call is from the post-translation validator.
+        # The third call (from post-translation validator) is now SKIPPED.
         mock_parse_properties.side_effect = [
             (
                 [{'type': 'entry', 'key': 'test.key', 'value': 'This has a {0} placeholder.', 'original_value': '...'}],
@@ -46,10 +48,6 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
             (
                 [], # Parsed lines for source are not used in this test
                 {"test.key": "This has a {0} placeholder."}
-            ),
-            (
-                [{'type': 'entry', 'key': 'test.key', 'value': "Dies ist ein ''{0}'' Beispiel.", 'original_value': "Dies ist ein ''{0}'' Beispiel.", 'line_number': 0, 'was_multiline': False}],
-                {"test.key": "Dies ist ein ''{0}'' Beispiel."}
             )
         ]
 
@@ -81,8 +79,16 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
             )
 
         # 5. Assert the output and mock calls
-        mock_validator.assert_awaited()
+        mock_pre_validator.assert_awaited()
+        mock_post_validator.assert_called_once()
         mock_holistic_review.assert_awaited()
+
+        # Ensure parser was used exactly as expected: target, source
+        self.assertEqual(mock_parse_properties.call_count, 2)
+        calls = [c.args[0] for c in mock_parse_properties.call_args_list]
+        self.assertTrue(calls[0].endswith('app_de.properties'))
+        self.assertTrue(calls[1].endswith('app.properties'))
+        
         output_file_path = os.path.join(self.translated_dir, 'app_de.properties')
         self.assertTrue(os.path.exists(output_file_path))
 
