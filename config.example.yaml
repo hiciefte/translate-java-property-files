@@ -16,6 +16,8 @@ model_name: "gpt-4o-mini"
 # If not provided, defaults to the 'model_name' above.
 # Use a more powerful model like "gpt-4o" for higher quality review.
 review_model_name: "gpt-4o"
+# Tip: You can override this at runtime with the REVIEW_MODEL_NAME environment variable.
+# Example: export REVIEW_MODEL_NAME="gpt-4o"
 
 # Translation queue folders
 translation_queue_folder: "translation_queue"
@@ -137,3 +139,4 @@ brand_technical_glossary:
   - Wise
   - Wise-USD
   - Zelle
+  

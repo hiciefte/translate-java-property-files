@@ -40,7 +40,7 @@ class TestValidationLogic(unittest.TestCase):
 
         # Check for specific error messages
         self.assertIn("Malformed key 'key.one..bad'", errors[0])
-        self.assertIn("Invalid escape sequence '\\U'", errors[1])
+        self.assertIn("Invalid escape sequence in value for key 'key.three.bad.escape'", errors[1])
 
 
 if __name__ == '__main__':

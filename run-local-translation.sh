@@ -53,7 +53,7 @@ fi
 get_yaml_value() {
   local key="$1"
   local line val
-  line=$(grep -E "^[[:space:]]*$key[[:space:]]*:" "$CONFIG_FILE" | head -1 || true)
+  line=$(grep -E "^[[:space:]]*${key}[[:space:]]*:" "$CONFIG_FILE" | head -1 || true)
   [ -z "$line" ] && return 1
   # Remove inline comments
   line="${line%%#*}"
@@ -138,6 +138,6 @@ else
 fi
 
 echo "[info] Running translator"
-exec "$VENV_PYTHON" "$PROJECT_ROOT_DIR/src/translate_localization_files.py"
+exec "$VENV_PYTHON" -m src.translate_localization_files
 
 

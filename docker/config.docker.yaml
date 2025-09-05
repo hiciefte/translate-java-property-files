@@ -28,3 +28,86 @@ logging:
   log_level: "INFO"
   log_file_path: "/app/logs/translation_log.log"
   log_to_console: true 
+review_model_name: "gpt-4o"
+style_rules:
+  de:
+    - "Use the formal 'Sie' form of address."
+    - "For quantities, prefer 'ermitteln' or 'bestimmen' over 'bewerten'."
+    - "Ensure compound nouns are correctly formed (e.g., 'Sicherheitsschritt')."
+  cs:
+    - "Use impersonal and neutral phrasing for system messages; avoid the first-person plural."
+    - "For camera-related nouns, use the correct preposition 'ke kameře'."
+  es:
+    - "When referring to 'billetera' (wallet), use feminine pronouns (e.g., 'Configúrala', 'restáurala')."
+    - "Ensure questions that open with '¿' are properly closed with '?'."
+  pcm:
+    - "Maintain consistency with terms like 'connection' and 'camera' (do not use 'kamera')."
+    - "For negative outcomes, prefer the 'no gree work' pattern where appropriate."
+  ru:
+    - "In a wallet context, prefer hyphenated terms like 'seed-фраза' and 'биткойн-кошелька'."
+  af_ZA: []
+  it: []
+  pt_BR: []
+brand_technical_glossary:
+  - ACH
+  - ACH Transfer
+  - Advanced Cash
+  - AliPay
+  - Amazon eGift Card
+  - Bisq
+  - Bisq Easy
+  - Bitcoin
+  - Bizum
+  - BSQ Swaps
+  - BTC
+  - Capitual
+  - Cash App
+  - CelPay
+  - Chase QuickPay
+  - CIPS
+  - FPS (UK)
+  - Faster Payments
+  - HalCash
+  - I2P
+  - IMPS
+  - Interac e-Transfer
+  - Japan Furikomi
+  - Lightning
+  - Lightning Escrow
+  - Liquid
+  - Liquid Assets
+  - Monese
+  - MoneyBeam (N26)
+  - Monero Swaps
+  - MuSig
+  - NEFT
+  - Nequi
+  - Paxum
+  - PayTM
+  - Paysera
+  - Perfect Money
+  - Pix
+  - Popmoney
+  - PromptPay
+  - RSK
+  - RTGS
+  - Revolut
+  - SEPA
+  - SEPA Instant
+  - Satispay
+  - Strike
+  - Submarine Swaps
+  - SWIFT
+  - SWIFT International Wire Transfer
+  - Swish
+  - Tikkie
+  - Tor
+  - UPI
+  - US Money Order
+  - Uphold
+  - Verse
+  - WeChat Pay
+  - Wire Transfer
+  - Wise
+  - Wise-USD
+  - Zelle

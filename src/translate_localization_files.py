@@ -177,6 +177,18 @@ MAX_CONCURRENT_API_CALLS = config.get('max_concurrent_api_calls', 1)
 # (Optional) Load language-specific style rules
 STYLE_RULES = config.get('style_rules', {})
 
+# Pre-compute formatted style rules text for each language to avoid redundant processing.
+# This dictionary will map a language code (e.g., 'de') to a formatted string.
+PRECOMPUTED_STYLE_RULES_TEXT: Dict[str, str] = {}
+for code, rules in STYLE_RULES.items():
+    if rules:
+        language_name = LANGUAGE_CODES.get(code, code)
+        rules_list = "\n".join([f"- {rule}" for rule in rules])
+        PRECOMPUTED_STYLE_RULES_TEXT[code] = f"**Language-Specific Quality Checklist ({language_name})**:\n{rules_list}"
+    else:
+        PRECOMPUTED_STYLE_RULES_TEXT[code] = ""
+
+
 # (Optional) Load brand/technical glossary
 BRAND_GLOSSARY = config.get('brand_technical_glossary', ['MuSig', 'Bisq', 'Lightning', 'I2P', 'Tor'])
 
@@ -214,20 +226,11 @@ def lint_properties_file(file_path: str) -> List[str]:
                     if '..' in key:
                         errors.append(f"Linter Error: Malformed key '{key}' with double dots found on line {i}.")
 
-                    # Check for invalid escape sequences in the value.
-                    # A backslash not followed by a valid escape char or 'u' is an error.
-                    # This is a simplified check; a full Java properties parser is complex.
-                    # We are specifically looking for the '\' followed by a non-special character.
-                    if '\\' in value:
-                        # Find all occurrences of a backslash
-                        for m in re.finditer(r'\\', value):
-                            char_after = value[m.start() + 1] if len(value) > m.start() + 1 else None
-                            # Common valid escapes in .properties files. This is not exhaustive.
-                            valid_escapes = ['t', 'n', 'f', 'r', '\\', 'u', '=', ':', '#', '!', ' ']
-                            if char_after and char_after not in valid_escapes:
-                                # A more specific check for the Unicode error seen in reviews
-                                if char_after.isalpha() and char_after != 'u':
-                                     errors.append(f"Linter Error: Invalid escape sequence '\\{char_after}' in value for key '{key}' on line {i}.")
+                    # Flag any backslash not followed by an allowed escape or Unicode sequence.
+                    if re.search(r'\\(?![tnfr\\u=:# !])', value):
+                        errors.append(
+                            f"Linter Error: Invalid escape sequence in value for key '{key}' on line {i}."
+                        )
 
     except (IOError, OSError, UnicodeDecodeError) as e:
         errors.append(f"Linter Error: Could not read or process file {file_path}. Reason: {e}")
@@ -717,12 +720,8 @@ async def translate_text_async(
         # Get the glossary for the current language
         language_glossary = glossary.get(language_code, {})
 
-        # Get language-specific style rules
-        lang_style_rules = STYLE_RULES.get(language_code, [])
-        style_rules_text = ""
-        if lang_style_rules:
-            rules_list = "\n".join([f"- {rule}" for rule in lang_style_rules])
-            style_rules_text = f"**Language-Specific Quality Checklist ({target_language})**:\n{rules_list}"
+        # Get pre-computed language-specific style rules
+        style_rules_text = PRECOMPUTED_STYLE_RULES_TEXT.get(language_code, "")
 
         # Build the context and glossary text
         context_examples_text, glossary_text = build_context(
@@ -836,17 +835,10 @@ def _build_holistic_review_system_prompt(
     keys_to_review: List[str],
     source_content: str,
     translated_content: str,
+    style_rules_text: str  # Pass pre-computed rules
 ) -> str:
     """Builds the system prompt for the holistic review API call."""
     keys_to_review_text = "\n".join([f"- {k}" for k in keys_to_review])
-
-    # Get language-specific style rules for the review prompt
-    language_code = language_name_to_code(target_language)
-    lang_style_rules = STYLE_RULES.get(language_code, []) if language_code else []
-    style_rules_text = ""
-    if lang_style_rules:
-        rules_list = "\n".join([f"- {rule}" for rule in lang_style_rules])
-        style_rules_text = f"**Language-Specific Quality Checklist ({target_language})**:\n{rules_list}"
 
     return f"""
 You are a lead editor and quality assurance specialist for software localization. Your task is to review a list of newly translated keys within a `.properties` file for {target_language}. You are given the full source and translated files for context, but you MUST only review and return the keys specified.
@@ -892,7 +884,8 @@ async def holistic_review_async(
         target_language: str,
         keys_to_review: List[str],
         semaphore: asyncio.Semaphore,
-        rate_limiter: AsyncLimiter
+        rate_limiter: AsyncLimiter,
+        style_rules_text: str
 ) -> Optional[Dict[str, str]]:
     """
     Performs a holistic review of an entire translated file and returns corrections
@@ -914,7 +907,8 @@ async def holistic_review_async(
             target_language=target_language,
             keys_to_review=keys_to_review,
             source_content=source_content,
-            translated_content=translated_content
+            translated_content=translated_content,
+            style_rules_text=style_rules_text
         )
         max_retries = 3
         base_delay = 5  # Longer delay for a potentially larger task
@@ -990,7 +984,7 @@ def integrate_translations(
         # This is the definitive, final point for escaping.
         # If the original English text had a placeholder, we assume it's for Java's MessageFormat
         # and requires that any single quotes in the *translated* text be escaped.
-        if '{' in original_source_text and '}' in original_source_text:
+        if re.search(r'\{[^{}]+\}', original_source_text):
             # First, un-escape any pre-escaped quotes from the AI to normalize the string.
             translated_text = translated_text.replace("''", "'")
             # Then, escape all single quotes to be compliant with MessageFormat.
@@ -1315,13 +1309,17 @@ async def process_translation_queue(
         logging.debug(f"--- SOURCE CONTENT FOR REVIEW ---\n{source_content}")
         logging.debug(f"--- DRAFT CONTENT FOR REVIEW ---\n{draft_content}")
 
+        # Get pre-computed style rules for the target language
+        style_rules_text_for_review = PRECOMPUTED_STYLE_RULES_TEXT.get(language_code, "")
+
         corrected_translations = await holistic_review_async(
             source_content=source_content,
             translated_content=draft_content,
             target_language=target_language,
             keys_to_review=keys_to_translate, # Pass the specific keys
             semaphore=semaphore,
-            rate_limiter=rate_limiter
+            rate_limiter=rate_limiter,
+            style_rules_text=style_rules_text_for_review
         )
 
         if corrected_translations:
@@ -1340,7 +1338,7 @@ async def process_translation_queue(
                         original_source_text = source_translations.get(key, "")
 
                         # Apply the same escaping logic to the corrected value
-                        if '{' in original_source_text and '}' in original_source_text:
+                        if re.search(r'\{[^{}]+\}', original_source_text):
                             new_value = new_value.replace("''", "'")
                             new_value = new_value.replace("'", "''")
 

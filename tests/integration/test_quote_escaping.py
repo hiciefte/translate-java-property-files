@@ -1,5 +1,5 @@
 import os
-import shutil
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock, AsyncMock
 
@@ -12,21 +12,22 @@ from src.properties_parser import reassemble_file
 class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self):
-        self.test_dir = "temp_test_quote_escaping"
+        self.tmpdir = tempfile.TemporaryDirectory(prefix="test_quote_escaping_")
+        self.test_dir = self.tmpdir.name
         self.queue_dir = os.path.join(self.test_dir, "queue")
         self.translated_dir = os.path.join(self.test_dir, "translated")
         os.makedirs(self.queue_dir, exist_ok=True)
         os.makedirs(self.translated_dir, exist_ok=True)
     
     def tearDown(self):
-        shutil.rmtree(self.test_dir, ignore_errors=True)
+        self.tmpdir.cleanup()
 
     @patch('src.translate_localization_files.run_post_translation_validation')
     @patch('src.translate_localization_files.holistic_review_async', new_callable=AsyncMock)
     @patch('src.translate_localization_files.run_pre_translation_validation', new_callable=AsyncMock)
     @patch('src.translate_localization_files.load_glossary')
     @patch('src.translate_localization_files.parse_properties_file')
-    @patch('src.translate_localization_files.client.chat.completions.create')
+    @patch('src.translate_localization_files.client.chat.completions.create', new_callable=AsyncMock)
     async def test_single_quotes_are_escaped(self, mock_create, mock_parse_properties, mock_load_glossary, mock_pre_validator, mock_holistic_review, mock_post_validator):
         from src.translate_localization_files import process_translation_queue, LANGUAGE_CODES, NAME_TO_CODE
 
@@ -52,12 +53,10 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
         ]
 
         # 2. Mock the AI response for the initial translation
-        async def mock_ai_response(*_args, **_kwargs):
-            response_text = "Dies ist ein '{0}' Beispiel."
-            mock_response = MagicMock()
-            mock_response.choices = [MagicMock(message=MagicMock(content=response_text))]
-            return mock_response
-        mock_create.side_effect = mock_ai_response
+        response_text = "Dies ist ein '{0}' Beispiel."
+        mock_create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(content=response_text))]
+        )
 
         # 3. Create the dummy files the function needs to find
         source_file_path = os.path.join(self.test_dir, 'app.properties')
