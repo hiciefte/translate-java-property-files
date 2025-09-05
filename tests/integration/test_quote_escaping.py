@@ -1,7 +1,7 @@
 import os
 import shutil
 import unittest
-from unittest.mock import patch, MagicMock, AsyncMock, mock_open
+from unittest.mock import patch, MagicMock, AsyncMock
 
 # Set a dummy API key before importing the main script to prevent SystemExit.
 os.environ['OPENAI_API_KEY'] = 'DUMMY_KEY_FOR_TESTING'
@@ -24,26 +24,39 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
     @patch('os.path.exists', return_value=True)
     @patch('src.translate_localization_files.holistic_review_async')
     @patch('src.translate_localization_files.run_pre_translation_validation', new_callable=AsyncMock)
-    @patch('src.translate_localization_files.load_source_properties_file')
+    @patch('src.translate_localization_files.load_glossary')
     @patch('src.translate_localization_files.parse_properties_file')
     @patch('src.translate_localization_files.client.chat.completions.create')
-    async def test_single_quotes_are_escaped(self, mock_create, mock_parse_properties, mock_load_source, mock_validator, mock_holistic_review, mock_exists):
-        from src.translate_localization_files import process_translation_queue, LANGUAGE_CODES, NAME_TO_CODE, INPUT_FOLDER
-        
+    async def test_single_quotes_are_escaped(self, mock_create, mock_parse_properties, mock_load_glossary, mock_validator, mock_holistic_review, mock_exists):
+        from src.translate_localization_files import process_translation_queue, LANGUAGE_CODES, NAME_TO_CODE
+
         # Configure the async mocks
         mock_validator.return_value = True
         mock_holistic_review.return_value = None
+        mock_load_glossary.return_value = {}  # Mock the glossary to be empty
 
-        # 1. Mock the file system interactions
-        mock_load_source.return_value = {"test.key": "This has a {0} placeholder."}
-        mock_parse_properties.return_value = (
-            [{'type': 'entry', 'key': 'test.key', 'value': 'This has a {0} placeholder.', 'original_value': '...'}],
-            {"test.key": "This has a {0} placeholder."}
-        )
+        # 1. Mock the file system interactions for both source and target files
+        # The first call to parse_properties_file is for the target file.
+        # The second call is for the source file.
+        # The third call is from the post-translation validator.
+        mock_parse_properties.side_effect = [
+            (
+                [{'type': 'entry', 'key': 'test.key', 'value': 'This has a {0} placeholder.', 'original_value': '...'}],
+                {"test.key": "This has a {0} placeholder."}
+            ),
+            (
+                [], # Parsed lines for source are not used in this test
+                {"test.key": "This has a {0} placeholder."}
+            ),
+            (
+                [{'type': 'entry', 'key': 'test.key', 'value': "Dies ist ein ''{0}'' Beispiel.", 'original_value': "Dies ist ein ''{0}'' Beispiel.", 'line_number': 0, 'was_multiline': False}],
+                {"test.key": "Dies ist ein ''{0}'' Beispiel."}
+            )
+        ]
 
         # 2. Mock the AI response for the initial translation
         async def mock_ai_response(*args, **kwargs):
-            response_text = "Dies ist ein 'Beispiel'."
+            response_text = "Dies ist ein '{0}' Beispiel."
             mock_response = MagicMock()
             mock_response.choices = [MagicMock(message=MagicMock(content=response_text))]
             return mock_response
@@ -65,7 +78,7 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
              await process_translation_queue(
                 translation_queue_folder=self.queue_dir,
                 translated_queue_folder=self.translated_dir,
-                glossary_file_path="" # Not needed for this test
+                glossary_file_path="dummy_path.json" # Path is mocked, content is controlled
             )
 
         # 5. Assert the output
@@ -75,7 +88,7 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
         with open(output_file_path, 'r', encoding='utf-8') as f:
             output_content = f.read().strip()
         
-        self.assertEqual(output_content, "test.key=Dies ist ein ''Beispiel''.")
+        self.assertEqual(output_content, "test.key=Dies ist ein ''{0}'' Beispiel.")
 
     def test_reassemble_with_single_quotes(self):
         # This test only needs reassemble_file, no circular import.

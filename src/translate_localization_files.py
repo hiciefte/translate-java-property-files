@@ -196,8 +196,9 @@ def lint_properties_file(file_path: str) -> List[str]:
                 if not line or line.startswith('#') or line.startswith('!'):
                     continue
 
-                if '=' in line:
-                    key, value = line.split('=', 1)
+                if '=' in line or ':' in line:
+                    sep_idx = min([i for i in (line.find('='), line.find(':')) if i != -1])
+                    key, value = line[:sep_idx], line[sep_idx+1:]
                     key = key.strip()
 
                     # Check for malformed keys (e.g., double dots)
@@ -274,47 +275,6 @@ def load_glossary(glossary_file_path: str) -> Dict[str, Dict[str, str]]:
     except Exception as general_exc:
         logging.error(f"An unexpected error occurred while loading the glossary: {general_exc}")
         return {}
-
-def load_source_properties_file(source_file_path: str) -> Dict[str, str]:
-    """
-    Load translations from a source .properties file.
-
-    Args:
-        source_file_path (str): The path to the source .properties file.
-
-    Returns:
-        Dict[str, str]: A dictionary of translations.
-    """
-    with open(source_file_path, 'r', encoding='utf-8') as file:
-        lines = file.readlines()
-
-    source_translations = {}
-    i = 0
-    while i < len(lines):
-        line = lines[i].rstrip('\n')
-        if line.startswith('#') or line.strip() == '':
-            i += 1
-        else:
-            match = re.match(r'([^=]+)=(.*)', line)
-            if match:
-                key = match.group(1).strip()
-                value = match.group(2)
-                # Handle multiline values
-                while value.endswith('\\'):
-                    value = value[:-1]  # Remove the backslash
-                    i += 1
-                    if i < len(lines):
-                        next_line = lines[i].rstrip('\n')
-                        value += next_line.lstrip()
-                    else:
-                        break
-                else:
-                    i += 1
-                source_translations[key] = value
-            else:
-                i += 1
-    return source_translations
-
 
 def normalize_value(value: Optional[str]) -> str:
     """
@@ -605,8 +565,8 @@ async def run_pre_translation_validation(target_file_path: str, source_file_path
     try:
         synchronize_keys(target_file_path, source_file_path)
         logging.info(f"Key synchronization complete for '{filename}'.")
-    except Exception as e:
-        logging.error(f"Failed to synchronize keys for '{filename}'. Reason: {e}")
+    except Exception:
+        logging.exception("Failed to synchronize keys for '%s'.", filename)
         return False # Fail hard if we can't even sync the file
 
     # 2. Check encoding and mojibake on the (potentially modified) file
@@ -621,8 +581,8 @@ async def run_pre_translation_validation(target_file_path: str, source_file_path
         # Re-parse the files as they might have been changed by synchronize_keys
         _, target_translations = parse_properties_file(target_file_path)
         _, source_translations = parse_properties_file(source_file_path)
-    except Exception as e:
-        logging.error(f"Validation failed for '{filename}': Could not parse properties file after key sync. Reason: {e}")
+    except Exception:
+        logging.exception("Validation failed for '%s': Could not parse properties file after key sync.", filename)
         return False
 
     # 3. Check placeholder parity
@@ -688,9 +648,9 @@ def run_post_translation_validation(
                 if not check_placeholder_parity(source_value, target_value):
                     is_valid = False
                     logging.error(f"Post-translation validation failed for '{filename}': Placeholder mismatch for key '{key}'.")
-        except Exception as e:
+        except Exception:
             is_valid = False
-            logging.error(f"Post-translation validation failed for '{filename}': Could not parse final properties content. Reason: {e}")
+            logging.exception("Post-translation validation failed for '%s': Could not parse final properties content.", filename)
 
     finally:
         # Ensure the temporary file is cleaned up
@@ -772,7 +732,7 @@ You are an expert translator specializing in software localization. Translate th
 - **Strictly follow all glossaries**:
   - **Brand/Technical Glossary**: These terms MUST NOT be translated. Preserve their original casing and form.
   - **Translation Glossary**: These terms are non-negotiable. You MUST use the provided translation, matching the source term case-insensitively.
-- **Maintain placeholders**: Keep placeholders like `{0}`, `{1}` unchanged.
+- **Maintain placeholders**: Keep placeholders like `{{0}}`, `{{1}}` unchanged.
 - **Preserve formatting**: Keep special characters and formatting such as `\\n` and `\\t`.
 - **Do not add** any additional characters or punctuation (e.g., no square brackets, quotation marks, etc.).
 - **Provide only** the translated text corresponding to the Value.
@@ -825,8 +785,7 @@ Provide the translation **of the Value only**, following the instructions above.
                             glossary_text=glossary_text,
                             context_examples_text=context_examples_text,
                             key=key,
-                            processed_text=processed_text,
-                            style_rules_text=style_rules_text
+                            processed_text=processed_text
                         ))
                     ],
                     temperature=0.3,
@@ -1287,7 +1246,7 @@ async def process_translation_queue(
 
         # Load files
         parsed_lines, target_translations = parse_properties_file(translation_file_path)
-        source_translations = load_source_properties_file(source_file_path)
+        _, source_translations = parse_properties_file(source_file_path)
 
         # Extract texts to translate
         texts_to_translate, indices, keys_to_translate = extract_texts_to_translate(

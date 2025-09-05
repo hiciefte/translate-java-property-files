@@ -40,10 +40,13 @@ def parse_properties_file(file_path: str) -> Tuple[List[Dict], Dict[str, str]]:
             parsed_lines.append({'type': 'comment_or_blank', 'content': lines[i]})
             i += 1
         else:
-            match = re.match(r'([^=:]+?)\s*[:=]\s*(.*)', line)
+            # Split on the first unescaped ':' or '='
+            match = re.match(r'(?P<key>.*?)(?P<separator_group>\s*(?<!\\)[:=]\s*)(?P<value>.*)', line)
             if match:
-                key = match.group(1).strip()
-                value = match.group(2)
+                key_raw = match.group('key')
+                key = key_raw.strip().replace(r'\=', '=').replace(r'\:', ':')
+                value = match.group('value')
+                separator_group = match.group('separator_group')
                 line_number = i
                 original_value_lines = [value]
                 was_multiline = False
@@ -70,7 +73,8 @@ def parse_properties_file(file_path: str) -> Tuple[List[Dict], Dict[str, str]]:
                     'value': value,
                     'original_value': original_value,
                     'line_number': line_number,
-                    'was_multiline': was_multiline
+                    'was_multiline': was_multiline,
+                    'separator_group': separator_group
                 })
             else:
                 # Handle lines without a separator (e.g., a key with no value)
@@ -106,19 +110,22 @@ def reassemble_file(parsed_lines: List[Dict]) -> str:
     for item in parsed_lines:
         if item['type'] == 'entry':
             value = item['value']
+            key = item['key']
+            separator_group = item.get('separator_group', '=')
+
             # Preserve original formatting if possible
             if '\\n' in item.get('original_value', ''):
                 # Use escaped newline characters
                 value = value.replace('\n', '\\n')
-                line = f"{item['key']}={value}\n"
+                line = f"{key}{separator_group}{value}\n"
             elif '\n' in value or item.get('was_multiline', False):
                 # Handle multiline values with line continuations
                 lines_value = value.split('\n')
                 formatted_value = '\\\n'.join(lines_value)
-                line = (f"{item['key']}="
+                line = (f"{key}{separator_group}"
                         f"{formatted_value}\n")
             else:
-                line = f"{item['key']}={value}\n"
+                line = f"{key}{separator_group}{value}\n"
             lines.append(line)
         else:
             lines.append(item['content'])

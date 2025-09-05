@@ -1,5 +1,6 @@
 from typing import Set, Tuple, List
 import re
+from collections import Counter
 from src.properties_parser import parse_properties_file, reassemble_file
 
 def check_key_coverage(base_keys: Set[str], target_keys: Set[str]) -> Tuple[Set[str], Set[str]]:
@@ -35,8 +36,8 @@ def check_placeholder_parity(base_string: str, target_string: str) -> bool:
     # Regex to find placeholders like {0}, {1}, {name}, etc.
     placeholder_regex = re.compile(r'\{([^{}]+)\}')
 
-    base_placeholders = set(placeholder_regex.findall(base_string))
-    target_placeholders = set(placeholder_regex.findall(target_string))
+    base_placeholders = Counter(placeholder_regex.findall(base_string))
+    target_placeholders = Counter(placeholder_regex.findall(target_string))
 
     return base_placeholders == target_placeholders
 
@@ -53,7 +54,7 @@ def synchronize_keys(target_file_path: str, source_file_path: str):
     """
     # Parse both files to get their structure and key-value pairs
     target_parsed_lines, target_translations = parse_properties_file(target_file_path)
-    source_parsed_lines, source_translations = parse_properties_file(source_file_path)
+    _, source_translations = parse_properties_file(source_file_path)
 
     # Find the differences in keys
     missing_keys, extra_keys = check_key_coverage(set(source_translations.keys()), set(target_translations.keys()))
@@ -101,7 +102,7 @@ def check_encoding_and_mojibake(file_path: str) -> List[str]:
     except UnicodeDecodeError:
         errors.append(f"File '{file_path}' is not a valid UTF-8 file.")
         return errors  # Stop further checks if the file can't be read
-    except Exception as e:
+    except OSError as e:
         errors.append(f"Could not read file '{file_path}'. Reason: {e}")
         return errors
 

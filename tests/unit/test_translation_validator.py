@@ -58,6 +58,19 @@ class TestTranslationValidator(unittest.TestCase):
         target_string = "Hallo {name}."
         self.assertFalse(check_placeholder_parity(base_string, target_string))
 
+    def test_placeholder_parity_repeated_placeholders(self):
+        base_string = "Action: {0}, Action: {0}, Parameter: {1}"
+        target_string = "Aktion: {0}, Parameter: {1}"
+        self.assertFalse(check_placeholder_parity(base_string, target_string))
+
+        base_string_2 = "Action: {0}, Parameter: {1}"
+        target_string_2 = "Aktion: {0}, Aktion: {0}, Parameter: {1}"
+        self.assertFalse(check_placeholder_parity(base_string_2, target_string_2))
+
+        base_string_3 = "Action: {0}, Action: {0}"
+        target_string_3 = "Aktion: {0}, Aktion: {0}"
+        self.assertTrue(check_placeholder_parity(base_string_3, target_string_3))
+
     def test_encoding_and_mojibake_success(self):
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.properties', encoding='utf-8') as f:
             f.write("key.one=verfügbar\n")
