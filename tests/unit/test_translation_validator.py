@@ -112,8 +112,8 @@ class TestTranslationValidator(unittest.TestCase):
         try:
             errors = check_encoding_and_mojibake(temp_path)
             self.assertEqual(len(errors), 2)
-            self.assertIn("Potential mojibake detected", errors[0])
-            self.assertIn("contains the official Unicode replacement character", errors[1])
+            self.assertTrue(any("Potential mojibake detected" in e for e in errors))
+            self.assertTrue(any("contains the official Unicode replacement character" in e for e in errors))
         finally:
             os.remove(temp_path)
 

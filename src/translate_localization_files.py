@@ -177,6 +177,9 @@ MAX_CONCURRENT_API_CALLS = config.get('max_concurrent_api_calls', 1)
 # (Optional) Load language-specific style rules
 STYLE_RULES = config.get('style_rules', {})
 
+# (Optional) Load brand/technical glossary
+BRAND_GLOSSARY = config.get('brand_technical_glossary', ['MuSig', 'Bisq', 'Lightning', 'I2P', 'Tor'])
+
 
 def lint_properties_file(file_path: str) -> List[str]:
     """
@@ -197,7 +200,7 @@ def lint_properties_file(file_path: str) -> List[str]:
                     continue
 
                 if '=' in line or ':' in line:
-                    sep_idx = min([i for i in (line.find('='), line.find(':')) if i != -1])
+                    sep_idx = min(i for i in (line.find('='), line.find(':')) if i != -1)
                     key, value = line[:sep_idx], line[sep_idx+1:]
                     key = key.strip()
 
@@ -220,7 +223,7 @@ def lint_properties_file(file_path: str) -> List[str]:
                                 if char_after.isalpha() and char_after != 'u':
                                      errors.append(f"Linter Error: Invalid escape sequence '\\{char_after}' in value for key '{key}' on line {i}.")
 
-    except Exception as e:
+    except (IOError, OSError) as e:
         errors.append(f"Linter Error: Could not read or process file {file_path}. Reason: {e}")
 
     return errors
@@ -565,8 +568,8 @@ async def run_pre_translation_validation(target_file_path: str, source_file_path
     try:
         synchronize_keys(target_file_path, source_file_path)
         logging.info(f"Key synchronization complete for '{filename}'.")
-    except Exception:
-        logging.exception("Failed to synchronize keys for '%s'.", filename)
+    except (IOError, OSError) as e:
+        logging.exception("Failed to synchronize keys for '%s': %s", filename, e)
         return False # Fail hard if we can't even sync the file
 
     # 2. Check encoding and mojibake on the (potentially modified) file
@@ -581,8 +584,8 @@ async def run_pre_translation_validation(target_file_path: str, source_file_path
         # Re-parse the files as they might have been changed by synchronize_keys
         _, target_translations = parse_properties_file(target_file_path)
         _, source_translations = parse_properties_file(source_file_path)
-    except Exception:
-        logging.exception("Validation failed for '%s': Could not parse properties file after key sync.", filename)
+    except (IOError, OSError) as e:
+        logging.exception("Validation failed for '%s': Could not parse properties file after key sync: %s", filename, e)
         return False
 
     # 3. Check placeholder parity
@@ -648,9 +651,9 @@ def run_post_translation_validation(
                 if not check_placeholder_parity(source_value, target_value):
                     is_valid = False
                     logging.error(f"Post-translation validation failed for '{filename}': Placeholder mismatch for key '{key}'.")
-        except Exception:
+        except (IOError, OSError) as e:
             is_valid = False
-            logging.exception("Post-translation validation failed for '%s': Could not parse final properties content.", filename)
+            logging.exception("Post-translation validation failed for '%s': Could not parse final properties content: %s", filename, e)
 
     finally:
         # Ensure the temporary file is cleaned up
@@ -750,13 +753,10 @@ Use the translations specified in the glossary for the given terms. Ensure the t
 The translation is for a desktop trading app called Bisq. Keep the translations brief and consistent with typical software terminology. On Bisq, you can buy and sell bitcoin for fiat (or other cryptocurrencies) privately and securely using Bisq's peer-to-peer network and open-source desktop software. "Bisq Easy" is a brand name and should not be translated.
 """
 
+        brand_glossary_text = '\n'.join([f"- {term}" for term in BRAND_GLOSSARY])
         prompt = """
 **Brand/Technical Glossary (Do NOT translate these terms):**
-- MuSig
-- Bisq
-- Lightning
-- I2P
-- Tor
+{brand_glossary_text}
 
 **Translation Glossary:**
 {glossary_text}
@@ -782,6 +782,7 @@ Provide the translation **of the Value only**, following the instructions above.
                     messages=[
                         ChatCompletionSystemMessageParam(role="system", content=system_prompt),
                         ChatCompletionUserMessageParam(role="user", content=prompt.format(
+                            brand_glossary_text=brand_glossary_text,
                             glossary_text=glossary_text,
                             context_examples_text=context_examples_text,
                             key=key,

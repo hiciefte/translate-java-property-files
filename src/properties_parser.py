@@ -40,13 +40,36 @@ def parse_properties_file(file_path: str) -> Tuple[List[Dict], Dict[str, str]]:
             parsed_lines.append({'type': 'comment_or_blank', 'content': lines[i]})
             i += 1
         else:
-            # Split on the first unescaped ':' or '='
-            match = re.match(r'(?P<key>.*?)(?P<separator_group>\s*(?<!\\)[:=]\s*)(?P<value>.*)', line)
-            if match:
-                key_raw = match.group('key')
-                key = key_raw.strip().replace(r'\=', '=').replace(r'\:', ':')
-                value = match.group('value')
-                separator_group = match.group('separator_group')
+            sep_index = -1
+            # Find the first unescaped separator
+            for j, char in enumerate(line):
+                if char in (':', '=') :
+                    backslash_count = 0
+                    k = j - 1
+                    while k >= 0 and line[k] == '\\':
+                        backslash_count += 1
+                        k -= 1
+                    if backslash_count % 2 == 0:
+                        sep_index = j
+                        break
+
+            if sep_index != -1:
+                # Find whitespace around separator
+                start_sep_group = sep_index
+                while start_sep_group > 0 and line[start_sep_group - 1].isspace():
+                    start_sep_group -= 1
+
+                end_sep_group = sep_index
+                while end_sep_group < len(line) - 1 and line[end_sep_group + 1].isspace():
+                    end_sep_group += 1
+                
+                key_raw = line[:start_sep_group]
+                separator_group = line[start_sep_group : end_sep_group + 1]
+                value = line[end_sep_group + 1:]
+                
+                # Unescape common escapes used in .properties keys
+                key = re.sub(r'\\([:=\s])', r'\1', key_raw.strip())
+                
                 line_number = i
                 original_value_lines = [value]
                 was_multiline = False
@@ -78,7 +101,7 @@ def parse_properties_file(file_path: str) -> Tuple[List[Dict], Dict[str, str]]:
                 })
             else:
                 # Handle lines without a separator (e.g., a key with no value)
-                key = line.strip()
+                key = line.strip().replace(r'\=', '=').replace(r'\:', ':').replace(r'\\', '\\')
                 if key:  # only if it is not a blank line
                     target_translations[key] = ''
                     parsed_lines.append({
@@ -87,7 +110,8 @@ def parse_properties_file(file_path: str) -> Tuple[List[Dict], Dict[str, str]]:
                         'value': '',
                         'original_value': '',
                         'line_number': i,
-                        'was_multiline': False
+                        'was_multiline': False,
+                        'separator_group': '='
                     })
                 else:  # if it is a blank line after all
                     parsed_lines.append(

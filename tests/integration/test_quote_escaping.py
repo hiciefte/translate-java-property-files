@@ -21,13 +21,12 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
     def tearDown(self):
         shutil.rmtree(self.test_dir)
 
-    @patch('os.path.exists', return_value=True)
-    @patch('src.translate_localization_files.holistic_review_async')
+    @patch('src.translate_localization_files.holistic_review_async', new_callable=AsyncMock)
     @patch('src.translate_localization_files.run_pre_translation_validation', new_callable=AsyncMock)
     @patch('src.translate_localization_files.load_glossary')
     @patch('src.translate_localization_files.parse_properties_file')
     @patch('src.translate_localization_files.client.chat.completions.create')
-    async def test_single_quotes_are_escaped(self, mock_create, mock_parse_properties, mock_load_glossary, mock_validator, mock_holistic_review, mock_exists):
+    async def test_single_quotes_are_escaped(self, mock_create, mock_parse_properties, mock_load_glossary, mock_validator, mock_holistic_review):
         from src.translate_localization_files import process_translation_queue, LANGUAGE_CODES, NAME_TO_CODE
 
         # Configure the async mocks
@@ -55,7 +54,7 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
         ]
 
         # 2. Mock the AI response for the initial translation
-        async def mock_ai_response(*args, **kwargs):
+        async def mock_ai_response(*_args, **_kwargs):
             response_text = "Dies ist ein '{0}' Beispiel."
             mock_response = MagicMock()
             mock_response.choices = [MagicMock(message=MagicMock(content=response_text))]
@@ -81,7 +80,9 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
                 glossary_file_path="dummy_path.json" # Path is mocked, content is controlled
             )
 
-        # 5. Assert the output
+        # 5. Assert the output and mock calls
+        mock_validator.assert_awaited()
+        mock_holistic_review.assert_awaited()
         output_file_path = os.path.join(self.translated_dir, 'app_de.properties')
         self.assertTrue(os.path.exists(output_file_path))
 
