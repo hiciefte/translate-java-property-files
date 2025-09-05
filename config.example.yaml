@@ -68,70 +68,71 @@ style_rules:
     - "For negative outcomes, prefer the 'no gree work' pattern where appropriate."
   ru:
     - "In a wallet context, prefer hyphenated terms like 'seed-фраза' and 'биткойн-кошелька'."
+  af_ZA: []
+  it: []
+  pt_BR: []
 
 # (Optional) A list of brand names and technical terms that should never be translated.
 brand_technical_glossary:
-  - MuSig
-  - Bisq
-  - Lightning
-  - I2P
-  - Tor
   - ACH
+  - ACH Transfer
   - Advanced Cash
   - AliPay
   - Amazon eGift Card
+  - Bisq
+  - Bisq Easy
+  - Bitcoin
   - Bizum
+  - BSQ Swaps
+  - BTC
   - Capitual
   - Cash App
   - CelPay
   - Chase QuickPay
   - CIPS
+  - FPS (UK)
   - Faster Payments
   - HalCash
+  - I2P
   - IMPS
   - Interac e-Transfer
   - Japan Furikomi
+  - Lightning
+  - Lightning Escrow
+  - Liquid
+  - Liquid Assets
   - Monese
   - MoneyBeam (N26)
+  - Monero Swaps
+  - MuSig
   - NEFT
   - Nequi
   - Paxum
-  - Paysera
   - PayTM
+  - Paysera
   - Perfect Money
   - Pix
   - Popmoney
   - PromptPay
-  - Revolut
+  - RSK
   - RTGS
-  - Satispay
+  - Revolut
   - SEPA
   - SEPA Instant
+  - Satispay
   - Strike
+  - Submarine Swaps
   - SWIFT
+  - SWIFT International Wire Transfer
   - Swish
   - Tikkie
+  - Tor
   - UPI
-  - Uphold
   - US Money Order
+  - Uphold
   - Verse
   - WeChat Pay
-  - Wise
-  - Zelle
-  - Lightning Escrow
-  - Liquid
-  - Liquid Assets
-  - BSQ Swaps
-  - Bisq Easy
-  - Monero Swaps
-  - RSK
-  - Submarine Swaps
-  - ACH Transfer
-  - Bitcoin
-  - Wise-USD
-  - FPS (UK)
   - Wire Transfer
-  - CIPS
-  - Amazon eGift Card
-  - BTC
-  - SWIFT International Wire Transfer
+  - Wise
+  - Wise-USD
+  - Zelle

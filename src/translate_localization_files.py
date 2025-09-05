@@ -200,7 +200,13 @@ def lint_properties_file(file_path: str) -> List[str]:
                     continue
 
                 if '=' in line or ':' in line:
-                    sep_idx = min(i for i in (line.find('='), line.find(':')) if i != -1)
+                    sep_idx = -1
+                    for j, ch in enumerate(line):
+                        if ch in ('=', ':') and (j == 0 or line[j - 1] != '\\'):
+                            sep_idx = j
+                            break
+                    if sep_idx == -1:
+                        continue
                     key, value = line[:sep_idx], line[sep_idx+1:]
                     key = key.strip()
 
@@ -568,8 +574,8 @@ async def run_pre_translation_validation(target_file_path: str, source_file_path
     try:
         synchronize_keys(target_file_path, source_file_path)
         logging.info(f"Key synchronization complete for '{filename}'.")
-    except (IOError, OSError) as e:
-        logging.exception("Failed to synchronize keys for '%s': %s", filename, e)
+    except (IOError, OSError):
+        logging.exception("Failed to synchronize keys for '%s'", filename)
         return False # Fail hard if we can't even sync the file
 
     # 2. Check encoding and mojibake on the (potentially modified) file
@@ -584,8 +590,8 @@ async def run_pre_translation_validation(target_file_path: str, source_file_path
         # Re-parse the files as they might have been changed by synchronize_keys
         _, target_translations = parse_properties_file(target_file_path)
         _, source_translations = parse_properties_file(source_file_path)
-    except (IOError, OSError) as e:
-        logging.exception("Validation failed for '%s': Could not parse properties file after key sync: %s", filename, e)
+    except (IOError, OSError):
+        logging.exception("Validation failed for '%s': Could not parse properties file after key sync", filename)
         return False
 
     # 3. Check placeholder parity
@@ -651,14 +657,17 @@ def run_post_translation_validation(
                 if not check_placeholder_parity(source_value, target_value):
                     is_valid = False
                     logging.error(f"Post-translation validation failed for '{filename}': Placeholder mismatch for key '{key}'.")
-        except (IOError, OSError) as e:
+        except (IOError, OSError):
             is_valid = False
-            logging.exception("Post-translation validation failed for '%s': Could not parse final properties content: %s", filename, e)
+            logging.exception("Post-translation validation failed for '%s': Could not parse final properties content", filename)
 
     finally:
         # Ensure the temporary file is cleaned up
         if temp_file_path and os.path.exists(temp_file_path):
-            os.remove(temp_file_path)
+            try:
+                os.remove(temp_file_path)
+            except OSError as _e:
+                logging.warning("Could not delete temporary validation file '%s': %s", temp_file_path, _e)
 
     if is_valid:
         logging.info(f"Post-translation validation passed for '{filename}'.")
@@ -735,7 +744,7 @@ You are an expert translator specializing in software localization. Translate th
 - **Strictly follow all glossaries**:
   - **Brand/Technical Glossary**: These terms MUST NOT be translated. Preserve their original casing and form.
   - **Translation Glossary**: These terms are non-negotiable. You MUST use the provided translation, matching the source term case-insensitively.
-- **Maintain placeholders**: Keep placeholders like `{{0}}`, `{{1}}` unchanged.
+- **Maintain placeholders**: Keep Java MessageFormat placeholders like `{{0}}`, `{{1}}` unchanged.
 - **Preserve formatting**: Keep special characters and formatting such as `\\n` and `\\t`.
 - **Do not add** any additional characters or punctuation (e.g., no square brackets, quotation marks, etc.).
 - **Provide only** the translated text corresponding to the Value.
@@ -753,7 +762,7 @@ Use the translations specified in the glossary for the given terms. Ensure the t
 The translation is for a desktop trading app called Bisq. Keep the translations brief and consistent with typical software terminology. On Bisq, you can buy and sell bitcoin for fiat (or other cryptocurrencies) privately and securely using Bisq's peer-to-peer network and open-source desktop software. "Bisq Easy" is a brand name and should not be translated.
 """
 
-        brand_glossary_text = '\n'.join([f"- {term}" for term in BRAND_GLOSSARY])
+        brand_glossary_text = '\n'.join(f"- {term}" for term in dict.fromkeys(BRAND_GLOSSARY))
         prompt = """
 **Brand/Technical Glossary (Do NOT translate these terms):**
 {brand_glossary_text}
@@ -1125,6 +1134,8 @@ def get_changed_translation_files(input_folder_path: str, repo_root: str) -> Lis
             # Each line starts with two characters indicating status
             # e.g., ' M filename', '?? filename'
             status, filepath = line[:2], line[3:]
+            if status.strip().startswith('R') and ' -> ' in filepath:
+                filepath = filepath.split(' -> ', 1)[1]
             if status.strip() in {'M', 'A', 'AM', 'MM', 'RM', 'R'}:
                 if filepath.endswith('.properties'):
                     # Check if it's a translation file (has language suffix)

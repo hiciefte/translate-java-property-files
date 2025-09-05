@@ -19,7 +19,7 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
         os.makedirs(self.translated_dir, exist_ok=True)
     
     def tearDown(self):
-        shutil.rmtree(self.test_dir)
+        shutil.rmtree(self.test_dir, ignore_errors=True)
 
     @patch('src.translate_localization_files.holistic_review_async', new_callable=AsyncMock)
     @patch('src.translate_localization_files.run_pre_translation_validation', new_callable=AsyncMock)
