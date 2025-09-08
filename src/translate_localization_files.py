@@ -957,6 +957,13 @@ async def holistic_review_async(
         return None  # Fallback after all retries
 
 
+def _escape_messageformat_if_needed(src_text: str, value: str) -> str:
+    if re.search(r'\{[^{}]+\}', src_text):
+        value = value.replace("''", "'")
+        value = value.replace("'", "''")
+    return value
+
+
 def integrate_translations(
         parsed_lines: List[Dict],
         translations: List[str],
@@ -981,14 +988,7 @@ def integrate_translations(
         translated_text = translations[idx]
         original_source_text = source_translations.get(key, "")
 
-        # This is the definitive, final point for escaping.
-        # If the original English text had a placeholder, we assume it's for Java's MessageFormat
-        # and requires that any single quotes in the *translated* text be escaped.
-        if re.search(r'\{[^{}]+\}', original_source_text):
-            # First, un-escape any pre-escaped quotes from the AI to normalize the string.
-            translated_text = translated_text.replace("''", "'")
-            # Then, escape all single quotes to be compliant with MessageFormat.
-            translated_text = translated_text.replace("'", "''")
+        translated_text = _escape_messageformat_if_needed(original_source_text, translated_text)
 
         if translation_idx < len(parsed_lines):
             # Update existing entry
@@ -1338,9 +1338,7 @@ async def process_translation_queue(
                         original_source_text = source_translations.get(key, "")
 
                         # Apply the same escaping logic to the corrected value
-                        if re.search(r'\{[^{}]+\}', original_source_text):
-                            new_value = new_value.replace("''", "'")
-                            new_value = new_value.replace("'", "''")
+                        new_value = _escape_messageformat_if_needed(original_source_text, new_value)
 
                         if line_info['value'] != new_value:
                             changed_keys_count += 1

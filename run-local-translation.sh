@@ -73,8 +73,8 @@ get_yaml_value() {
   printf '%s' "$val"
 }
 
-TARGET_ROOT=$(get_yaml_value "target_project_root" || true)
-INPUT_FOLDER=$(get_yaml_value "input_folder" || true)
+TARGET_ROOT="$(get_yaml_value "target_project_root" || echo "")"
+INPUT_FOLDER="$(get_yaml_value "input_folder" || echo "")"
 
 if [ -z "$TARGET_ROOT" ] || [ -z "$INPUT_FOLDER" ]; then
   echo "[error] target_project_root or input_folder not set in $CONFIG_FILE" 1>&2
