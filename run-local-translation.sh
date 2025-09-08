@@ -8,7 +8,6 @@ CONFIG_FILE="$PROJECT_ROOT_DIR/config.yaml"
 PYTHON_BIN="python3"
 VENV_DIR="$PROJECT_ROOT_DIR/venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
-VENV_PIP="$VENV_DIR/bin/pip"
 PIP_SYNC_BIN="$VENV_DIR/bin/pip-sync"
 
 usage() {
@@ -53,6 +52,10 @@ fi
 get_yaml_value() {
   local key="$1"
   local line val
+  if command -v yq >/dev/null 2>&1; then
+    yq -r ".${key} // empty" "$CONFIG_FILE"
+    return
+  fi
   line=$(grep -E "^[[:space:]]*${key}[[:space:]]*:" "$CONFIG_FILE" | head -1 || true)
   [ -z "$line" ] && return 1
   # Remove inline comments

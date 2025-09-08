@@ -49,6 +49,7 @@ style_rules:
   it: []
   pt_BR: []
 brand_technical_glossary:
+# (Optional) keep this list alphabetized and unique
   - ACH
   - ACH Transfer
   - Advanced Cash

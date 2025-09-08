@@ -36,7 +36,7 @@ from openai.types.chat import (
     ChatCompletionSystemMessageParam,
     ChatCompletionUserMessageParam
 )
-from tqdm.asyncio import tqdm_asyncio
+from tqdm.asyncio import tqdm
 
 from src.properties_parser import parse_properties_file, reassemble_file
 from src.translation_validator import (
@@ -226,8 +226,8 @@ def lint_properties_file(file_path: str) -> List[str]:
                     if '..' in key:
                         errors.append(f"Linter Error: Malformed key '{key}' with double dots found on line {i}.")
 
-                    # Flag any backslash not followed by an allowed escape or Unicode sequence.
-                    if re.search(r'\\(?![tnfr\\u=:# !])', value):
+                    # Allow: \t \n \f \r \\ \= \: \# \! space, and \uXXXX (4 hex digits)
+                    if re.search(r'\\(?!u[0-9a-fA-F]{4}|[tnfr\\=:#\s!])', value):
                         errors.append(
                             f"Linter Error: Invalid escape sequence in value for key '{key}' on line {i}."
                         )
@@ -1153,7 +1153,7 @@ def copy_files_to_translation_queue(
         translation_queue_folder: str
 ):
     """
-    Copy changed translation files to the translation queue folder without nested directories.
+    Copy changed translation files to the translation queue folder, preserving subdirectories.
 
     Args:
         changed_files (List[str]): List of changed translation file names.
@@ -1283,7 +1283,7 @@ async def process_translation_queue(
 
         # Run tasks concurrently with progress indication
         results = []
-        for coro in tqdm_asyncio.as_completed(tasks, desc=f"Translating {translation_file}", unit="translation"):
+        for coro in tqdm.as_completed(tasks, desc=f"Translating {translation_file}", unit="translation"):
             index, result = await coro
             results.append((index, result))
 
@@ -1409,6 +1409,9 @@ async def main():
     """
     Main function to orchestrate the translation process.
     """
+    # Ensure queue folders exist before validation (works when main() is invoked directly)
+    os.makedirs(TRANSLATION_QUEUE_FOLDER, exist_ok=True)
+    os.makedirs(TRANSLATED_QUEUE_FOLDER, exist_ok=True)
     # Ensure critical paths that might be derived from config are validated after config load
     # For example, if INPUT_FOLDER or REPO_ROOT uses defaults, they might be invalid.
     # The validate_paths function should be called early in main if it relies on these.
