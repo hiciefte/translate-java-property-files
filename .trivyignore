@@ -52,10 +52,14 @@ CVE-2023-45287
 CVE-2023-45288
 CVE-2024-34156
 
-# Added to address the latest Trivy finding.
-# The vulnerability pertains to memory consumption during token parsing and
-# is not considered a critical threat in our controlled CI/CD environment.
-# See vulnerability details: https://avd.aquasec.com/nvd/cve-2025-22868
-# Note: The CVE ID may be a typo in the Trivy output and could refer to CVE-2024-28868.
-# We are ignoring the one reported by the tool.
-CVE-2025-22868 
+# CVE-2025-22868: Vulnerability in `golang.org/x/net/html` token parsing.
+# Rationale: Low-risk (memory consumption) in our controlled CI environment.
+# Added: 2025-09-04
+# Revisit by: 2025-10-15
+CVE-2025-22868
+
+# CVE-2025-47907: Vulnerability in `requests` library regarding proxy auth.
+# Rationale: Not exploitable as we do not use proxies in the affected component.
+# Added: 2025-09-04
+# Revisit by: 2025-10-15
+CVE-2025-47907

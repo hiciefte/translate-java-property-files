@@ -1,8 +1,9 @@
 import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import tempfile
 import textwrap
+import pytest
 
 # Set a dummy API key before importing the main script.
 # This prevents the OpenAI client from failing in a test environment
@@ -12,15 +13,13 @@ os.environ['OPENAI_API_KEY'] = 'DUMMY_KEY_FOR_TESTING'
 # It's good practice to be able to import the functions to be tested.
 # This might require adjusting the Python path if the test runner doesn't handle it.
 from src.translate_localization_files import (
-    parse_properties_file,
-    integrate_translations,
-    reassemble_file,
     build_context,
-    # Imported to assist in build_context testing
     normalize_value,
     extract_texts_to_translate,
-    extract_language_from_filename
+    extract_language_from_filename,
+    run_post_translation_validation
 )
+from src.properties_parser import parse_properties_file, reassemble_file
 
 
 class TestCoreLogic(unittest.TestCase):
@@ -87,6 +86,7 @@ class TestCoreLogic(unittest.TestCase):
         source_translations = {"key.one": "source value", "key.new": "new source value"}
 
         # 3. Integrate the translations
+        from src.translate_localization_files import integrate_translations
         updated_lines = integrate_translations(initial_parsed_lines, translations, indices, keys, source_translations)
 
         # 4. Reassemble the file content from the updated structure
@@ -114,6 +114,7 @@ class TestCoreLogic(unittest.TestCase):
         keys = ['key.one']
         source_translations = {'key.one': 'old\\nvalue'}
 
+        from src.translate_localization_files import integrate_translations
         updated_lines = integrate_translations(initial_parsed_lines, translations, indices, keys, source_translations)
         final_content = reassemble_file(updated_lines)
         self.assertEqual(final_content, 'key.one=new value\n')
@@ -128,6 +129,7 @@ class TestCoreLogic(unittest.TestCase):
         keys = ['multi.key']
         source_translations = {'multi.key': 'old line1\\nold line2'}
 
+        from src.translate_localization_files import integrate_translations
         updated = integrate_translations(initial_lines, translations, indices, keys, source_translations)
         self.assertEqual(updated[0]['value'], translations[0])
         # This assertion needs to be smarter if reassemble logic changes original_value
@@ -208,6 +210,28 @@ class TestCoreLogic(unittest.TestCase):
         self.assertIsNone(extract_language_from_filename("app.properties", supported_codes))
         self.assertIsNone(extract_language_from_filename("app_fr.properties", supported_codes))
         self.assertIsNone(extract_language_from_filename("app_de.txt", supported_codes))
+
+    def test_post_translation_validation_success(self):
+        """Tests that valid content passes the post-translation validation."""
+        final_content = "key.one=Valid value {0}"
+        source_translations = {"key.one": "Source value {0}"}
+        filename = "valid_file.properties"
+        self.assertTrue(run_post_translation_validation(final_content, source_translations, filename))
+
+    def test_post_translation_validation_fails_on_placeholder_mismatch(self):
+        """Tests that a placeholder mismatch is caught by post-translation validation."""
+        final_content = "key.one=Invalid value {1}" # Mismatched placeholder
+        source_translations = {"key.one": "Source value {0}"}
+        filename = "bad_placeholders.properties"
+        self.assertFalse(run_post_translation_validation(final_content, source_translations, filename))
+
+    def test_post_translation_validation_fails_on_mojibake(self):
+        """Tests that mojibake is caught by post-translation validation."""
+        final_content = "key.one=This is verfÃ¼gbar" # Mojibake
+        source_translations = {"key.one": "This is available"}
+        filename = "mojibake_file.properties"
+        self.assertFalse(run_post_translation_validation(final_content, source_translations, filename))
+
 
 if __name__ == '__main__':
     unittest.main()
