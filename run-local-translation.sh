@@ -4,7 +4,7 @@ set -euo pipefail
 PROJECT_ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$PROJECT_ROOT_DIR"
 
-CONFIG_FILE="$PROJECT_ROOT_DIR/config.yaml"
+CONFIG_FILE="$PROJECT_ROOT_DIR/config-mobile.yaml"
 PYTHON_BIN="python3"
 VENV_DIR="$PROJECT_ROOT_DIR/venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
@@ -141,6 +141,14 @@ else
 fi
 
 echo "[info] Running translator"
+export TRANSLATOR_CONFIG_FILE="$CONFIG_FILE"
+
+# If a filter glob is defined in the config, export it for the Python script
+TRANSLATION_FILTER_GLOB="$(get_yaml_value "translation_file_filter_glob" || echo "")"
+if [ -n "$TRANSLATION_FILTER_GLOB" ]; then
+  export TRANSLATION_FILTER_GLOB
+fi
+
 exec "$VENV_PYTHON" -m src.translate_localization_files
 
 

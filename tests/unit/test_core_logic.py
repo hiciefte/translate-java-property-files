@@ -233,5 +233,137 @@ class TestCoreLogic(unittest.TestCase):
         self.assertFalse(run_post_translation_validation(final_content, source_translations, filename))
 
 
+class TestValidationLogic(unittest.TestCase):
+    def test_linting_finds_common_errors(self):
+        """
+        Tests the linter on a .properties file with various correct and incorrect syntax.
+        """
+        # Import inside the test to avoid circular dependency issues at the module level
+        # if other tests also need to patch or modify its behavior.
+        from src.translate_localization_files import lint_properties_file
+
+        content = textwrap.dedent("""
+            # Correct line
+            key.one=A normal value.
+
+            # Correctly escaped characters
+            key.two=This value has a tab \\t and a newline \\n.
+
+            # Invalid escape sequence
+            key.three.bad.escape=This contains a bad escape \\U.
+
+            # Line with double dots in key (should be flagged)
+            key..four=Some value.
+
+            # Multi-line value with valid continuation
+            key.five=This is a multi-line value that \\
+                     continues here.
+            """)
+
+        with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.properties') as temp_f:
+            temp_f.write(content)
+            temp_file_path = temp_f.name
+
+        try:
+            errors = lint_properties_file(temp_file_path)
+            self.assertEqual(len(errors), 2)
+            self.assertIn("Invalid escape sequence", errors[0])
+            self.assertIn("key.three.bad.escape", errors[0])
+            self.assertIn("Malformed key", errors[1])
+            self.assertIn("key..four", errors[1])
+        finally:
+            os.remove(temp_file_path)
+
+    def test_linting_handles_common_edge_cases(self):
+        """
+        Tests that the linter correctly ignores common but tricky escape sequences
+        that were previously flagged as errors.
+        """
+        from src.translate_localization_files import lint_properties_file
+        content = textwrap.dedent(r'''
+            # Permitted escaped quote
+            key.one=This is a value with an escaped quote \"here\".
+
+            # Permitted newline before a line continuation character
+            key.two=This is a multi-line value with a newline.\n\
+                     And it continues here.
+
+            # A genuinely invalid escape sequence for control
+            key.three=This has an invalid escape \z.
+            ''')
+        with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.properties') as temp_f:
+            temp_f.write(content)
+            temp_file_path = temp_f.name
+
+        try:
+            errors = lint_properties_file(temp_file_path)
+            # It should only flag the genuinely invalid escape sequence
+            self.assertEqual(len(errors), 1)
+            self.assertIn("Invalid escape sequence in value for key 'key.three'", errors[0])
+        finally:
+            os.remove(temp_file_path)
+
+
+class TestFileDetectionLogic(unittest.TestCase):
+
+    @patch('subprocess.run')
+    def test_get_changed_files_returns_all_without_filter(self, mock_subprocess_run):
+        """
+        Tests that get_changed_translation_files returns all changed files
+        when no environment variable filter is set.
+        """
+        from src.translate_localization_files import get_changed_translation_files
+
+        # Simulate git status output
+        git_output = textwrap.dedent("""
+             M i18n/resources/mobile_de.properties
+             M i18n/resources/desktop_de.properties
+             M i18n/resources/mobile_es.properties
+        """).strip()
+        mock_subprocess_run.return_value = MagicMock(stdout=git_output, stderr="", check_returncode=MagicMock())
+
+        repo_root = "/fake/repo"
+        input_folder = "/fake/repo/i18n/resources"
+
+        changed_files = get_changed_translation_files(input_folder, repo_root)
+
+        # In a test environment with mocked paths, os.path.relpath can be unpredictable.
+        # It's more robust to check the basenames of the files to ensure the correct set was returned.
+        changed_basenames = [os.path.basename(f) for f in changed_files]
+        self.assertEqual(len(changed_basenames), 3)
+        self.assertIn("mobile_de.properties", changed_basenames)
+        self.assertIn("desktop_de.properties", changed_basenames)
+        self.assertIn("mobile_es.properties", changed_basenames)
+
+    @patch('subprocess.run')
+    def test_get_changed_files_applies_glob_filter(self, mock_subprocess_run):
+        """
+        Tests that get_changed_translation_files correctly filters files
+        based on the TRANSLATION_FILTER_GLOB environment variable.
+        """
+        from src.translate_localization_files import get_changed_translation_files
+
+        # Simulate git status output
+        git_output = textwrap.dedent("""
+             M i18n/resources/mobile_de.properties
+             M i18n/resources/desktop_de.properties
+             M i18n/resources/mobile_es.properties
+        """).strip()
+        mock_subprocess_run.return_value = MagicMock(stdout=git_output, stderr="", check_returncode=MagicMock())
+
+        repo_root = "/fake/repo"
+        input_folder = "/fake/repo/i18n/resources"
+
+        # Use patch.dict to temporarily set the environment variable for this test
+        with patch.dict('os.environ', {'TRANSLATION_FILTER_GLOB': 'mobile_*.properties'}):
+            changed_files = get_changed_translation_files(input_folder, repo_root)
+
+            changed_basenames = [os.path.basename(f) for f in changed_files]
+            self.assertEqual(len(changed_basenames), 2)
+            self.assertIn("mobile_de.properties", changed_basenames)
+            self.assertIn("mobile_es.properties", changed_basenames)
+            self.assertNotIn("desktop_de.properties", changed_basenames)
+
+
 if __name__ == '__main__':
     unittest.main()

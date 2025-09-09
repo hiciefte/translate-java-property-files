@@ -192,11 +192,14 @@ get_config_value() {
     local key="$1"
     local config_file="$2"
     # Use yq to safely read the value. The -e flag exits with non-zero status if the key is not found.
-    yq -e ".$key" "$config_file"
+    # The '|| true' prevents the script from exiting if a key is not found (for optional keys).
+    yq -e ".$key" "$config_file" || true
 }
 
 TARGET_PROJECT_ROOT=$(get_config_value "target_project_root" "$CONFIG_FILE")
 INPUT_FOLDER=$(get_config_value "input_folder" "$CONFIG_FILE")
+# Read the optional glob filter for selective translation
+TRANSLATION_FILTER_GLOB=$(get_config_value "translation_file_filter_glob" "$CONFIG_FILE")
 
 log "Target project root from config: \"$TARGET_PROJECT_ROOT\""
 log "Input folder from config: \"$INPUT_FOLDER\""
@@ -422,6 +425,12 @@ log "Returned to the translation script directory"
 
 # Step 3: Run the translation script with the virtual environment Python
 log "Running translation script"
+# If a filter glob is defined in the config, export it as an environment variable
+# for the Python script to use.
+if [ -n "$TRANSLATION_FILTER_GLOB" ]; then
+    log "Translation filter is active. Only files matching '$TRANSLATION_FILTER_GLOB' will be translated."
+    export TRANSLATION_FILTER_GLOB
+fi
 "$VENV_DIR/bin/python" src/translate_localization_files.py || {
     log "Error: Failed to run translation script. Exiting."
     exit 1

@@ -58,7 +58,10 @@ LOCALIZATION_SCHEMA = {
 # Determine the correct path to config.yaml relative to the script's location
 SCRIPT_REAL_PATH = os.path.realpath(__file__)
 SCRIPT_DIR = os.path.dirname(SCRIPT_REAL_PATH)
-CONFIG_FILE = os.path.join(SCRIPT_DIR, '..', 'config.yaml')
+# Allow overriding the config file path via an environment variable for flexibility.
+# If TRANSLATOR_CONFIG_FILE is set, use it; otherwise, default to 'config.yaml'.
+_default_config_path = os.path.join(SCRIPT_DIR, '..', 'config.yaml')
+CONFIG_FILE = os.environ.get('TRANSLATOR_CONFIG_FILE', _default_config_path)
 
 # Default logging settings if config is unavailable or incomplete
 DEFAULT_LOG_FILE_PATH = "logs/translation_log_default.log"
@@ -226,8 +229,15 @@ def lint_properties_file(file_path: str) -> List[str]:
                     if '..' in key:
                         errors.append(f"Linter Error: Malformed key '{key}' with double dots found on line {i}.")
 
-                    # Allow: \t \n \f \r \\ \= \: \# \! space, and \uXXXX (4 hex digits)
-                    if re.search(r'\\(?!u[0-9a-fA-F]{4}|[tnfr\\=:#\s!])', value):
+                    # Temporarily remove a trailing backslash if it's for line continuation,
+                    # so it's not incorrectly flagged as an invalid escape sequence.
+                    value_to_check = value.rstrip()
+                    if value_to_check.endswith('\\'):
+                        value_to_check = value_to_check[:-1]
+
+                    # Allow: \t \n \f \r \\ \= \: \# \! space, \", and \uXXXX (4 hex digits)
+                    # This regex is loosened to ignore \n and \" which appear in some source files.
+                    if re.search(r'\\(?!u[0-g-fA-F]{4}|[tnfr\\=:#\s!"])', value_to_check):
                         errors.append(
                             f"Linter Error: Invalid escape sequence in value for key '{key}' on line {i}."
                         )
@@ -1103,6 +1113,10 @@ def get_changed_translation_files(input_folder_path: str, repo_root: str) -> Lis
     """
     Use git to find changed translation files in the input folder.
 
+    If the TRANSLATION_FILTER_GLOB environment variable is set, this function will
+    only return files that match the provided glob pattern. Otherwise, it returns all
+    changed .properties files.
+
     Args:
         input_folder_path (str): The absolute path to the input folder.
         repo_root (str): The absolute path to the Git repository root.
@@ -1138,6 +1152,17 @@ def get_changed_translation_files(input_folder_path: str, repo_root: str) -> Lis
                         # Extract the filename relative to input_folder
                         rel_path = os.path.relpath(filepath, rel_input_folder)
                         changed_files.append(rel_path)
+
+        # If a filter glob is provided via environment variable, apply it now.
+        # This allows the pipeline to selectively translate only a subset of changed files.
+        filter_glob = os.environ.get('TRANSLATION_FILTER_GLOB')
+        if filter_glob:
+            # We need the `fnmatch` module to compare against the glob pattern.
+            import fnmatch
+            filtered_list = [f for f in changed_files if fnmatch.fnmatch(os.path.basename(f), filter_glob)]
+            logging.info(f"Applied filter '{filter_glob}', {len(filtered_list)} out of {len(changed_files)} files will be translated.")
+            return filtered_list
+
         return changed_files
     except subprocess.CalledProcessError as git_exc:
         logging.error(f"Error running git command: {git_exc.stderr}")
@@ -1407,6 +1432,12 @@ async def main():
     """
     Main function to orchestrate the translation process.
     """
+    # Clean up queue folders from any previous runs to ensure a fresh start
+    if os.path.exists(TRANSLATION_QUEUE_FOLDER):
+        shutil.rmtree(TRANSLATION_QUEUE_FOLDER)
+    if os.path.exists(TRANSLATED_QUEUE_FOLDER):
+        shutil.rmtree(TRANSLATED_QUEUE_FOLDER)
+
     # Ensure queue folders exist before validation (works when main() is invoked directly)
     os.makedirs(TRANSLATION_QUEUE_FOLDER, exist_ok=True)
     os.makedirs(TRANSLATED_QUEUE_FOLDER, exist_ok=True)
