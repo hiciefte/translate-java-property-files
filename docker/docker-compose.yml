@@ -1,39 +1,32 @@
 services:
   translator:
+    # Use environment variables to make container and volume names unique per instance
+    container_name: ${CONTAINER_NAME:-translator-service}
     build:
-      context: ..  # Set build context to the project root
+      context: .. # Build context is the project root
       dockerfile: docker/Dockerfile # Path to Dockerfile from project root
-      args:
-        HOST_UID: ${HOST_UID:-1000}
-        HOST_GID: ${HOST_GID:-1000}
-        GPG_KEY_FINGERPRINT_FOR_TRUST: ${GPG_KEY_FINGERPRINT_FOR_TRUST:-}
-    container_name: ${CONTAINER_NAME:-translation_service_runner}
-    env_file:
-      - .env
+    # The entrypoint script handles repository setup and then executes the main Python app
+    entrypoint: /usr/local/bin/docker-entrypoint.sh
+    # By default, run the translation script. Can be overridden for debugging.
+    command: ["python", "-m", "src.translate_localization_files"]
     volumes:
       # Mount the Docker-specific config to the default config path in the app
       - ./config.docker.yaml:/app/config.yaml:ro
-      
       # Mount the glossary file (located in project root)
       - ../glossary.json:/app/glossary.json:ro
-      
       # Mount SSH keys from host user's home (read-only for appuser)
       - ${HOME}/.ssh:/home/appuser/.ssh:ro
-      
       # Mount logs directory (in project root) for persistence
       - ../logs:/app/logs
-
       # Mount a named volume for the target repository to persist it across restarts
       - ${VOLUME_NAME:-target-repo-data}:/target_repo
-
-volumes:
-  ${VOLUME_NAME:-target-repo-data}:
-
-# Note: You will need a .env file in the project root directory
-# (translate-java-property-files) with API keys and HOST_UID/GID.
-# Example .env file:
-# OPENAI_API_KEY=your_openai_key
-# TX_TOKEN=your_transifex_token
-# GITHUB_TOKEN=your_github_personal_access_token
-# HOST_UID=$(id -u) # Should be numeric, e.g., 501
-# HOST_GID=$(id -g) # Should be numeric, e.g., 20 
+    # The `user` can be overridden in docker-compose.override.yml for local dev
+    # to match the host user, avoiding permission issues with mounted volumes.
+    user: appuser
+    # Load environment variables from a .env file located in the same directory as this docker-compose file.
+    # This file contains secrets like API keys.
+    env_file:
+      - .env
+    # Note: Place the .env file alongside this compose file (docker/.env)
+    # with API keys and HOST_UID/GID.
+    # An example is provided in docker/.env.example 

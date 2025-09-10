@@ -34,22 +34,22 @@ yaml_get() {
     # This parser is intentionally simple. It handles unquoted, single-quoted,
     # and double-quoted values, strips inline comments, and trims whitespace.
     local value
-    value=$(grep -E "^[[:space:]]*${key}:" "$CONFIG_FILE_PATH" |
+    value=$(grep -E "^[[:space:]]*${key}:" "$CONFIG_FILE_PATH" | head -1 |
       sed -nE "s/^[[:space:]]*${key}:[[:space:]]*(\"([^\"]*)\"|'([^']*)'|([^#]*))([[:space:]]*#.*)?$/\2\3\4/p" |
       sed -E 's/^[[:space:]]*//;s/[[:space:]]*$//')
     echo "$value"
 }
 
-# Read the optional glob filter from the config and export it for the Python script
-TRANSLATION_FILTER_GLOB="$(yaml_get "translation_file_filter_glob" || echo "")"
-if [ -n "$TRANSLATION_FILTER_GLOB" ] && [ "$TRANSLATION_FILTER_GLOB" != "null" ]; then
-  export TRANSLATOR_CONFIG_FILE
-fi
-
 # --- Pre-flight Checks ---
 if [ ! -f "$CONFIG_FILE_PATH" ]; then
     echo "[error] Configuration file not found: $CONFIG_FILE_PATH"
     exit 1
+fi
+
+# Read the optional glob filter from the config and export it for the Python script
+TRANSLATION_FILTER_GLOB="$(yaml_get "translation_file_filter_glob" || echo "")"
+if [ -n "$TRANSLATION_FILTER_GLOB" ] && [ "$TRANSLATION_FILTER_GLOB" != "null" ]; then
+  export TRANSLATION_FILTER_GLOB
 fi
 
 if [ ! -d "$VENV_DIR" ]; then
