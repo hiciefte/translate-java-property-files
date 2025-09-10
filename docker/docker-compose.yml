@@ -7,46 +7,27 @@ services:
         HOST_UID: ${HOST_UID:-1000}
         HOST_GID: ${HOST_GID:-1000}
         GPG_KEY_FINGERPRINT_FOR_TRUST: ${GPG_KEY_FINGERPRINT_FOR_TRUST:-}
-    container_name: translation_service_runner
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - TX_TOKEN=${TX_TOKEN}
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - HEALTHCHECK_URL=${HEALTHCHECK_URL}
-      - FORK_REPO_NAME=${FORK_REPO_NAME:-hiciefte/bisq2} # For entrypoint to set SSH remote
-      - HOST_UID=${HOST_UID:-1000}   # For runtime, ensures entrypoint uses correct UID
-      - HOST_GID=${HOST_GID:-1000}   # For runtime, ensures entrypoint uses correct GID
-      # Git configuration variables, to be set in .env file
-      - GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME:-Translation Bot}
-      - GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL:-}
-      - GIT_SIGNING_KEY=${GIT_SIGNING_KEY:-}
-      # HOST_UID and HOST_GID for user creation are passed via build args from .env
-      # Forcing UID/GID for debugging .env file issues
-      # - HOST_UID=502
-      # - HOST_GID=20
-      # - PUID=502
-      # - PGID=20
+    container_name: ${CONTAINER_NAME:-translation_service_runner}
+    env_file:
+      - .env
     volumes:
-      # Mount the Docker-specific config (now located in docker/) to the default config path in the app
+      # Mount the Docker-specific config to the default config path in the app
       - ./config.docker.yaml:/app/config.yaml:ro
       
       # Mount the glossary file (located in project root)
       - ../glossary.json:/app/glossary.json:ro
       
-      # Mount SSH keys and Git config from host user's home (read-only for appuser)
+      # Mount SSH keys from host user's home (read-only for appuser)
       - ~/.ssh:/home/appuser/.ssh:ro
-      # Mount host GPG data to a temporary root-accessible location for entrypoint to copy
-      # - ~/.gnupg:/root/.gnupg_host_mount:ro 
-      # - ~/.gitconfig:/home/appuser/.gitconfig:ro
       
       # Mount logs directory (in project root) for persistence
       - ../logs:/app/logs
 
       # Mount a named volume for the target repository to persist it across restarts
-      - target-repo-data:/target_repo
+      - ${VOLUME_NAME:-target-repo-data}:/target_repo
 
 volumes:
-  target-repo-data:
+  ${VOLUME_NAME:-target-repo-data}:
 
 # Note: You will need a .env file in the project root directory
 # (translate-java-property-files) with API keys and HOST_UID/GID.

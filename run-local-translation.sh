@@ -1,154 +1,82 @@
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 
-PROJECT_ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$PROJECT_ROOT_DIR"
+# This script runs the translation process locally using a virtual environment.
+# It's intended for development and testing purposes.
+#
+# Usage:
+#   ./run-local-translation.sh [path/to/config.yaml]
+#
+# If no config file path is provided, it defaults to 'config.yaml'.
 
-CONFIG_FILE="$PROJECT_ROOT_DIR/config-mobile.yaml"
-PYTHON_BIN="python3"
-VENV_DIR="$PROJECT_ROOT_DIR/venv"
+# --- Configuration & Path Setup ---
+# The script determines the project root and changes into it.
+PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+cd "$PROJECT_ROOT"
+
+VENV_DIR="$PROJECT_ROOT/venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
 PIP_SYNC_BIN="$VENV_DIR/bin/pip-sync"
 
-usage() {
-  echo "Usage: $0 [--check] [--no-sync]" 1>&2
-  echo "  --check    Run preflight checks only (no install/run)" 1>&2
-  echo "  --no-sync  Skip dependency sync (use existing venv packages)" 1>&2
-}
+# Use the first argument as the config file path, or default to 'config.yaml'.
+CONFIG_FILE="${1:-config.yaml}"
 
-ONLY_CHECK=false
-SKIP_SYNC=false
-for arg in "$@"; do
-  case "$arg" in
-    --check) ONLY_CHECK=true ;;
-    --no-sync) SKIP_SYNC=true ;;
-    -h|--help) usage; exit 0 ;;
-    *) echo "Unknown option: $arg" 1>&2; usage; exit 2 ;;
-  esac
-done
+echo "[info] Using configuration file: $CONFIG_FILE"
 
-echo "[info] Project root: $PROJECT_ROOT_DIR"
+# Make the config file path available to the Python script.
+export TRANSLATOR_CONFIG_FILE="$CONFIG_FILE"
 
-# Python version check (>= 3.11)
-if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-  echo "[error] python3 not found in PATH" 1>&2
-  exit 1
-fi
-PY_VER_STR=$($PYTHON_BIN -V 2>&1 | awk '{print $2}')
-PY_MAJOR=$(echo "$PY_VER_STR" | cut -d. -f1)
-PY_MINOR=$(echo "$PY_VER_STR" | cut -d. -f2)
-if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 11 ]; }; then
-  echo "[error] Python >= 3.11 is required (found $PY_VER_STR)" 1>&2
-  exit 1
-fi
-
-# Config checks
-if [ ! -f "$CONFIG_FILE" ]; then
-  echo "[error] Missing $CONFIG_FILE" 1>&2
-  exit 1
-fi
-
-# Extract key paths from config.yaml (strip inline comments and surrounding quotes)
+# Helper function to parse simple key: value pairs from the YAML config file.
 get_yaml_value() {
-  local key="$1"
-  local line val
-  if command -v yq >/dev/null 2>&1; then
-    yq -r ".${key} // empty" "$CONFIG_FILE"
-    return
-  fi
-  line=$(grep -E "^[[:space:]]*${key}[[:space:]]*:" "$CONFIG_FILE" | head -1 || true)
-  [ -z "$line" ] && return 1
-  # Remove inline comments
-  line="${line%%#*}"
-  # Extract value after first colon
-  val="${line#*:}"
-  # Trim whitespace
-  val="$(printf '%s' "$val" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
-  # Remove surrounding single/double quotes if present using Bash parameter ops
-  if [[ "$val" == \"*\" ]]; then
-    val="${val:1:${#val}-2}"
-  elif [[ "$val" == \'*\' ]]; then
-    val="${val:1:${#val}-2}"
-  fi
-  printf '%s' "$val"
+    local key="$1"
+    # Use POSIX compliant character classes for grep/sed for better portability.
+    grep -E "^[[:space:]]*${key}:[[:space:]]*" "$CONFIG_FILE" | \
+    sed -E "s/^[[:space:]]*${key}:[[:space:]]*'([^']*)'?([[:space:]]*#.*)?$/\1/" | \
+    sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' # Trim leading/trailing whitespace
 }
+
+# Read the optional glob filter from the config and export it for the Python script
+TRANSLATION_FILTER_GLOB="$(get_yaml_value "translation_file_filter_glob" || echo "")"
+if [ -n "$TRANSLATION_FILTER_GLOB" ] && [ "$TRANSLATION_FILTER_GLOB" != "null" ]; then
+  export TRANSLATION_FILTER_GLOB
+fi
+
+# --- Pre-flight Checks ---
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "[error] Configuration file not found: $CONFIG_FILE"
+    exit 1
+fi
+
+if [ ! -d "$VENV_DIR" ]; then
+    echo "[error] Python virtual environment not found at '$VENV_DIR'."
+    echo "[info] Please run the setup script first: ./setup.sh"
+    exit 1
+fi
+
+# Ensure Python dependencies are in sync
+echo "[info] Verifying Python dependencies..."
+if ! "$PIP_SYNC_BIN" "requirements-dev.txt" --quiet; then
+    echo "[error] Dependencies are out of sync. Please run './setup.sh' again."
+    exit 1
+fi
 
 TARGET_ROOT="$(get_yaml_value "target_project_root" || echo "")"
 INPUT_FOLDER="$(get_yaml_value "input_folder" || echo "")"
 
 if [ -z "$TARGET_ROOT" ] || [ -z "$INPUT_FOLDER" ]; then
-  echo "[error] target_project_root or input_folder not set in $CONFIG_FILE" 1>&2
-  exit 1
-fi
-
-if [ ! -d "$TARGET_ROOT" ]; then
-  echo "[error] target_project_root not found: $TARGET_ROOT" 1>&2
-  exit 1
-fi
-
-if [ ! -d "$INPUT_FOLDER" ]; then
-  echo "[error] input_folder not found: $INPUT_FOLDER" 1>&2
-  exit 1
-fi
-
-# OPENAI key check (.env in root has priority, fallback to docker/.env, else env)
-ENV_FILE=""
-if [ -f "$PROJECT_ROOT_DIR/.env" ]; then
-  ENV_FILE="$PROJECT_ROOT_DIR/.env"
-elif [ -f "$PROJECT_ROOT_DIR/docker/.env" ]; then
-  ENV_FILE="$PROJECT_ROOT_DIR/docker/.env"
-fi
-
-if [ -n "$ENV_FILE" ]; then
-  if ! grep -q '^OPENAI_API_KEY=' "$ENV_FILE"; then
-    echo "[warn] OPENAI_API_KEY not found in $ENV_FILE; relying on environment" 1>&2
-  fi
-else
-  if [ -z "${OPENAI_API_KEY:-}" ]; then
-    echo "[error] OPENAI_API_KEY not set and no .env or docker/.env present" 1>&2
+    echo "[error] 'target_project_root' or 'input_folder' not defined in $CONFIG_FILE"
     exit 1
-  fi
 fi
 
-echo "[ok] Preflight checks passed"
-
-if $ONLY_CHECK; then
-  exit 0
+if [ ! -d "$TARGET_ROOT" ] || [ ! -d "$INPUT_FOLDER" ]; then
+    echo "[error] Target project root or input folder not found. Check paths in $CONFIG_FILE"
+    echo "  - target_project_root: $TARGET_ROOT"
+    echo "  - input_folder: $INPUT_FOLDER"
+    exit 1
 fi
 
-# Setup venv and sync dependencies
-if [ ! -d "$VENV_DIR" ]; then
-  echo "[info] Creating venv at $VENV_DIR"
-  $PYTHON_BIN -m venv "$VENV_DIR"
-fi
-
-echo "[info] Upgrading pip"
-"$VENV_PYTHON" -m pip install -q --upgrade pip
-
-echo "[info] Installing pip-tools"
-"$VENV_PYTHON" -m pip install -q pip-tools
-
-if ! $SKIP_SYNC; then
-  if [ -f "$PROJECT_ROOT_DIR/requirements-dev.txt" ]; then
-    echo "[info] Syncing development requirements"
-    "$PIP_SYNC_BIN" "$PROJECT_ROOT_DIR/requirements-dev.txt"
-  else
-    echo "[info] requirements-dev.txt not found; syncing requirements.txt"
-    "$PIP_SYNC_BIN" "$PROJECT_ROOT_DIR/requirements.txt"
-  fi
-else
-  echo "[info] Skipping dependency sync as requested"
-fi
-
-echo "[info] Running translator"
-export TRANSLATOR_CONFIG_FILE="$CONFIG_FILE"
-
-# If a filter glob is defined in the config, export it for the Python script
-TRANSLATION_FILTER_GLOB="$(get_yaml_value "translation_file_filter_glob" || echo "")"
-if [ -n "$TRANSLATION_FILTER_GLOB" ]; then
-  export TRANSLATION_FILTER_GLOB
-fi
-
+# --- Script Execution ---
+echo "[info] Starting translation process..."
 exec "$VENV_PYTHON" -m src.translate_localization_files
 
 
