@@ -208,8 +208,8 @@ else
     # Extract the 'source_file' for each resource from the Transifex config.
     # This gives us the configured source files with their full paths relative to the repo root.
     # Example: i18n/src/main/resources/BtcAddresses.properties
-    # We use grep and sed to parse the INI-style .tx/config file, as yq is for YAML.
-    mapfile -t configured_sources < <(grep -E '^\s*source_file\s*=' "$TX_CONFIG_FILE" | sed -E 's/^\s*source_file\s*=\s*//')
+    # Use awk for more reliable INI parsing. It correctly handles spaces around the '='.
+    mapfile -t configured_sources < <(awk -F'=' '/^[[:space:]]*source_file[[:space:]]*=/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2}' "$TX_CONFIG_FILE")
 
     # Get the actual English source files present on disk.
     # We use find and then remove the input folder prefix to get paths relative to the input folder,
@@ -301,7 +301,7 @@ if command_exists tx; then
     log "Using tx command: $TX_PULL_CMD"
     log "Listing permissions for current directory ($(pwd)) before tx pull:"
     ls -la .
-    log "Listing permissions for ${ABSOLUTE_INPUT_FOLDER} before tx pull:"
+    log "Listing permissions for input folder '${ABSOLUTE_INPUT_FOLDER}' before tx pull:"
     ls -la "${ABSOLUTE_INPUT_FOLDER}" || true
     $TX_PULL_CMD || {
         log "Error during tx pull. Exiting."

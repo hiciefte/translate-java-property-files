@@ -45,12 +45,93 @@ from src.translation_validator import (
     synchronize_keys
 )
 
-# A hardcoded chunk size for the number of keys to be sent in a single
+# --- .env Loading ---
+# Load .env file first to ensure environment variables like TRANSLATOR_CONFIG_FILE are available.
+# SCRIPT_DIR is .../project_root/src (absolute path)
+SCRIPT_REAL_PATH = os.path.realpath(__file__)
+SCRIPT_DIR = os.path.dirname(SCRIPT_REAL_PATH)
+PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir))
+
+dotenv_path_project_root = os.path.join(PROJECT_ROOT_DIR, '.env')
+dotenv_path_docker_dir = os.path.join(PROJECT_ROOT_DIR, 'docker', '.env')
+
+# We don't log here yet, as logging is configured after the config file is loaded.
+if os.path.exists(dotenv_path_project_root):
+    load_dotenv(dotenv_path_project_root)
+elif os.path.exists(dotenv_path_docker_dir):
+    load_dotenv(dotenv_path_docker_dir)
+# --- End .env Loading ---
+
+
+# Determine the correct path to config.yaml relative to the script's location
+# Allow overriding the config file path via an environment variable for flexibility.
+# If TRANSLATOR_CONFIG_FILE is set (potentially from .env), use it; otherwise, default to 'config.yaml'.
+_default_config_path = os.path.join(PROJECT_ROOT_DIR, 'config.yaml')
+CONFIG_FILE = os.environ.get('TRANSLATOR_CONFIG_FILE', _default_config_path)
+
+# Default logging settings if config is unavailable or incomplete
+DEFAULT_LOG_FILE_PATH = "logs/translation_log_default.log"
+DEFAULT_LOG_LEVEL = logging.INFO
+DEFAULT_LOG_TO_CONSOLE = True
+
+config = {}
+try:
+    with open(CONFIG_FILE, 'r', encoding='utf-8') as config_file_stream:
+        loaded_config = yaml.safe_load(config_file_stream)
+        if loaded_config:
+            config = loaded_config
+
+    logging_config = config.get('logging', {})
+    LOG_FILE_PATH = logging_config.get('log_file_path', DEFAULT_LOG_FILE_PATH)
+    LOG_LEVEL_STR = logging_config.get('log_level', 'INFO').upper()
+    LOG_TO_CONSOLE = logging_config.get('log_to_console', DEFAULT_LOG_TO_CONSOLE)
+    LOG_LEVEL = getattr(logging, LOG_LEVEL_STR, DEFAULT_LOG_LEVEL)
+
+except FileNotFoundError:
+    print(f"Warning: Configuration file '{CONFIG_FILE}' not found. Using default logging settings.")
+    LOG_FILE_PATH = DEFAULT_LOG_FILE_PATH
+    LOG_LEVEL = DEFAULT_LOG_LEVEL
+    LOG_TO_CONSOLE = DEFAULT_LOG_TO_CONSOLE
+except Exception as e:
+    print(f"Warning: Error loading or parsing configuration file '{CONFIG_FILE}': {e}. Using default logging settings.")
+    LOG_FILE_PATH = DEFAULT_LOG_FILE_PATH
+    LOG_LEVEL = DEFAULT_LOG_LEVEL
+    LOG_TO_CONSOLE = DEFAULT_LOG_TO_CONSOLE
+
+log_dir_to_create = os.path.dirname(LOG_FILE_PATH)
+if log_dir_to_create:
+    os.makedirs(log_dir_to_create, exist_ok=True)
+
+handlers = [logging.FileHandler(LOG_FILE_PATH)]
+if LOG_TO_CONSOLE:
+    handlers.append(logging.StreamHandler())
+
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=handlers
+)
+
+# Now that logging is configured, we can log the .env status
+if os.path.exists(dotenv_path_project_root):
+    logging.info("Loaded environment variables from: %s", dotenv_path_project_root)
+elif os.path.exists(dotenv_path_docker_dir):
+    logging.info("Loaded environment variables from: %s", dotenv_path_docker_dir)
+else:
+    logging.info(
+        "No .env file found in project root ('%s') or in docker/ ('%s'). Relying on system environment variables if any.",
+        dotenv_path_project_root,
+        dotenv_path_docker_dir
+    )
+
+# A chunk size for the number of keys to be sent in a single
 # holistic review API call. This is a safeguard against "request too large"
-# token limit errors from the OpenAI API. It can be overridden.
-HOLISTIC_REVIEW_CHUNK_SIZE = int(os.environ.get(
+# token limit errors from the OpenAI API.
+# It can be configured in config.yaml and overridden by an environment variable.
+_default_chunk_size = config.get('holistic_review_chunk_size', 75)
+HOLISTIC_REVIEW_CHUNK_size = int(os.environ.get(
     "HOLISTIC_REVIEW_CHUNK_SIZE",
-    75
+    _default_chunk_size
 ))
 
 # Define the expected JSON schema for the AI's response in the holistic review.
@@ -245,7 +326,7 @@ def lint_properties_file(file_path: str) -> List[str]:
 
                     # Allow: \t \n \f \r \\ \= \: \# \! space, \", and \uXXXX (4 hex digits)
                     # This regex is loosened to ignore \n and \" which appear in some source files.
-                    if re.search(r'\\(?!u[0-g-fA-F]{4}|[tnfr\\=:#\s!"])', value_to_check):
+                    if re.search(r'\\(?!u[0-9a-fA-F]{4}|[tnfr\\=:#\s!"])', value_to_check):
                         errors.append(
                             f"Linter Error: Invalid escape sequence in value for key '{key}' on line {i}."
                         )
@@ -1363,8 +1444,8 @@ async def process_translation_queue(
 
         # Create chunks of keys
         key_chunks = [
-            keys_to_translate[i:i + HOLISTIC_REVIEW_CHUNK_SIZE]
-            for i in range(0, len(keys_to_translate), HOLISTIC_REVIEW_CHUNK_SIZE)
+            keys_to_translate[i:i + HOLISTIC_REVIEW_CHUNK_size]
+            for i in range(0, len(keys_to_translate), HOLISTIC_REVIEW_CHUNK_size)
         ]
 
         # We need a dictionary of the draft translations to build targeted context for each chunk.
@@ -1498,10 +1579,13 @@ async def main():
     """
     Main function to orchestrate the translation process.
     """
+    # For debugging, allow preserving the queue folders by setting an env var.
+    PRESERVE_QUEUES_FOR_DEBUG = os.environ.get('PRESERVE_QUEUES_FOR_DEBUG', 'false').lower() == 'true'
+
     # Clean up queue folders from any previous runs to ensure a fresh start
-    if os.path.exists(TRANSLATION_QUEUE_FOLDER):
+    if not PRESERVE_QUEUES_FOR_DEBUG and os.path.exists(TRANSLATION_QUEUE_FOLDER):
         shutil.rmtree(TRANSLATION_QUEUE_FOLDER)
-    if os.path.exists(TRANSLATED_QUEUE_FOLDER):
+    if not PRESERVE_QUEUES_FOR_DEBUG and os.path.exists(TRANSLATED_QUEUE_FOLDER):
         shutil.rmtree(TRANSLATED_QUEUE_FOLDER)
 
     # Ensure queue folders exist before validation (works when main() is invoked directly)

@@ -19,6 +19,10 @@ review_model_name: "gpt-4o"
 # Tip: You can override this at runtime with the REVIEW_MODEL_NAME environment variable.
 # Example: export REVIEW_MODEL_NAME="gpt-4o"
 
+# (Optional) Number of keys to include in a single holistic review API call.
+# Lower this value if you encounter "request too large" errors from the API.
+holistic_review_chunk_size: 75
+
 # (Optional) If specified, only files matching this glob pattern will be sent for AI translation.
 # All other changed .properties files will still be included in the final PR.
 # This is useful for targeting specific sets of files, like 'mobile_*.properties'.
