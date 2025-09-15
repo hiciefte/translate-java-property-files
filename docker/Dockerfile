@@ -3,9 +3,6 @@ FROM ubuntu:24.04
 # Set SHELL to fail on pipeline errors
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-ARG HOST_UID
-ARG HOST_GID
-ARG GPG_KEY_FINGERPRINT_FOR_TRUST
 ARG SKIP_GPG_IMPORT=false
 
 ENV PYTHONUNBUFFERED=1
@@ -24,7 +21,6 @@ RUN apt-get update && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
         build-essential \
-        cron \
         gh \
         git \
         jq \
@@ -70,13 +66,10 @@ RUN set -eux; \
     echo "$GOSU_SHA256 /usr/sbin/gosu" | sha256sum -c -; \
     chmod +x /usr/sbin/gosu
 
-# Create non-root user
-RUN groupadd -o -g ${HOST_GID:-1000} appuser && \
-    useradd --no-log-init -o -u ${HOST_UID:-1000} -g appuser -s /bin/bash -m appuser && \
-    # Create directories for GPG and set permissions
-    mkdir -p /home/appuser/.gnupg /run/user/${HOST_UID:-1000}/gnupg && \
-    chown -R ${HOST_UID:-1000}:${HOST_GID:-1000} /home/appuser/.gnupg /run/user/${HOST_UID:-1000} && \
-    chmod -R 700 /home/appuser/.gnupg /run/user/${HOST_UID:-1000}
+# Create a non-root user 'appuser' with a fixed, non-conflicting UID/GID.
+# The home directory is created at /home/appuser.
+RUN groupadd --gid 9999 appuser && \
+    useradd --uid 9999 --gid 9999 --shell /bin/bash --create-home appuser
 
 # Make python3.11 the default python3
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
@@ -93,22 +86,29 @@ RUN TX_VERSION="v1.6.17" && \
     tx --version
 
 # === GPG Key Import for Bot ===
-COPY secrets/gpg_bot_key/bot_public_key.asc /tmp/bot_public_key.asc
 COPY secrets/gpg_bot_key/bot_secret_key.asc /tmp/bot_secret_key.asc
 
 RUN if [ "$SKIP_GPG_IMPORT" = "true" ]; then \
       echo "Skipping GPG key import for CI build."; \
     else \
-      echo "Importing GPG keys for appuser..." && \
-      su - appuser -c "gpg --batch --import /tmp/bot_public_key.asc" && \
+      echo "Importing GPG key for appuser..." && \
+      # Switch to appuser to import the key into its own keyring
       su - appuser -c "gpg --batch --import /tmp/bot_secret_key.asc" && \
-      echo "Setting trust for GPG key ${GPG_KEY_FINGERPRINT_FOR_TRUST}..." && \
-      su - appuser -c "echo \"${GPG_KEY_FINGERPRINT_FOR_TRUST:?GPG_KEY_FINGERPRINT_FOR_TRUST build argument is not set or empty}:6:\" | gpg --batch --import-ownertrust" && \
-      su - appuser -c "git config --global commit.gpgsign true" && \
-      echo "GPG key import and git config complete for appuser."; \
+      \
+      echo "Determining key fingerprint and setting trust..." && \
+      # Programmatically get the fingerprint of the imported key
+      FINGERPRINT=$(su - appuser -c "gpg --list-keys --with-colons | grep '^fpr' | cut -d: -f10 | head -n1") && \
+      if [ -n "$FINGERPRINT" ]; then \
+        # Set ultimate trust on the key
+        su - appuser -c "echo \"$FINGERPRINT:6:\" | gpg --batch --import-ownertrust"; \
+        echo "GPG key import and trust set for fingerprint: $FINGERPRINT"; \
+      else \
+        echo "Error: Could not determine GPG key fingerprint after import." >&2; \
+        exit 1; \
+      fi; \
     fi && \
-    # Clean up temporary files in all cases
-    rm -f /tmp/bot_public_key.asc /tmp/bot_secret_key.asc
+    # Clean up temporary file in all cases
+    rm -f /tmp/bot_secret_key.asc
 
 WORKDIR /app
 
@@ -117,21 +117,11 @@ COPY requirements.txt .
 RUN python3.11 -m pip install --no-cache-dir -r requirements.txt
 COPY . .
 
-# Copy cron file (from docker/ in project root, copied relative to /app in container)
-# This assumes the cron file is now in the docker directory relative to build context
-COPY docker/translator-cron /etc/cron.d/translator-cron
-
-# Copy the GPG test script
-# COPY docker/gpg_test_script.sh /app/docker/gpg_test_script.sh
-
-# Set up cron and file permissions
-RUN chmod 0644 /etc/cron.d/translator-cron && \
-    chmod +x /app/update-translations.sh /app/docker/docker-entrypoint.sh && \
-    mkdir -p /app/logs /target_repo && \
-    chown -R appuser:appuser /app/logs /target_repo
+# Ensure the entrypoint and orchestration script are executable
+RUN chmod +x /app/docker/docker-entrypoint.sh /app/update-translations.sh
 
 # Set entrypoint
 ENTRYPOINT ["/app/docker/docker-entrypoint.sh"]
 
-# Default command to keep container running
-CMD ["sleep", "infinity"] 
+# Default command is now the main python script (can be overridden in docker-compose.yml)
+CMD ["python3", "-m", "src.translate_localization_files"] 

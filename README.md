@@ -1,607 +1,85 @@
 # Translate Java Property Files
 
-This project automates the translation of Java `.properties` files into multiple languages using OpenAI's GPT-based
-APIs. It integrates with Git to detect changes in a target project, pulls translations from Transifex, manages a
-translation workflow, and then pushes new translations back to Git (creating a pull request) and Transifex. The entire
-process is designed to be run automatically via a daily scheduled job within a Docker container.
+This project automates the translation of Java `.properties` files into multiple languages using OpenAI's GPT-based APIs. It integrates with Git to detect changes, pulls the latest translations from Transifex, performs AI-based translation and review for new strings, and creates a pull request with the results.
 
-## 🚀 Quick Start: Cloud Deployment (Recommended)
-
-This guide provides the fastest way to deploy the translation service on a new cloud server (e.g., Ubuntu).
-
-1. **Provision Cloud VM & Initial Setup**:
-    * Create a cloud VM (Ubuntu recommended, min. 2 vCPU, 4GB RAM, 20GB disk).
-    * Connect to your VM as `root` or a user with `sudo` privileges.
-    * Install essential tools:
-      ```bash
-      sudo apt update
-      sudo apt install -y docker.io docker-compose git
-      sudo systemctl enable --now docker
-      ```
-
-2. **Create a Dedicated Non-Root User**:
-    * This user (`translationbot`) will own the project files and run the Docker service.
-      ```bash
-      sudo adduser translationbot
-      sudo usermod -aG docker translationbot 
-      ```
-    * Switch to the new user:
-      ```bash
-      su - translationbot 
-      ```
-      *(You'll perform subsequent steps as `translationbot` unless specified otherwise).*
-
-3. **Clone This Repository**:
-    * As `translationbot`, clone the project:
-      ```bash
-      git clone git@github.com:your-github-username/translate-java-property-files.git /opt/translate-java-property-files 
-      cd /opt/translate-java-property-files
-      ```
-      *(If cloning fails, ensure `translationbot` has SSH access to GitHub. See 'SSH Key Setup for GitHub Access'
-      below).*
-
-4. **Configure Environment (`.env` file)**:
-    * Copy the example and edit it. Note: The `.env` file should be located in the `docker/` subdirectory.
-      ```bash
-      cp .env.example docker/.env
-      cp docker/.env.example docker/.env
-      nano docker/.env
-      ```
-    * Fill in all required API keys, repository names, GPG key ID, and user/group IDs for `translationbot` (
-      `HOST_UID=$(id -u)`, `HOST_GID=$(id -g)`). Refer to comments in `docker/.env.example` and the 'Environment Variables'
-      section under 'Detailed Setup'.
-
-5. **Set Up Bot's GPG Key**:
-    * The bot needs a GPG key to sign commits. Generate this key pair on your **local machine** (not the server).
-    * Follow the steps in 'Bot GPG Key Setup' under 'Detailed Setup'.
-    * Securely copy the exported `bot_public_key.asc` and `bot_secret_key.asc` from your local machine to the server at
-      `/opt/translate-java-property-files/secrets/gpg_bot_key/`. For example, from your local machine:
-      ```bash
-      scp -r path/to/your/local/secrets/gpg_bot_key translationbot@your-server-ip:/opt/translate-java-property-files/secrets/
-      ```
-
-6. **Set Up SSH Key for Bot's GitHub Access**:
-    * The service needs an SSH key to push to your fork of the target repository.
-    * Follow instructions in 'SSH Key for GitHub Access' under 'Detailed Setup' to generate a dedicated SSH key (e.g.,
-      `~/.ssh/translation_bot_github_id_ed25519`) for the `translationbot` user on the server.
-    * Add this key as a Deploy Key with write access to your **forked** repository on GitHub.
-    * Ensure `~/.ssh/config` on the server is configured to use this key for `github.com`.
-    * Test access: `ssh -T git@github.com` (should show successful authentication).
-
-7. **Build and Run the Docker Service**:
-    * As `translationbot` in `/opt/translate-java-property-files`:
-      ```bash
-      docker compose -f docker/docker-compose.yml build --no-cache
-      docker compose -f docker/docker-compose.yml up -d
-      ```
-
-8. **Check Logs**:
-   ```bash
-   tail -f logs/deployment_log.log 
-   # Or view all service logs:
-   docker compose -f docker/docker-compose.yml logs -f
-   ```
-
-This completes the quick setup. The service will now run according to its cron schedule.
-
----
+The entire process is designed to be run as an automated, scheduled job on a server, but can also be easily run in a local development environment.
 
 ## Features
 
-* **Automated Translation**: Uses OpenAI (e.g., GPT-4) to translate text.
-* **Git Integration**: Detects changed files in a target Git repository and commits new translations (GPG signed and *
-  *Verified** on GitHub).
-* **Transifex Integration**: Pulls existing translations from Transifex and pushes updated translations back.
-* **GitHub Pull Requests**: Automatically creates pull requests for new translations.
-* **Glossary Support**: Ensures consistent terminology using a `glossary.json` file.
-* **Self-Contained GPG Signing**: Uses a dedicated GPG key built into the Docker image for signing commits.
-* **Dockerized Environment**: Runs as a Docker container for consistent and portable deployment.
-* **Scheduled Execution**: Utilizes an in-container cron job for daily automated runs.
-* **Comprehensive Logging**: Detailed logs for cron execution, script operations, and translation tasks.
+*   **Automated Translation**: Uses OpenAI (e.g., GPT-4o) to translate new or changed strings.
+*   **Two-Step Quality Process**: A fast initial translation is followed by a robust, chunked AI review step to ensure consistency and quality while avoiding API rate limits.
+*   **Git Integration**: Detects changed files, commits new translations with GPG signatures, and creates pull requests automatically.
+*   **Transifex Integration**: Pulls the latest manual translations from Transifex before running the AI pipeline.
+*   **Automated Error Reporting**: Validation and linter errors for skipped files are automatically added to the pull request description for high visibility.
+*   **Glossary & Style Rules**: Enforces consistent terminology and tone using a `config.yaml` file.
+*   **Dockerized Environment**: Runs as a Docker container for consistent and portable deployment.
+*   **Secure Local Development**: Supports passphrase-protected SSH keys on macOS and Linux via SSH Agent Forwarding.
 
-## Project Structure
+---
 
-```text
-translate-java-property-files/
-├── docker/                       # Docker-specific files
-│   ├── Dockerfile                # Defines the Docker image
-│   ├── docker-compose.yml        # Docker Compose configuration
-│   ├── config.docker.yaml        # Configuration for Docker runs
-│   ├── translator-cron           # Crontab file for the scheduler
-│   └── docker-entrypoint.sh      # Entrypoint script
-├── src/                          # Python source code
-│   └── translate_localization_files.py # Main translation script
-├── secrets/                      # For GPG key (add to .gitignore!)
-│   └── gpg_bot_key/
-│       ├── bot_public_key.asc
-│       └── bot_secret_key.asc
-├── .env.example                  # Example environment file -> NOW MOVED TO docker/.env.example
-├── docker/.env.example           # Example environment file
-├── glossary.json                 # Glossary for translations
-├── requirements.in               # Production dependency definitions
-├── requirements.txt              # Production dependency lockfile
-├── requirements-dev.in           # Development dependency definitions
-├── requirements-dev.txt          # Development dependency lockfile
-├── update-translations.sh        # Main orchestration script
-├── README.md                     # This file
-└── .gitignore
+## 🚀 Getting Started
+
+There are two primary ways to run the translation tool: locally for development/testing or on a server for automated production runs.
+
+### 1. Local Development (Docker Recommended)
+
+This is the easiest and most consistent way to test the translation pipeline on your local machine, as it uses Docker to replicate the server environment.
+
+**Prerequisites:**
+*   Docker and Docker Compose
+
+**Run the Translation:**
+Navigate to the `docker` directory and use `docker compose run`.
+```bash
+cd docker
+docker compose build # Run this once or whenever you change the python scripts
+docker compose run --rm translator
 ```
 
-## Key Files
+**NOTE FOR MACOS USERS:** Due to a known issue with how Docker for Mac handles volume mounts for SSH keys, the final step of the script (`git push` and creating a pull request) will fail with a "Permission denied" error. However, the entire translation and validation process will run successfully. You can inspect the results and logs locally. The automated PR creation is intended to be run on the server. See the **[Local Development Guide](./docs/how-to-run-locally.md)** for more details.
 
-Key files are described in more detail in relevant setup sections.
+If you need to test the full Git workflow locally on a Mac, please use the "Legacy Python Script" method below, which uses your local Git and SSH setup directly.
 
-## Prerequisites
+### 2. Server Deployment
 
-Before you begin, ensure you have:
+For setting up the automated translation service on a production server (e.g., a cloud VM), please follow the comprehensive, step-by-step guide:
 
-* **Python 3.9 or newer**.
-* Access to a server or local machine with `sudo` or `root` privileges for initial setup.
-* Docker and Docker Compose installed.
-* Git installed.
-* A GitHub account.
-* An OpenAI API Key.
-* A Transifex account and API Token.
-* GPG installed on your local machine (for generating the bot's GPG key).
-* `pip-tools` for managing dependencies locally (install with `pip install pip-tools`).
+➡️ **[New Project Deployment Guide](./docs/new-project-deployment.md)**
 
-## ⚙️ Detailed Setup and Configuration
+This guide covers everything from initial server setup and security to configuring the cron job that triggers the translation runs.
 
-This section provides detailed steps for each configuration aspect, referenced by the Quick Start guide.
+### 3. Local Development (Legacy Python Script)
 
-### 1. Environment Variables (`.env` file)
+For situations where Docker is not available, you can run the Python script directly using a local script. This method has more dependencies (e.g., `tx` CLI, Python environment) and is not the recommended approach.
 
-The service is configured primarily through environment variables defined in a `.env` file. This file should be located at `docker/.env` relative to the project root (e.g., `/opt/translate-java-property-files/docker/.env`).
+**Prerequisites:**
+*   Python 3.11+
+*   Transifex CLI (`tx`) installed and on your `PATH`.
+*   A `config.yaml` file configured for your local paths.
 
-1. **Create `docker/.env` from Example**:
-   The example file `docker/.env.example` is located in the `docker/` directory.
-   As the `translationbot` user on your server, navigate to the project root and run:
-   ```bash
-   cp .env.example docker/.env
-   ```
-2. **Edit `docker/.env`**:
-   ```bash
-   nano docker/.env
-   ```
-   Update all placeholder values with your actual secrets and configuration. Refer to `docker/.env.example` for details on each variable.
-    * `OPENAI_API_KEY`, `TX_TOKEN`, `GITHUB_TOKEN`.
-    * `FORK_REPO_URL`: SSH URL of your fork of the target repository (e.g.,
-      `git@github.com:translationbot/target-repo.git`). The bot needs write access here.
-    * `UPSTREAM_REPO_URL`: HTTPS URL of the main upstream repository (e.g.,
-      `https://github.com/original-owner/target-repo.git`). It's
-      used by the entrypoint script (as root) for read-only operations and by the `gh` CLI for creating pull requests (
-      which handles its own authentication via `GITHUB_TOKEN`).
-    * `FORK_REPO_NAME`: Short form, e.g., `translationbot/target-repo`.
-    * `UPSTREAM_REPO_NAME`: Short form, e.g., `original-owner/target-repo`.
-    * `TARGET_BRANCH_FOR_PR`: Usually `main` or `develop`.
-    * `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`: For commit attribution. Ensure the email is verified on GitHub and linked
-      to the Bot GPG Key for "Verified" commits.
-    * `GIT_SIGNING_KEY`: The GPG Key ID of the Bot GPG Key.
-    * `HOST_UID`, `HOST_GID`: Run `id -u` and `id -g` as `translationbot` on the server and use these numeric IDs. This
-      ensures correct file permissions for Docker volume mounts.
-
-   > **Note on Repository URLs**:
-   > * Always use the SSH URL format (`git@github.com:...`) for the `FORK_REPO_URL` to enable push access via the bot's
-       SSH key.
-   > * The `UPSTREAM_REPO_URL` should be an HTTPS URL (e.g., `https://github.com/original-owner/target-repo.git`). It's
-       used by the entrypoint script (as root) for read-only operations and by the `gh` CLI for creating pull requests (
-       which handles its own authentication via `GITHUB_TOKEN`).
-
-### 2. Dependency Management (pip-tools)
-
-This project uses `pip-tools` to manage Python dependencies for reproducible builds.
-
-*   **Source of Truth (`.in` files)**:
-    *   `requirements.in`: Defines the high-level **production** dependencies needed for the Docker container.
-    *   `requirements-dev.in`: Defines dependencies for **local development and testing**, including `pytest` and
-        `pip-tools` itself. It also includes all production dependencies via `-r requirements.in`.
-
-*   **Lockfiles (`.txt` files)**:
-    *   `requirements.txt` and `requirements-dev.txt` are **auto-generated lockfiles**. They contain the exact, pinned
-        versions of all direct and transitive dependencies.
-    *   **Do not edit the `.txt` files directly.**
-
-**Workflow for Updating Dependencies:**
-
-1.  **Modify the `.in` file(s)**: Add, remove, or change a version specifier in `requirements.in` or
-    `requirements-dev.in`.
-
-2.  **Compile the Lockfile(s)**:
-    *   To update production dependencies:
-        ```bash
-        pip-compile requirements.in -o requirements.txt --upgrade --no-header --no-annotate
-        ```
-    *   To update development dependencies:
-        ```bash
-        pip-compile requirements-dev.in -o requirements-dev.txt --upgrade --no-header --no-annotate
-        ```
-    *   The `--upgrade` flag ensures all packages are updated to their latest compatible versions.
-    *   The `--no-header --no-annotate` flags keep the generated lockfiles clean and portable.
-
-3.  **Commit the changes**: Commit both the modified `.in` file and the newly generated `.txt` lockfile to Git.
-
-### 3. SSH Key for GitHub Access (Bot & Server)
-
-The `translationbot` user on your server needs an SSH key to:
-
-1. Clone this `translate-java-property-files` repository (if private, or for consistency).
-2. Allow the Docker container (via volume mount of `~/.ssh`) to push translated changes to your **fork** of the target
-   repository.
-
-**Setup Steps (as `translationbot` on the server):**
-
-1. **Generate a New SSH Key Pair**:
-   (If you don't already have one you want to use for the bot)
-   ```bash
-   ssh-keygen -t ed25519 -C "translation_bot_$(date +%Y-%m-%d)" -f ~/.ssh/translation_bot_github_id_ed25519
-   # Press Enter for no passphrase, and Enter again to confirm.
-   ```
-   This creates `~/.ssh/translation_bot_github_id_ed25519` (private key) and
-   `~/.ssh/translation_bot_github_id_ed25519.pub` (public key).
-
-2. **Add Public Key as Deploy Key to Your GitHub Fork**:
-    * Copy the content of the public key: `cat ~/.ssh/translation_bot_github_id_ed25519.pub`
-    * Go to your **forked** target repository on GitHub (e.g., `https://github.com/translationbot/target-repo`).
-    * Navigate to `Settings` > `Deploy keys` > `Add deploy key`.
-    * Give it a `Title` (e.g., "Translation Bot Server Access").
-    * Paste the public key.
-    * **Crucially, check `Allow write access`**.
-    * Click `Add key`.
-
-3. **Configure SSH to Use This Key for GitHub**:
-   Edit or create `~/.ssh/config` (as `translationbot`):
-   ```ini
-   Host github.com
-     HostName github.com
-     User git
-     IdentityFile ~/.ssh/translation_bot_github_id_ed25519
-     IdentitiesOnly yes
-   ```
-
-4. **Set Permissions**:
-   ```bash
-   chmod 700 ~/.ssh
-   chmod 600 ~/.ssh/translation_bot_github_id_ed25519
-   chmod 644 ~/.ssh/translation_bot_github_id_ed25519.pub
-   chmod 600 ~/.ssh/config  # If you created/modified it
-   ```
-
-5. **Test Connection**:
-   ```bash
-   ssh -T git@github.com
-   ```
-   You should see a success message including your GitHub username associated with the key, or the deploy key's
-   username.
-
-### 4. Bot GPG Key Setup (for Verified Commits)
-
-The bot signs Git commits with a GPG key. This setup is done once on your **local machine**, and the keys are then
-copied to the server.
-
-1. **Generate GPG Key Pair (Local Machine)**:
-   ```bash
-   gpg --batch --gen-key <<EOF
-   Key-Type: EDDSA
-   Key-Curve: Ed25519
-   Subkey-Type: ECDH
-   Subkey-Curve: Curve25519
-   Name-Real: Translation Bot
-   Name-Email: your-verified-github-email@example.com # Use an email verified on GitHub
-   Expire-Date: 0
-   %no-protection
-   %commit
-   EOF
-   ```
-    * Ensure `Name-Email` matches the `GIT_AUTHOR_EMAIL` in `.env` and is verified on your GitHub account.
-
-2. **Identify Key ID (Local Machine)**:
-   ```bash
-   gpg --list-secret-keys "your-verified-github-email@example.com"
-   ```
-    * Look for the `sec` line. The **Key ID** is typically the last 16 characters of the fingerprint (e.g.,
-      `BCE5D7390C470F3C`). Use this for `GIT_SIGNING_KEY` in `.env`.
-
-3. **Export Keys (Local Machine)**:
-   ```bash
-   mkdir -p secrets/gpg_bot_key
-   gpg --export -a "YOUR_KEY_ID" > secrets/gpg_bot_key/bot_public_key.asc
-   gpg --export-secret-key -a "YOUR_KEY_ID" > secrets/gpg_bot_key/bot_secret_key.asc
-   ```
-
-4. **Add Public GPG Key to GitHub (Local Machine/Browser)**:
-    * Copy the content of `secrets/gpg_bot_key/bot_public_key.asc`.
-    * Go to your GitHub account settings > SSH and GPG keys > New GPG key. Paste and add.
-
-5. **Copy Keys to Server**:
-   As instructed in the Quick Start, secure copy the `secrets/gpg_bot_key` directory to
-   `/opt/translate-java-property-files/secrets/` on the server.
-   The `Dockerfile` copies these into the image. Ensure `secrets/` is in your `.gitignore`.
-
-### 5. Application Configuration (`config.yaml` vs `docker/config.docker.yaml`)
-
-* **`config.yaml` (Root)**: For manual/local runs outside Docker. Uses paths relevant to your local system.
-* **`docker/config.docker.yaml`**: Specifically for Docker.
-    * Mounted into the container as `/app/config.yaml`.
-    * `target_project_root`: Set to `/target_repo` (where `docker-entrypoint.sh` clones the target project).
-    * `input_folder`: Path within `/target_repo` (e.g., `/target_repo/i18n/src/main/resources`).
-    * `glossary_file_path`: Points to `/app/glossary.json`.
-    * Queue folders (for processing) are created in `appuser`'s home inside the container.
-
-### 6. Glossary (`glossary.json`)
-
-Place your translation glossary in `glossary.json` in the project root. Example:
-
-```json
-{
-  "de": {
-    "Bitcoin": "Bitcoin",
-    "Bisq": "Bisq"
-  },
-  "es": {
-    "Bitcoin": "Bitcoin"
-  }
-}
+**Run the Script:**
+```bash
+./run-local-translation.sh /path/to/your/config.yaml
 ```
 
-### 7. Transifex Project Configuration
+---
 
-Ensure the target repository (cloned into `/target_repo` in Docker) has a valid `.tx/config` file for Transifex.
-Example:
+## 🛠️ Configuration
 
-```ini
-[main]
-host = https://www.transifex.com
+The service is configured through a combination of YAML files and a single environment file for secrets.
 
-[project.resource_slug] # e.g., bisq2.i18n
-file_filter = i18n/src/main/resources/<lang>.properties # Path to translated files
-source_file = i18n/src/main/resources/app.properties   # Path to source (English) file
-source_lang = en
-type = PROPERTIES
-```
-
-The `TX_TOKEN` from `.env` is used for authentication.
-
-## 🐳 Running the Translation Service with Docker
-
-Once configured, running the service is straightforward. These commands are run as `translationbot` from
-`/opt/translate-java-property-files` on your server.
-
-1. **Build the Docker Image**:
-   (Needed initially and after changes to `Dockerfile`, scripts, or GPG keys in `secrets/`)
-   ```bash
-   docker compose -f docker/docker-compose.yml build --no-cache
-   ```
-
-2. **Run the Service**:
-   To start the service in detached (background) mode:
-   ```bash
-   docker compose -f docker/docker-compose.yml up -d
-   ```
-   The `docker-entrypoint.sh` first clones/updates the target repository. The cron job inside the container then handles
-   scheduled translations.
-
-3. **Checking Logs**:
-   Logs are written to the `./logs/` directory (mounted from `/app/logs/` in the container).
-    * `./logs/cron_job.log`: Cron execution.
-    * `./logs/deployment_log.log`: From `update-translations.sh`.
-    * `./logs/translation_log.log`: From the Python script.
-      View live Docker service logs:
-   ```bash
-   docker compose -f docker/docker-compose.yml logs -f
-   ```
-
-4. **Manually Triggering the Translation Job**:
-   To test or run translations outside the cron schedule:
-   ```bash
-   docker exec -it translation_service_runner su -s /bin/bash appuser -c "/app/docker/docker-entrypoint.sh /app/update-translations.sh"
-   ```
-   *(Replace `translation_service_runner` with your actual container name if different; check with `docker ps`)*.
-
-5. **Stopping the Service**:
-   ```bash
-   docker compose -f docker/docker-compose.yml down
-   ```
-
-## 🛡️ Recommended: Use a Non-Root User for Docker Deployment
-
-For security and correct file permissions, **always run Docker and this service as a dedicated non-root user** (e.g.,
-`translationbot`) on your server. The Quick Start guide incorporates this.
-
-* **Why?** Avoids security risks of root access and ensures files created by the container (like logs) have proper
-  ownership on the host.
-* **How?**
-    1. Create the user: `sudo adduser translationbot`
-    2. Add to `docker` group: `sudo usermod -aG docker translationbot` (then re-login or `su - translationbot`)
-    3. Clone the project and set file ownership (as shown in Quick Start).
-    4. Use this user's numeric UID/GID for `HOST_UID` and `HOST_GID` in your `.env` file.
-
-**⚠️ Warning:** Running Docker operations or this service as `root` (or with `HOST_UID=0, HOST_GID=0`) is strongly
-discouraged.
-
-## Workflow Overview (Inside Docker)
-
-The daily cron job inside the Docker container executes `/app/update-translations.sh` as `appuser` (after environment
-setup by `docker-entrypoint.sh`). The script:
-
-1. Ensures the target repository (`/target_repo`) is up-to-date with its upstream `main` branch.
-2. Pulls latest translations from Transifex.
-3. Runs the Python script (`src/translate_localization_files.py`) to translate new strings.
-4. Commits changes (GPG signed) to a new branch in `/target_repo`.
-5. Pushes the branch to your fork on GitHub.
-6. Creates a pull request from your fork to the upstream repository.
-7. If PR creation is successful, pushes updated source translations to Transifex.
+*   **`docker/.env`**: **Secrets.** Contains all sensitive information: API keys, tokens, and Git repository URLs. This file is not checked into version control. Use `docker/.env.example` as a template.
+*   **`config.yaml`**: **Local configuration.** Used by `run-local-translation.sh` for local, non-Docker runs.
+*   **`docker/config.docker.yaml`**: **Server configuration.** This is the configuration file used by the service when running inside Docker. It points to paths within the container (e.g., `/target_repo`).
+*   **`glossary.json`**: Provides language-specific translations for key terms to ensure consistency.
+*   **`translation_file_filter_glob`** (optional, in `config.yaml`): A glob pattern that limits which changed `.properties` files are processed by the AI translator. This is useful for workflows where you want to pull all updated files from Transifex but only run the AI step on a specific subset (e.g., `mobile_*.properties`).
 
 ## Troubleshooting
 
-- **Docker Volume Permissions**: If permission errors occur for `./logs` or other mounts, ensure `HOST_UID` and
-  `HOST_GID` in `.env` match the `translationbot` user's IDs, and that `translationbot` owns the project directory.
-- **API Key Issues**: Double-check keys in `.env`. Ensure tokens have necessary scopes/permissions.
-- **GPG Signing**:
-    * Verify `GIT_SIGNING_KEY` and `GIT_AUTHOR_EMAIL` in `.env` are correct and match the GPG key details and your
-      GitHub verified emails.
-    * Ensure GPG keys were correctly copied to `secrets/gpg_bot_key/` before building the image.
-- **SSH Key for Git Push**:
-    * Confirm the SSH key setup (Deploy Key on fork, `~/.ssh/config` for `translationbot` on server) is correct.
-    * Test with `ssh -T git@github.com` as `translationbot`.
-    * The host's `~/.ssh` directory (owned by `translationbot`) is mounted read-only into the container.
-- **Cron Not Running**: Check Docker logs and `/app/logs/cron_job.log`. Ensure `docker/translator-cron` has a final
-  newline.
-- **`command not found` (git, tx, gh, python)**: This indicates an issue with the Docker image build or `PATH` setup
-  within the container scripts. Rebuild the image.
-- **`Error: Input folder does not exist...`**:
-    * Ensure `target_project_root` and `input_folder` in `docker/config.docker.yaml` are correct.
-    * This can also happen if `tx pull` fails to create the directory. Check `tx pull` logs.
-
-## Advanced Topics & Alternatives
-
-### Managing with systemd on a Server
-
-For robust server deployment, use systemd to manage the Docker Compose service (auto-start on boot, easy
-start/stop/status).
-
-1. Create a service file (e.g., `/etc/systemd/system/translator.service`) as `root`:
-   ```ini
-   [Unit]
-   Description=Translation Docker Service
-   Requires=docker.service
-   After=docker.service
-
-   [Service]
-   User=translationbot
-   Group=docker
-   WorkingDirectory=/opt/translate-java-property-files # Ensure this is the correct project path
-   Restart=always
-   # Ensure the full path to docker compose is correct for your system
-   ExecStart=/usr/bin/docker compose -f docker/docker-compose.yml up
-   ExecStop=/usr/bin/docker compose -f docker/docker-compose.yml down
-
-   [Install]
-   WantedBy=multi-user.target
-   ```
-    * Verify the path for `docker compose` (e.g., `/usr/bin/docker` or `/usr/local/bin/docker`). The command `docker compose` (V2 syntax) is used. If you have an older Docker Compose V1 installation (`docker-compose` with a hyphen), you would need to adjust the command and potentially the path (e.g., to `/usr/local/bin/docker-compose`).
-    * Ensure `User=translationbot` and `Group=docker` are appropriate for your setup. The `translationbot` user should own the files in `WorkingDirectory` and be a member of the `docker` group.
-
-2. Enable and start:
-   ```bash
-   sudo systemctl daemon-reload
-   sudo systemctl enable translator.service
-   sudo systemctl start translator.service
-   sudo systemctl status translator.service
-   ```
-
-3. **Managing the Service**:
-    * **Check Status & Recent Logs**: `sudo systemctl status translator.service`
-    * **View Full Logs (Live)**: `sudo journalctl -u translator.service -f`
-    * **Stop the Service**: `sudo systemctl stop translator.service`
-    * **Restart the Service**: `sudo systemctl restart translator.service`
-    * **Disable Auto-start on Boot**: `sudo systemctl disable translator.service`
-
-   You may need to switch to a user with `sudo` privileges (or be `root`) to execute these `systemctl` commands.
-
-### Manual Setup & Usage (Local Development/Testing - Not for Production)
-
-This method is for debugging the Python script locally, outside Docker.
-
-1. **Prerequisites**: Python 3.9+, Git, GnuPG.
-2. **Clone this Repository**.
-3. **Create Virtual Environment**:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-4. **Install Dependencies**:
-   Install `pip-tools` first, then use it to sync your environment with the development lockfile.
-   ```bash
-   pip install pip-tools
-   pip-sync requirements-dev.txt
-   ```
-5. **Set Environment Variables**: Export `OPENAI_API_KEY`, `TX_TOKEN`.
-6. **Configure `config.yaml`**: Edit `config.yaml` (in project root) with local paths.
-7. **Run Python Script**: `python src/translate_localization_files.py`
-   *(Note: This only runs Python translation. The full Git/Transifex workflow is in `update-translations.sh`)*.
+*   **Local Docker Run Fails on `git push` (macOS)**: This is an expected limitation. Please see the note under the "Local Development" section and the [Local Development Guide](./docs/how-to-run-locally.md).
+*   **Validation Errors in Pull Request**: The PR description now includes a report of any files that were skipped due to linter or validation errors. These errors must be fixed manually in the source repository. See `docs/llm/debug-docker-service.md` for more details on common errors.
+*   **Server Deployment Issues**: Refer to the detailed deployment guide and the debugging documentation in the `docs/` directory.
 
 ## Contributing
 
-Contributions are welcome! Please fork, branch, commit, and send a pull request.
-
-## License
-
-This project uses the [GNU Affero General Public License](LICENSE).
-
-## Updates and Maintenance
-
-### Updating the Service (`update-service.sh`)
-
-A script named `update-service.sh` is provided in the project root to automate the process of updating the translation service. This script will:
-
-*   Pull the latest changes from the Git repository.
-*   Check for local uncommitted changes and stash them.
-*   Determine if a Docker image rebuild or a service restart is necessary based on the files changed.
-*   Perform the Docker image build (if needed).
-*   Stop/start/restart the `translator.service` systemd service.
-*   Perform a basic health check after updates.
-*   Attempt to roll back to the previous working state if an update fails (e.g., Docker build error, service start failure, health check failure).
-
-**How to run the update script:**
-
-1.  **Navigate to the project directory** (e.g., `/opt/translate-java-property-files`):
-    ```bash
-    cd /opt/translate-java-property-files
-    ```
-
-2.  **Ensure the script is executable**:
-    ```bash
-    chmod +x update-service.sh
-    ```
-
-3.  **Run the script with `sudo`**:
-    The script requires `sudo` privileges to manage the systemd service (`translator.service`) and potentially for Docker commands if the executing user is not in the `docker` group (though `translationbot` should be).
-    ```bash
-    sudo ./update-service.sh
-    ```
-
-The script will log its actions to the console (stderr) and also create detailed logs and rollback state information in the `logs/update_service/` directory within the project.
-
-### Manual Docker Operations (If Needed)
-
-If you need to manually interact with the Docker service:
-
-*   **Build image** (as `translationbot` from project root):
-    ```bash
-    docker compose -f docker/docker-compose.yml build --no-cache
-    ```
-
-## Improving Translation Quality
-
-The quality and consistency of automated translations depend entirely on the provided `glossary.json` file. This file serves as the single source of truth for terminology, brand names, and other specific phrases that must be translated in a specific way.
-
-### How to Contribute to the Glossary
-
-If you notice a term that is consistently mistranslated, you can improve future translations by adding it to the glossary.
-
-1.  **Open `glossary.json`**: This file is located in the root of the project.
-2.  **Find the language section**: The glossary is organized by language code (e.g., `"de"` for German, `"es"` for Spanish).
-3.  **Add the new term**: Add a new key-value pair.
-    * The **key** should be the English source text (ideally lowercase).
-    * The **value** should be the desired, correct translation.
-    * For terms that should **not** be translated (e.g., brand names), the key and value should be identical.
-
-By continuously improving the glossary, you directly enhance the quality and consistency of all future automated translations.
-
-## Advanced Translation Quality Engine
-
-This service uses a sophisticated, two-step process to ensure high-quality translations.
-
-### Two-Step Process: Translate -> Review
-
-1.  **Step 1: Initial Batch Translation**: The system first generates an initial translation for all new or changed text. This step uses a powerful AI prompt enriched with:
-    *   **Glossary Enforcement**: Strictly adheres to the terms defined in `glossary.json`.
-    *   **Contextual Examples**: Uses existing high-quality translations from the same file as a stylistic guide.
-    *   **Language-Specific Rules**: Follows a detailed checklist of grammatical and stylistic rules for each target language (e.g., formal address in German).
-
-2.  **Step 2: Holistic AI Review**: After the initial draft is complete, the entire translated file is sent to a second, specialized AI "lead editor". This reviewer is tasked with performing a holistic check of the newly translated strings, comparing them against the original English file. Its goals are to:
-    *   **Ensure Consistency**: Check for consistent use of terminology across the entire file.
-    *   **Verify Accuracy and Tone**: Correct any remaining grammatical errors or awkward phrasing.
-    *   **Return Structured Data**: The reviewer returns its corrections as a structured JSON object. This is a critical safety feature that prevents the AI from altering the `.properties` file structure. Our script then safely integrates these verified corrections.
-
-This two-step process allows the system to be both efficient and thorough, significantly reducing the need for manual correction.
+Contributions are welcome! Please fork the repository, create a new branch, commit your changes, and open a pull request.

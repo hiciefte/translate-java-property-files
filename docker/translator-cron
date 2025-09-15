@@ -1,5 +1,11 @@
-# cron job for the translation service
-# Runs daily at 2:00 AM
-0 2 * * * appuser cd /app && /app/docker/docker-entrypoint.sh /app/update-translations.sh >> /app/logs/cron_job.log 2>&1
+# This file is a template for a host-based cron job to run the translation service.
+# Do NOT place this file in /etc/cron.d/. Instead, add its contents to the
+# root user's crontab by running 'sudo crontab -e' and pasting the line below.
 
-# An empty line is required at the end of this file for cron to process it correctly. 
+# Run the translator service daily at 3:00 AM server time.
+# IMPORTANT: Replace '/path/to/your/project' with the absolute path to this project's root directory on your server.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+0 3 * * * cd /path/to/your/project/docker && mkdir -p ../logs && /usr/bin/docker compose run --rm translator >> /path/to/your/project/logs/cron_job.log 2>&1
+
+# An empty line at the end of the crontab is recommended for portability. 

@@ -1,58 +1,38 @@
 services:
   translator:
+    # Use environment variables to make container and volume names unique per instance
+    container_name: ${CONTAINER_NAME:-translator-service}
     build:
-      context: ..  # Set build context to the project root
+      context: .. # Build context is the project root
       dockerfile: docker/Dockerfile # Path to Dockerfile from project root
-      args:
-        HOST_UID: ${HOST_UID:-1000}
-        HOST_GID: ${HOST_GID:-1000}
-        GPG_KEY_FINGERPRINT_FOR_TRUST: ${GPG_KEY_FINGERPRINT_FOR_TRUST:-}
-    container_name: translation_service_runner
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - TX_TOKEN=${TX_TOKEN}
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - HEALTHCHECK_URL=${HEALTHCHECK_URL}
-      - FORK_REPO_NAME=${FORK_REPO_NAME:-hiciefte/bisq2} # For entrypoint to set SSH remote
-      - HOST_UID=${HOST_UID:-1000}   # For runtime, ensures entrypoint uses correct UID
-      - HOST_GID=${HOST_GID:-1000}   # For runtime, ensures entrypoint uses correct GID
-      # Git configuration variables, to be set in .env file
-      - GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME:-Translation Bot}
-      - GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL:-}
-      - GIT_SIGNING_KEY=${GIT_SIGNING_KEY:-}
-      # HOST_UID and HOST_GID for user creation are passed via build args from .env
-      # Forcing UID/GID for debugging .env file issues
-      # - HOST_UID=502
-      # - HOST_GID=20
-      # - PUID=502
-      # - PGID=20
+    # The entrypoint is defined in the Dockerfile.
+    # By default, run the main orchestration script. Can be overridden for debugging.
+    command: ["/app/update-translations.sh"]
     volumes:
-      # Mount the Docker-specific config (now located in docker/) to the default config path in the app
+      # Mount the Docker-specific config to the default config path in the app
       - ./config.docker.yaml:/app/config.yaml:ro
-      
       # Mount the glossary file (located in project root)
       - ../glossary.json:/app/glossary.json:ro
-      
-      # Mount SSH keys and Git config from host user's home (read-only for appuser)
-      - ~/.ssh:/home/appuser/.ssh:ro
-      # Mount host GPG data to a temporary root-accessible location for entrypoint to copy
-      # - ~/.gnupg:/root/.gnupg_host_mount:ro 
-      # - ~/.gitconfig:/home/appuser/.gitconfig:ro
-      
+      # Mount SSH keys from host user's home (read-only for appuser)
+      - ${HOME}/.ssh:/home/appuser/.ssh:ro
       # Mount logs directory (in project root) for persistence
       - ../logs:/app/logs
-
       # Mount a named volume for the target repository to persist it across restarts
-      - target-repo-data:/target_repo
+      - ${VOLUME_NAME:-target-repo-data}:/target_repo
+    # The container will start as root, and the entrypoint script will drop privileges to 'appuser'.
+    # This allows the entrypoint to fix volume permissions before the main application runs.
+    env_file:
+      - .env
+    environment:
+      # Pass the absolute path of the config file inside the container to the application.
+      # This makes the script's starting location irrelevant for finding its config.
+      - TRANSLATOR_CONFIG_FILE=/app/config.yaml
+    # Note: Place the .env file alongside this compose file (docker/.env)
+    # with API keys and HOST_UID/GID.
+    # An example is provided in docker/.env.example
 
+# Define the named volume. The name used here is the default.
+# The ${VOLUME_NAME} environment variable in the service's volumes section
+# can still point to a differently named volume if needed.
 volumes:
-  target-repo-data:
-
-# Note: You will need a .env file in the project root directory
-# (translate-java-property-files) with API keys and HOST_UID/GID.
-# Example .env file:
-# OPENAI_API_KEY=your_openai_key
-# TX_TOKEN=your_transifex_token
-# GITHUB_TOKEN=your_github_personal_access_token
-# HOST_UID=$(id -u) # Should be numeric, e.g., 501
-# HOST_GID=$(id -g) # Should be numeric, e.g., 20 
+  target-repo-data: 

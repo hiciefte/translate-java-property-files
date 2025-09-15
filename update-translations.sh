@@ -40,6 +40,14 @@ check_and_exit_if_blocked() {
     exit 0
 }
 
+# Check for required tools
+for tool in yq git tx gh curl; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        log "Error: Required tool '$tool' is not installed."
+        exit 1
+    fi
+done
+
 # --- Pull Request Gate ---
 # This gate prevents the script from running if there's already a pending PR.
 # It checks for two conditions:
@@ -73,7 +81,7 @@ log "No pending translation PRs found. Proceeding with translation check."
 log "Update script started. Checking for TX_TOKEN..."
 
 # Check if TX_TOKEN is already set in the environment
-if [ -n "$TX_TOKEN" ]; then
+if [ -n "${TX_TOKEN:-}" ]; then
     log "TX_TOKEN is already set in the environment."
 else
     log "TX_TOKEN not found in environment. Attempting to load from .env files..."
@@ -101,7 +109,7 @@ else
 fi
 
 # Ensure TX_TOKEN is set now (either from initial env or sourced from file)
-if [ -z "$TX_TOKEN" ]; then
+if [ -z "${TX_TOKEN:-}" ]; then
     log "Error: TX_TOKEN environment variable is not set and could not be loaded from .env files."
     log "Please ensure TX_TOKEN is available as an environment variable or in a .env file."
     log "For Docker, ensure it's passed via docker-compose.yml environment section from your host's .env file."
@@ -117,89 +125,35 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# Function to determine Python command to use
-get_python_cmd() {
-    if command_exists python3.9; then
-        echo "python3.9"
-    elif command_exists python3; then
-        echo "python3"
-    elif command_exists python; then
-        echo "python"
-    else
-        echo ""
-    fi
-}
-
-# Function to check Python version
-check_python_version() {
-    local python_cmd="$1"
-    $python_cmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
-}
-
-# Virtual environment directory - use appuser's home directory
-# Ensure HOME is set; it should be /home/appuser for the appuser
-APPUSER_HOME=${HOME:-/home/appuser} # Default to /home/appuser if HOME isn't robustly set
-VENV_DIR="$APPUSER_HOME/.venv"
-
-# Function to setup and activate virtual environment
-setup_venv() {
-    # shellcheck disable=SC2034  # Unused variable warning
-    local python_cmd="$1"
-    
-    # Check if venv module is available
-    if ! $python_cmd -c "import venv" 2>/dev/null; then
-        log "Python venv module not found. Installing python3-venv..."
-        # Try to install python3-venv package
-        if command_exists apt-get; then
-            sudo apt-get update && sudo apt-get install -y python3.9-venv || {
-                log "Failed to install python3.9-venv. Please install it manually: sudo apt-get install python3.9-venv"
-                exit 1
-            }
-        else
-            log "Cannot install python3.9-venv automatically. Please install it manually."
-            exit 1
-        fi
-    fi
-    
-    # Create virtual environment if it doesn't exist
-    if [ ! -d "$VENV_DIR" ]; then
-        log "Creating Python virtual environment in $VENV_DIR"
-        $python_cmd -m venv "$VENV_DIR"
-    fi
-    
-    # Activate virtual environment
-    log "Activating virtual environment"
-    # shellcheck disable=SC1091  # Not following: source
-    source "$VENV_DIR/bin/activate"
-    
-    # Verify virtual environment is active
-    log "Using Python from: $(which python)"
-    
-    # Upgrade pip in the virtual environment
-    log "Upgrading pip in virtual environment"
-    python -m pip install --upgrade pip
-    
-    # Install setuptools required for many packages
-    log "Installing setuptools in virtual environment"
-    python -m pip install setuptools wheel
-}
-
 # Load configuration from YAML file
-CONFIG_FILE="config.yaml" # This should be /app/config.yaml, which is config.docker.yaml mounted
+# Use the environment variable if it's set, otherwise default to config.yaml in the CWD.
+CONFIG_FILE="${TRANSLATOR_CONFIG_FILE:-config.yaml}"
+log "Using configuration file: $CONFIG_FILE"
 
 # Helper function to parse values from config.yaml robustly using yq
 get_config_value() {
     local key="$1"
     local config_file="$2"
+    if ! command -v yq >/dev/null 2>&1; then
+        log "Error: 'yq' is required but not found in PATH."
+        exit 1
+    fi
     # Use yq to safely read the value. The -e flag exits with non-zero status if the key is not found.
-    yq -e ".$key" "$config_file"
+    # The -r flag outputs raw strings, preventing issues with "null" or extra quotes.
+    # The '|| true' prevents the script from exiting if a key is not found (for optional keys).
+    yq -e -r ".$key" "$config_file" || true
 }
 
 TARGET_PROJECT_ROOT=$(get_config_value "target_project_root" "$CONFIG_FILE")
 INPUT_FOLDER=$(get_config_value "input_folder" "$CONFIG_FILE")
+# Read the optional glob filter for selective translation
+TRANSLATION_FILTER_GLOB=$(get_config_value "translation_file_filter_glob" "$CONFIG_FILE")
+# Read the optional flag to pull source files
+PULL_SOURCE_FILES=$(get_config_value "pull_source_files_from_transifex" "$CONFIG_FILE")
 
 log "Target project root from config: \"$TARGET_PROJECT_ROOT\""
 log "Input folder from config: \"$INPUT_FOLDER\""
+log "Pull source files from Transifex: ${PULL_SOURCE_FILES:-false}"
 
 if [ -z "$TARGET_PROJECT_ROOT" ]; then
     log "Error: TARGET_PROJECT_ROOT is not set in $CONFIG_FILE or is empty."
@@ -238,66 +192,6 @@ log "Starting deployment process"
 log "Target project root: $TARGET_PROJECT_ROOT"
 log "Input folder: $INPUT_FOLDER" # Added log for input folder
 
-# Check Python environment
-PYTHON_CMD=$(get_python_cmd)
-if [ -z "$PYTHON_CMD" ]; then
-    log "Error: Python is not installed. Please install Python 3."
-    exit 1
-fi
-log "Using system Python command: $PYTHON_CMD"
-
-# Check Python version
-PYTHON_VERSION=$(check_python_version "$PYTHON_CMD")
-log "Python version: $PYTHON_VERSION"
-
-# Setup and activate virtual environment
-setup_venv "$PYTHON_CMD"
-
-# Install dependencies in virtual environment
-log "Installing Python dependencies in virtual environment"
-
-# First install critical dependencies
-log "Installing core dependencies first"
-python -m pip install setuptools wheel six urllib3 PyYAML || {
-    log "Warning: Failed to install core dependencies. This may cause further issues."
-}
-
-# Uninstall any previous Transifex packages to avoid conflicts
-log "Uninstalling any previous Transifex packages"
-python -m pip uninstall -y transifex-client transifex || {
-    log "Note: No previous Transifex packages found to uninstall"
-}
-
-# Install tiktoken directly first
-log "Installing tiktoken package"
-python -m pip install tiktoken || {
-    log "Warning: Failed to install tiktoken. This may cause issues with the translation script."
-}
-
-# Then install the rest of the requirements
-if [ -f "requirements.txt" ]; then
-    log "Installing remaining dependencies from requirements.txt"
-    python -m pip install -r requirements.txt --ignore-installed || {
-        log "Warning: Failed to install some Python dependencies. Some functionality may be limited."
-    }
-fi
-
-# Verify tiktoken installation
-if ! python -c "import tiktoken; print('tiktoken is installed')" > /dev/null 2>&1; then
-    log "Error: tiktoken module could not be imported despite installation attempt."
-    log "Trying alternative installation method..."
-    python -m pip install tiktoken --no-binary tiktoken || {
-        log "Warning: Alternative installation of tiktoken failed."
-    }
-    
-    # Check again
-    if ! python -c "import tiktoken; print('tiktoken is installed')" > /dev/null 2>&1; then
-        log "Error: Could not install tiktoken. The translation script may fail."
-    else
-        log "Successfully installed tiktoken with alternative method."
-    fi
-fi
-
 # Check if target project root exists
 if [ ! -d "$TARGET_PROJECT_ROOT" ]; then
     log "Error: Target project root directory not found: $TARGET_PROJECT_ROOT"
@@ -326,12 +220,13 @@ else
     # Extract the 'source_file' for each resource from the Transifex config.
     # This gives us the configured source files with their full paths relative to the repo root.
     # Example: i18n/src/main/resources/BtcAddresses.properties
-    mapfile -t configured_sources < <(yq e '.[].projects.bisq.resources[].source_file' "$TX_CONFIG_FILE")
+    # Use awk for more reliable INI parsing. It correctly handles spaces around the '='.
+    mapfile -t configured_sources < <(awk -F'=' '/^[[:space:]]*source_file[[:space:]]*=/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2}' "$TX_CONFIG_FILE")
 
     # Get the actual English source files present on disk.
     # We use find and then remove the input folder prefix to get paths relative to the input folder,
     # which should match the format in the Transifex config.
-    shopt -s globstar
+    # globstar not needed; using find
     mapfile -t actual_sources_full_path < <(find "$ABSOLUTE_INPUT_FOLDER" -type f -name '*_en.properties')
 
     declare -A configured_relative_paths
@@ -359,27 +254,46 @@ else
     log "INFO" "All source files are correctly configured in Transifex."
 fi
 
+# Determine the default branch and remote to reset against
+DEFAULT_BRANCH="${TARGET_BRANCH_FOR_PR:-}"
+REMOTE="upstream" # Default to upstream
+if ! git remote | grep -q "^${REMOTE}$"; then
+    log "Warning: Remote '${REMOTE}' not found. Falling back to 'origin'."
+    REMOTE="origin"
+    if ! git remote | grep -q "^${REMOTE}$"; then
+        log "Error: Remote 'origin' also not found. Cannot proceed."
+        exit 1
+    fi
+fi
+log "Using remote: ${REMOTE}"
+
+if [ -z "$DEFAULT_BRANCH" ]; then
+  DEFAULT_BRANCH="$(git remote show ${REMOTE} 2>/dev/null | awk -F': ' '/HEAD branch/ {print $2}')"
+  DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
+fi
+log "Using default branch: ${DEFAULT_BRANCH}"
+
 # Reset the repository to a clean state to avoid any conflicts or leftover files.
-log "Resetting local repository to a clean state against upstream/main in $TARGET_PROJECT_ROOT"
-# Fetch the latest from upstream to ensure our reference is current.
-git fetch upstream
-# Reset to the upstream main branch, discarding all local changes and commits.
-git reset --hard upstream/main
+log "Resetting local repository to a clean state against ${REMOTE}/${DEFAULT_BRANCH} in $TARGET_PROJECT_ROOT"
+# Fetch the latest from the determined remote to ensure our reference is current.
+git fetch "${REMOTE}"
+# Reset to the remote main branch, discarding all local changes and commits.
+git reset --hard "${REMOTE}/${DEFAULT_BRANCH}"
 # Clean untracked files and directories, but exclude critical local dev files.
 log "Cleaning untracked files, excluding development directories..."
 git clean -fde "venv/" -e ".idea/" -e "*.iml" -e "secrets/" -e "docker/.env"
 
-# Save the current branch (should be main as set by entrypoint)
-ORIGINAL_BRANCH=$(git branch --show-current)
-log "Current branch (should be main): $ORIGINAL_BRANCH"
-if [ "$ORIGINAL_BRANCH" != "main" ]; then
-    log "Warning: Expected to be on main branch, but on $ORIGINAL_BRANCH. Checking out main."
-    git checkout main
+# Save the current branch
+ORIGINAL_BRANCH=$(git branch --show-current || true)
+log "Current branch: $ORIGINAL_BRANCH"
+if [ "$ORIGINAL_BRANCH" != "${DEFAULT_BRANCH}" ]; then
+    log "Warning: Expected to be on ${DEFAULT_BRANCH} branch, but on ${ORIGINAL_BRANCH}. Checking out ${DEFAULT_BRANCH}."
+    git checkout "${DEFAULT_BRANCH}"
 fi
 
-# The entrypoint script already reset main to upstream/main and updated submodules.
+# The entrypoint script already reset the branch to upstream and updated submodules.
 # No further git pull or submodule init/update should be necessary here before tx pull.
-log "Proceeding with Transifex operations. Current HEAD:"
+log "Proceeding with Transifex operations. Current HEAD on ${DEFAULT_BRANCH}:"
 git log -1 --pretty=%H
 
 # Step 2: Use Transifex CLI to pull the latest translations
@@ -401,12 +315,18 @@ if command_exists tx; then
     fi
     
     # Pull translations with -t option
-    log "Using tx pull -t -f --use-git-timestamps command"
+    TX_PULL_CMD="tx pull -t -f --use-git-timestamps"
+    if [[ "$PULL_SOURCE_FILES" == "true" ]]; then
+        log "Configuration directs to pull source files as well. Modifying tx command."
+        TX_PULL_CMD="tx pull -s -t -f --use-git-timestamps"
+    fi
+
+    log "Using tx command: $TX_PULL_CMD"
     log "Listing permissions for current directory ($(pwd)) before tx pull:"
     ls -la .
-    log "Listing permissions for ./i18n/src/main/resources before tx pull:"
-    ls -la ./i18n/src/main/resources
-    tx pull -t -f --use-git-timestamps || {
+    log "Listing permissions for input folder '${ABSOLUTE_INPUT_FOLDER}' before tx pull:"
+    ls -la "${ABSOLUTE_INPUT_FOLDER}" || true
+    $TX_PULL_CMD || {
         log "Error during tx pull. Exiting."
         exit 1
     }
@@ -422,15 +342,22 @@ log "Returned to the translation script directory"
 
 # Step 3: Run the translation script with the virtual environment Python
 log "Running translation script"
-"$VENV_DIR/bin/python" src/translate_localization_files.py || {
+# If a filter glob is defined in the config, and it is not the literal string "null",
+# export it as an environment variable for the Python script to use.
+if [ -n "$TRANSLATION_FILTER_GLOB" ] && [ "$TRANSLATION_FILTER_GLOB" != "null" ]; then
+    log "Translation filter is active. Only files matching '$TRANSLATION_FILTER_GLOB' will be translated."
+fi
+# Export filter glob if set (used by Python translation script)
+[ -n "$TRANSLATION_FILTER_GLOB" ] && [ "$TRANSLATION_FILTER_GLOB" != "null" ] && export TRANSLATION_FILTER_GLOB
+python3 -m src.translate_localization_files || {
     log "Error: Failed to run translation script. Exiting."
     exit 1
 }
 
 # Step 4: Clean up archived translation files before committing
 log "Cleaning up archived translation files"
-if [ -d "$INPUT_FOLDER/archive" ]; then # This now uses the cleaned INPUT_FOLDER
-    rm -rf "$INPUT_FOLDER/archive"
+if [ -d "$ABSOLUTE_INPUT_FOLDER/archive" ]; then
+    rm -rf "$ABSOLUTE_INPUT_FOLDER/archive"
     log "Deleted archived translation files"
 fi
 
@@ -453,15 +380,21 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
     log "Creating new branch: $BRANCH_NAME"
     git checkout -b "$BRANCH_NAME"
     
-    # Add only translation files
-    log "Adding translation files to git"
-    # Be specific about the path and ignore errors for optional types
-    git add i18n/src/main/resources/*.properties || log "Warning: No *.properties files found to add in i18n/src/main/resources/."
+    # Add only translation files that have changed
+    log "Adding changed translation files to git"
+    # We find all .properties files within the input folder and add them.
+    # This is more robust than a hardcoded path and handles subdirectories.
+    find "$ABSOLUTE_INPUT_FOLDER" -name '*.properties' -print0 | xargs -0 git add
 
-    # Commit changes with GPG signing
-    log "Committing changes with GPG signing"
-    git commit -S -m "Automated translation update"
-    
+    # Commit changes, signing if a key is configured
+    if git config --get commit.gpgsign >/dev/null 2>&1 && git config --get user.signingkey >/dev/null 2>&1; then
+      log "Committing with GPG signing"
+      git commit -S -m "Automated translation update"
+    else
+      log "Committing without GPG signing"
+      git commit -m "Automated translation update"
+    fi
+
     # Push the branch to GitHub
     log "Pushing changes to origin ($FORK_REPO_NAME)"
     git push origin "$BRANCH_NAME"
@@ -472,6 +405,15 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
     PR_BODY="This pull request was automatically generated by the translation script and contains the latest translation updates from Transifex and OpenAI.
 
 This PR is from branch \`$BRANCH_NAME\` on the \`$FORK_REPO_NAME\` fork and targets the \`$TARGET_BRANCH_FOR_PR\` branch on \`$UPSTREAM_REPO_NAME\`."
+
+    # Check for a skipped files report and prepend it to the PR body if it exists.
+    # The python script generates this file if any files fail validation.
+    SKIPPED_FILES_REPORT="/app/logs/skipped_files_report.log"
+    if [ -s "$SKIPPED_FILES_REPORT" ]; then
+        log "Found skipped files report. Prepending to PR description."
+        REPORT_CONTENT=$(cat "$SKIPPED_FILES_REPORT")
+        PR_BODY=$(printf "%s\n\n%s" "$REPORT_CONTENT" "$PR_BODY")
+    fi
 
     # Check if gh cli is installed
     if command_exists gh; then
@@ -505,21 +447,24 @@ else
 fi
 
 # Go back to original branch
-log "Returning to original branch: $ORIGINAL_BRANCH"
-log "Listing permissions for $TARGET_PROJECT_ROOT/.git before checkout $ORIGINAL_BRANCH:"
-ls -la "$TARGET_PROJECT_ROOT/.git"
-git checkout --force "$ORIGINAL_BRANCH"
+if [ -n "$ORIGINAL_BRANCH" ] && [ "$ORIGINAL_BRANCH" != "$DEFAULT_BRANCH" ]; then
+  log "Returning to original branch: $ORIGINAL_BRANCH"
+  log "Listing permissions for $TARGET_PROJECT_ROOT/.git before checkout $ORIGINAL_BRANCH:"
+  ls -la "$TARGET_PROJECT_ROOT/.git"
+  git checkout --force "$ORIGINAL_BRANCH"
+else
+  log "Staying on ${DEFAULT_BRANCH} (no original branch to return to)."
+fi
 
 # Re-initialize and update submodules after returning to original branch
 log "Re-initializing and updating git submodules after returning to original branch"
 git submodule init
 git submodule update --recursive
 
-log "Deactivating virtual environment"
-deactivate || true
+# No virtual environment to deactivate
 
 # Send a heartbeat ping to the health check URL if it is configured
-if [ -n "$HEALTHCHECK_URL" ]; then
+if [ -n "${HEALTHCHECK_URL:-}" ]; then
     log "Sending successful heartbeat to health check URL..."
     # Use curl with options to fail silently and handle connection timeouts
     curl -fsS --retry 3 --max-time 10 "$HEALTHCHECK_URL" > /dev/null || log "Warning: Health check ping failed."

@@ -1,138 +1,72 @@
-# Security Strategy for the Dockerized Translation Service
+# Security Strategy for the Translation Service
 
-This document outlines the security strategy for the automated translation service, focusing on the Dockerized environment and mitigating risks associated with compromised credentials.
+This document outlines the security strategy for the automated translation service, focusing on mitigating risks for both server deployments and local development.
 
 ## Core Principles
 
-1.  **Least Privilege**: Components (Docker container, `appuser` within the container, API tokens) are granted only the permissions necessary for their function.
-2.  **Dedicated Credentials**: Separate, dedicated credentials (SSH keys, GPG keys, API tokens) are used for different purposes to limit the blast radius of a compromise.
-3.  **Secure Storage & Handling**: Sensitive information (API keys, private keys) is handled securely, primarily through environment variables and controlled access to files on the host.
+1.  **Least Privilege**: Components (API tokens, SSH keys) are granted only the permissions necessary for their function.
+2.  **Dedicated Credentials**: The service uses dedicated credentials (SSH deploy keys, GPG keys) to limit the blast radius of a compromise.
+3.  **Secure by Default**: The default configuration for server deployment is secure, and local development overrides use secure methods like SSH agent forwarding.
+4.  **No Secrets in Git**: All sensitive information is stored outside of the Git repository. The project's `.gitignore` file is configured to ignore the `docker/.env` and root `/.env` files, preventing accidental commits of secrets.
 
-## Credential Management
+## 1. Server Deployment Security
 
-### 1. Host Machine Security (Machine running `docker compose`)
+This model is for the automated, scheduled execution of the service on a production server.
 
--   **`.env` File Protection**: Sensitive API keys (`OPENAI_API_KEY`, `TX_TOKEN`, `GITHUB_TOKEN`) and Git/GPG configuration (`GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_SIGNING_KEY`, `FORK_REPO_NAME`, etc.) are stored in the `docker/.env` file (relative to the project root) on the host. This file **must**:
-    -   Be protected with strict file permissions (e.g., `chmod 600 docker/.env`).
-    -   **NEVER** be committed to Git (ensure it's in `.gitignore`).
--   **Host SSH Key (`~/.ssh/translation_bot_github_id_ed25519`)**: The private SSH key used for Git push authentication to the fork is stored on the host. Its permissions should be strict (e.g., `chmod 600`).
--   **Docker Daemon Access**: Access to the Docker daemon on the host should be restricted to authorized users.
+### Credential Management
 
-### 2. Docker Image and Container Security
+*   **Secrets File (`docker/.env`)**: All secrets—`OPENAI_API_KEY`, `TX_TOKEN`, `GITHUB_TOKEN`, and Git configuration—are stored in a single `docker/.env` file on the host. This file **must**:
+    *   Be protected with strict file permissions (`chmod 600 docker/.env`).
+    *   **NEVER** be committed to Git (it is listed in `.gitignore`).
+*   **SSH Deploy Key**: A dedicated, **passphrase-less** SSH key pair is used for the service.
+    *   The private key resides on the host server (e.g., in `~/.ssh/translator_deploy_key`).
+    *   The public key is configured as a **Deploy Key** with **write access** on the bot's **forked** GitHub repository. This key is used exclusively for pushing translated commits.
+*   **GPG Private Key**: The bot's GPG private key is stored on the host at `secrets/gpg_bot_key/bot_secret_key.asc` and protected with strict file permissions. It is imported into the container's GPG keyring at runtime by the entrypoint script.
 
--   **No Hardcoded Credentials in Image (except GPG key)**:
-    -   API tokens and most Git configuration are passed as environment variables at runtime via `docker-compose.yml` from the host's `docker/.env` file.
-    -   **Exception**: The bot's GPG private key (`bot_secret_key.asc`) is copied into the Docker image during the build process from the `secrets/gpg_bot_key/` directory. This makes the security of the build environment and the Docker image itself (if pushed to a registry) critical.
--   **`appuser` within Container**: Operations within the container are performed by a non-root user (`appuser`) created with specific UID/GID matching the host (for volume permission handling).
--   **Volume Mounts**:
-    -   `~/.ssh` (host) is mounted read-only into `appuser`'s home for Git push.
-    -   `docker/config.docker.yaml` is mounted as `/app/config.yaml`.
-    -   `glossary.json` is mounted.
-    -   `logs/` directory is mounted for persistent logging.
+### Docker Image and Container Security
 
-## Git Authentication and Signing Security Strategy
+*   **Runtime Secrets**: API tokens and other secrets from `docker/.env` are injected into the container as environment variables at runtime.
+    *   For interactive sessions, these are available directly.
+    *   For automated `cron` jobs, the entrypoint script writes these variables to `/etc/environment` and sets permissions to `600` (`-rw-------`). This is necessary because the `cron` daemon does not inherit the runtime environment, and this file is the standard, secure mechanism for providing it.
+*   **Privilege Dropping**: The container starts as `root` to perform initial setup (like cloning the repo and setting permissions) and then drops privileges to a non-root `appuser` to execute the main translation script.
+*   **No Persistent Container**: The service runs as a transient container via `docker compose run`, which is triggered by a host-level cron job. The container is created for the job and destroyed upon completion, minimizing its attack surface.
 
-This strategy separates authentication (pushing to Git) and signing (verifying commit authorship).
+## 2. Local Development Security
 
-1.  **Committer Identity (for "Verified" Commits on GitHub)**:
-    -   A specific GitHub account (e.g., `takahiro.nagasawa@proton.me`) is designated as the committer.
-    -   The email for this account (`GIT_AUTHOR_EMAIL` in `.env`) must be verified on GitHub.
-    -   The bot's GPG public key must be uploaded to this GitHub account.
+This model is for developers running the service on their local machines.
 
-2.  **Authentication (Git Push to Fork via SSH)**:
-    -   A dedicated, passphrase-less SSH key pair (e.g., `~/.ssh/translation_bot_github_id_ed25519` on the host) is used.
-    -   The public SSH key is added as a **Deploy Key** with **write access** to the *forked* GitHub repository (e.g., `hiciefte/bisq2`).
-    -   The host's `~/.ssh/config` is configured to use this specific key for `github.com`.
-    -   The `docker-entrypoint.sh` script ensures the Git remote `origin` in the container points to the SSH URL of the fork.
-
-3.  **Signing (GPG Signed Commits)**:
-    -   A dedicated GPG key pair is generated for the bot. The public and secret key files (`bot_public_key.asc`, `bot_secret_key.asc`) are stored in `secrets/gpg_bot_key/` in the project on the host.
-    -   These keys are copied into the Docker image during build and imported for `appuser`.
-    -   The `docker-entrypoint.sh` configures Git at runtime for `appuser` to use this GPG key (specified by `GIT_SIGNING_KEY` from `.env`) and the committer email (`GIT_AUTHOR_EMAIL`).
+*   **SSH Agent Forwarding**: The `docker-compose.override.yml` file (used only for local runs and gitignored) configures the container to use SSH Agent Forwarding.
+    *   **Benefit**: This is highly secure. Your local, passphrase-protected SSH private key **never leaves your host machine**. The container is only given access to the agent's socket, allowing it to perform Git operations without ever handling the key directly.
+*   **Local `.env` File**: Local runs can use a local `docker/.env` file for API keys, which is also gitignored.
 
 ## Key Revocation Plan
 
-Rapid revocation is key if a credential is compromised.
+Rapid revocation is critical if a credential is compromised.
 
-1.  **SSH Deploy Key Compromise (for Git Push)**:
-    1.  Immediately revoke/delete the Deploy Key from the fork's settings on GitHub.
-    2.  Delete the compromised SSH key pair from the host.
-    3.  Generate a new SSH key pair on the host.
-    4.  Add the new public key as a Deploy Key (with write access) to the fork.
-    5.  Update the host's `~/.ssh/config` if the filename changed.
-    6.  No container restart is strictly necessary if the `~/.ssh` mount and `~/.ssh/config` point to the new key correctly, but a restart ensures a clean state.
+1.  **SSH Deploy Key Compromise**:
+    1.  Immediately revoke the Deploy Key from the fork's settings on GitHub.
+    2.  Delete the compromised SSH key pair from the server.
+    3.  Generate a new SSH key pair, add the new public key as a Deploy Key, and update the server's SSH config.
 
-2.  **GPG Signing Key Compromise (Key built into the image)**:
-    1.  Generate a GPG revocation certificate for the compromised key (if you have one). Use it if possible.
-    2.  Remove the compromised GPG public key from the committer's GitHub account.
-    3.  Generate a new GPG key pair locally.
-    4.  Replace `bot_public_key.asc` and `bot_secret_key.asc` in the host's `secrets/gpg_bot_key/` directory with the new keys.
-    5.  Update `GIT_SIGNING_KEY` in the host's `docker/.env` file with the new key ID.
-    6.  **Rebuild the Docker image**: `docker compose -f docker/docker-compose.yml build --no-cache translator`
-    7.  **Redeploy/Restart the service**: `docker compose -f docker/docker-compose.yml up -d --force-recreate`
-    8.  Add the new GPG public key to the committer's GitHub account.
+2.  **GPG Signing Key Compromise**:
+    1.  Remove the compromised GPG public key from the committer's GitHub account.
+    2.  Generate a new GPG key pair.
+    3.  Replace the key files in the host's `secrets/gpg_bot_key/` directory.
+    4.  Update `GIT_SIGNING_KEY` in `docker/.env`.
+    5.  The new key will be imported on the next container run. No image rebuild is required.
 
-3.  **API Token Compromise (`OPENAI_API_KEY`, `TX_TOKEN`, `GITHUB_TOKEN`)**:
+3.  **API Token Compromise (`OPENAI_API_KEY`, etc.)**:
     1.  Immediately revoke the compromised token on the respective platform (OpenAI, Transifex, GitHub).
-    2.  Generate a new token with the same (or least necessary) permissions.
+    2.  Generate a new token.
     3.  Update the token in the host's `docker/.env` file.
-    4.  Restart the Docker service to pick up the new environment variable: `docker compose -f docker/docker-compose.yml restart translator` or `docker compose -f docker/docker-compose.yml up -d --force-recreate`.
-
-## Access Control
-
-### GitHub Repository Access
--   **GitHub Token (`GITHUB_TOKEN`)**: Use a Classic Personal Access Token with the `repo` scope for the account that will create Pull Requests (this token is used by `gh pr create`).
--   **SSH Deploy Key**: Has write access *only* to the specific forked repository it's installed on. This is more secure than using a user's general SSH key with broader access.
-
-### Branch Protection Rules (Recommended for Upstream Repository)
--   Enable branch protection for the `main` (or target) branch of the *upstream* repository.
--   Require pull requests for changes.
--   Require reviews before merging.
--   Ensure status checks pass (if applicable).
-
-## Monitoring and Auditing
-
-1.  **Commit Verification**: GPG-signed commits result in a "Verified" badge on GitHub, providing a visual audit trail.
-2.  **GitHub Activity Monitoring**: Monitor activity for the committer account and deploy key actions.
-3.  **Application Logging**: The service produces logs in the `logs/` directory (mounted from the host) for cron jobs, `update-translations.sh`, and `translate_localization_files.py`. Review these logs regularly.
-
-## Regular Security Review
-
-1.  **Key Rotation Schedule**:
-    -   SSH Deploy Key: Annually.
-    -   GPG Signing Key: Annually (requires image rebuild).
-    -   API Tokens: Every 6-12 months or per provider recommendations.
-    -   Document the rotation process and track renewal dates.
-2.  **Access Review**: Regularly review permissions for API tokens and the Deploy Key. Ensure they adhere to the principle of least privilege.
-3.  **Dependency Vulnerability Scanning**: Periodically scan Python dependencies (`requirements.txt`) and the base Docker image for known vulnerabilities.
-
-## Implementation Summary (Current Dockerized Setup)
-
-This summarizes the setup; detailed steps are in `README.md`.
-
-1.  **Host Preparation**:
-    -   Create `docker/.env` file (by copying `docker/.env.example` to `docker/.env`) with API keys, Git/GPG config, and host UID/GID.
-    -   Generate a dedicated, passphrase-less SSH key (e.g., `~/.ssh/translation_bot_github_id_ed25519`).
-    -   Configure host `~/.ssh/config` to use this key for `github.com`.
-    -   Generate a dedicated GPG key pair for the bot, placing `bot_public_key.asc` and `bot_secret_key.asc` into `secrets/gpg_bot_key/`.
-
-2.  **GitHub Configuration**:
-    -   Add the SSH public key (`translation_bot_github_id_ed25519.pub`) as a **Deploy Key** (with write access) to your *forked* repository.
-    -   Add the GPG public key (`bot_public_key.asc`) to the GitHub account that will be the committer (e.g., `takahiro.nagasawa@proton.me`), ensuring the email used in `GIT_AUTHOR_EMAIL` is verified for that account and associated with the GPG key.
-
-3.  **Docker Build & Run**:
-    -   `docker compose -f docker/docker-compose.yml build --no-cache translator` (builds image, embedding GPG key).
-    -   `docker compose -f docker/docker-compose.yml up -d` (runs service).
-    -   The `docker-entrypoint.sh` and `update-translations.sh` scripts handle the rest internally using the provided environment variables and built-in/mounted credentials.
-
-This strategy aims to provide a robust security posture for the automated translation service by leveraging dedicated credentials, Docker's isolation, and clear revocation procedures. 
+    4.  The new token will be used on the next scheduled cron run. No container restart is necessary.
 
 ## Automated Security Verification (CI/CD)
 
-To proactively enforce security and quality, a GitHub Actions workflow (`.github/workflows/build-verify.yml`) automatically runs on every pull request. This workflow acts as a security gate and performs the following checks:
+To proactively enforce security, a GitHub Actions workflow (`.github/workflows/build-verify.yml`) runs on every pull request. This workflow acts as a security gate and performs the following checks:
 
-1.  **Dockerfile Linting (`hadolint`)**: The `Dockerfile` is scanned for common errors and violations of security best practices. This ensures the container itself is built on a sound foundation. Findings can be managed via the `.hadolint.yaml` file to ignore specific rules where necessary.
-2.  **Dependency Scanning (`pip-audit`)**: The `requirements.txt` file is audited against a database of known vulnerabilities. This prevents the introduction of Python packages with security flaws.
-3.  **Docker Image Vulnerability Scanning (`Trivy`)**: After a successful build, the resulting Docker image is scanned for operating system and library vulnerabilities (e.g., in `ubuntu`, `curl`, `openssl`). This ensures the entire runtime environment is secure. To manage unactionable findings, such as vulnerabilities in vendor-supplied binaries, specific CVEs are suppressed using the `.trivyignore` file.
+1.  **Dockerfile Linting (`hadolint`)**: Scans the `Dockerfile` for security best practice violations.
+2.  **Dependency Scanning (`pip-audit`)**: Audits `requirements.txt` against a database of known vulnerabilities in Python packages.
+3.  **Docker Image Vulnerability Scanning (`Trivy`)**: Scans the final built image for OS and library vulnerabilities.
 
-If any of these checks fail (e.g., a high-severity vulnerability is found that is not explicitly ignored), the workflow fails, preventing the pull request from being merged. This provides a strong, automated first line of defense against security regressions. 
+If a high-severity vulnerability is found, the workflow fails, preventing the merge of insecure code. 
