@@ -22,8 +22,15 @@ mkdir -p "$LOG_DIR"
 
 # Function to log messages
 log() {
-    # Use "$*" to log all arguments as a single string
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] [UPDATE_SCRIPT] $*" | tee -a "$LOG_FILE"
+    local ts level msg
+    ts="$(date +'%Y-%m-%d %H:%M:%S')"
+    if [ $# -gt 1 ] && [[ "$1" =~ ^(INFO|WARNING|ERROR|DEBUG)$ ]]; then
+        level="$1"; shift
+    else
+        level="INFO"
+    fi
+    msg="$*"
+    echo "[$ts] [UPDATE_SCRIPT] [$level] $msg" | tee -a "$LOG_FILE"
 }
 
 # Helper function to check for blocking PRs and exit if found.
@@ -41,7 +48,7 @@ check_and_exit_if_blocked() {
 }
 
 # Check for required tools
-for tool in yq git tx gh curl; do
+for tool in yq git tx curl; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         log "Error: Required tool '$tool' is not installed."
         exit 1
@@ -155,7 +162,7 @@ log "Target project root from config: \"$TARGET_PROJECT_ROOT\""
 log "Input folder from config: \"$INPUT_FOLDER\""
 log "Pull source files from Transifex: ${PULL_SOURCE_FILES:-false}"
 
-if [ -z "$TARGET_PROJECT_ROOT" ]; then
+if [ -z "$TARGET_PROJECT_ROOT" ] || [ "$TARGET_PROJECT_ROOT" = "null" ]; then
     log "Error: TARGET_PROJECT_ROOT is not set in $CONFIG_FILE or is empty."
     exit 1
 fi
@@ -165,7 +172,7 @@ if [ ! -d "$TARGET_PROJECT_ROOT" ]; then
     exit 1
 fi
 
-if [ -z "$INPUT_FOLDER" ]; then
+if [ -z "$INPUT_FOLDER" ] || [ "$INPUT_FOLDER" = "null" ]; then
     log "Error: INPUT_FOLDER is not set in $CONFIG_FILE or is empty."
     exit 1
 fi
@@ -277,19 +284,14 @@ log "Using default branch: ${DEFAULT_BRANCH}"
 log "Resetting local repository to a clean state against ${REMOTE}/${DEFAULT_BRANCH} in $TARGET_PROJECT_ROOT"
 # Fetch the latest from the determined remote to ensure our reference is current.
 git fetch "${REMOTE}"
-# Reset to the remote main branch, discarding all local changes and commits.
-git reset --hard "${REMOTE}/${DEFAULT_BRANCH}"
+# Save current branch before switching to default
+ORIGINAL_BRANCH=$(git branch --show-current || true)
+log "Current branch: $ORIGINAL_BRANCH"
+# Check out the default branch and align it with the remote
+git checkout -B "${DEFAULT_BRANCH}" "${REMOTE}/${DEFAULT_BRANCH}"
 # Clean untracked files and directories, but exclude critical local dev files.
 log "Cleaning untracked files, excluding development directories..."
 git clean -fde "venv/" -e ".idea/" -e "*.iml" -e "secrets/" -e "docker/.env"
-
-# Save the current branch
-ORIGINAL_BRANCH=$(git branch --show-current || true)
-log "Current branch: $ORIGINAL_BRANCH"
-if [ "$ORIGINAL_BRANCH" != "${DEFAULT_BRANCH}" ]; then
-    log "Warning: Expected to be on ${DEFAULT_BRANCH} branch, but on ${ORIGINAL_BRANCH}. Checking out ${DEFAULT_BRANCH}."
-    git checkout "${DEFAULT_BRANCH}"
-fi
 
 # The entrypoint script already reset the branch to upstream and updated submodules.
 # No further git pull or submodule init/update should be necessary here before tx pull.
@@ -309,7 +311,7 @@ if command_exists tx; then
     if [ -f "$TARGET_PROJECT_ROOT/.tx/config" ]; then
         log ".tx/config exists in project directory"
         log ".tx/config contents (without sensitive data):"
-        grep -v "password" "$TARGET_PROJECT_ROOT/.tx/config"
+        grep -Evi 'password|token|secret' "$TARGET_PROJECT_ROOT/.tx/config"
     else
         log "Warning: .tx/config not found in project directory"
     fi
@@ -318,10 +320,10 @@ if command_exists tx; then
     # The --quiet (-q) flag is used to suppress the verbose "skipping" messages
     # for languages that exist on Transifex but not in the local repository.
     # The --force (-f) flag ensures local files are overwritten with remote changes.
-    TX_PULL_CMD="tx pull -t -f --use-git-timestamps"
+    TX_PULL_CMD="tx pull -q -t -f --use-git-timestamps"
     if [[ "$PULL_SOURCE_FILES" == "true" ]]; then
         log "Configuration directs to pull source files as well. Modifying tx command."
-        TX_PULL_CMD="tx pull -s -t -f --use-git-timestamps"
+        TX_PULL_CMD="tx pull -q -s -t -f --use-git-timestamps"
     fi
 
     log "Using tx command: $TX_PULL_CMD"
@@ -351,8 +353,12 @@ fi
 
 # Navigate back to the application's root directory to run the python script.
 # This ensures that the module path `src.translate_localization_files` is resolved correctly.
-cd /app
-log "Returned to the application root directory: $(pwd)"
+if [ -d /app ]; then
+  cd /app
+  log "Returned to the application root directory: $(pwd)"
+else
+  log "Warning: /app not found; staying in $(pwd) to run Python."
+fi
 
 # Step 3: Run the translation script
 log "Running translation script"
@@ -398,11 +404,11 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
     log "Creating new branch: $BRANCH_NAME"
     git checkout -b "$BRANCH_NAME"
     
-    # Add only translation files that have changed
-    log "Adding changed translation files to git"
-    # We find all .properties files within the input folder and add them.
-    # This is more robust than a hardcoded path and handles subdirectories.
-    find "$ABSOLUTE_INPUT_FOLDER" -name '*.properties' -print0 | xargs -0 git add
+    # Add translation files that have changed and stage deletions
+    log "Staging translation file changes (.properties, .po, .mo) and deletions"
+    find "$ABSOLUTE_INPUT_FOLDER" \( -name '*.properties' -o -name '*.po' -o -name '*.mo' \) -print0 | xargs -0 git add
+    # Stage deletions for removed translation files
+    git ls-files --deleted "$ABSOLUTE_INPUT_FOLDER" | grep -E '\.(properties|po|mo)$' | xargs -r git rm
 
     # Commit changes, signing if a key is configured
     if git config --get commit.gpgsign >/dev/null 2>&1 && git config --get user.signingkey >/dev/null 2>&1; then
@@ -414,8 +420,12 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
     fi
 
     # Push the branch to GitHub
-    log "Pushing changes to origin ($FORK_REPO_NAME)"
-    git push origin "$BRANCH_NAME"
+    if git remote | grep -qx 'origin'; then
+      log "Pushing changes to origin ($FORK_REPO_NAME)"
+      git push origin "$BRANCH_NAME"
+    else
+      log "Error: 'origin' remote not found; cannot push PR branch. Configure a fork remote named 'origin' or adjust the script."
+    fi
     
     # Step 5: Create a GitHub pull request
     log "Creating GitHub pull request to $UPSTREAM_REPO_NAME"
