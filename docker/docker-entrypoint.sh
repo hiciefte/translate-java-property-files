@@ -11,6 +11,11 @@ if [ "$(id -u)" = '0' ]; then
     # This makes the container resilient to the volume's initial state.
     mkdir -p "$TARGET_REPO_DIR"
     chown -R appuser:appuser "$TARGET_REPO_DIR"
+
+    # Also ensure the application's log directory is writable by the appuser
+    mkdir -p /app/logs
+    chown -R appuser:appuser /app/logs
+
     echo "[Entrypoint] Permissions fixed. Re-executing as appuser..."
     # Use gosu to drop privileges and run the rest of the script as appuser.
     # "$@" passes along any command given to the entrypoint (e.g., from docker-compose).
