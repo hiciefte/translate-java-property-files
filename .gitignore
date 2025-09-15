@@ -2,12 +2,12 @@ venv/
 __pycache__/
 *.pyc
 *.iml
-logs/
-*.log
-.idea
-.env
-/config.yaml
-secrets/
-
-# Environment variables
+.idea/
+.DS_Store
+logs/*
+!logs/.gitkeep
+secrets/*
+!secrets/.gitkeep
 docker/.env
+docker/docker-compose.override.yml
+/config.yaml

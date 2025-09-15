@@ -117,73 +117,6 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# Function to determine Python command to use
-get_python_cmd() {
-    if command_exists python3.9; then
-        echo "python3.9"
-    elif command_exists python3; then
-        echo "python3"
-    elif command_exists python; then
-        echo "python"
-    else
-        echo ""
-    fi
-}
-
-# Function to check Python version
-check_python_version() {
-    local python_cmd="$1"
-    $python_cmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
-}
-
-# Virtual environment directory - use appuser's home directory
-# Ensure HOME is set; it should be /home/appuser for the appuser
-APPUSER_HOME=${HOME:-/home/appuser} # Default to /home/appuser if HOME isn't robustly set
-VENV_DIR="$APPUSER_HOME/.venv"
-
-# Function to setup and activate virtual environment
-setup_venv() {
-    # shellcheck disable=SC2034  # Unused variable warning
-    local python_cmd="$1"
-    
-    # Check if venv module is available
-    if ! $python_cmd -c "import venv" 2>/dev/null; then
-        log "Python venv module not found. Installing python3-venv..."
-        # Try to install python3-venv package
-        if command_exists apt-get; then
-            sudo apt-get update && sudo apt-get install -y python3.9-venv || {
-                log "Failed to install python3.9-venv. Please install it manually: sudo apt-get install python3.9-venv"
-                exit 1
-            }
-        else
-            log "Cannot install python3.9-venv automatically. Please install it manually."
-            exit 1
-        fi
-    fi
-    
-    # Create virtual environment if it doesn't exist
-    if [ ! -d "$VENV_DIR" ]; then
-        log "Creating Python virtual environment in $VENV_DIR"
-        $python_cmd -m venv "$VENV_DIR"
-    fi
-    
-    # Activate virtual environment
-    log "Activating virtual environment"
-    # shellcheck disable=SC1091  # Not following: source
-    source "$VENV_DIR/bin/activate"
-    
-    # Verify virtual environment is active
-    log "Using Python from: $(which python)"
-    
-    # Upgrade pip in the virtual environment
-    log "Upgrading pip in virtual environment"
-    python -m pip install --upgrade pip
-    
-    # Install setuptools required for many packages
-    log "Installing setuptools in virtual environment"
-    python -m pip install setuptools wheel
-}
-
 # Load configuration from YAML file
 CONFIG_FILE="config.yaml" # This should be /app/config.yaml, which is config.docker.yaml mounted
 
@@ -241,66 +174,6 @@ log "Starting deployment process"
 log "Target project root: $TARGET_PROJECT_ROOT"
 log "Input folder: $INPUT_FOLDER" # Added log for input folder
 
-# Check Python environment
-PYTHON_CMD=$(get_python_cmd)
-if [ -z "$PYTHON_CMD" ]; then
-    log "Error: Python is not installed. Please install Python 3."
-    exit 1
-fi
-log "Using system Python command: $PYTHON_CMD"
-
-# Check Python version
-PYTHON_VERSION=$(check_python_version "$PYTHON_CMD")
-log "Python version: $PYTHON_VERSION"
-
-# Setup and activate virtual environment
-setup_venv "$PYTHON_CMD"
-
-# Install dependencies in virtual environment
-log "Installing Python dependencies in virtual environment"
-
-# First install critical dependencies
-log "Installing core dependencies first"
-python -m pip install setuptools wheel six urllib3 PyYAML || {
-    log "Warning: Failed to install core dependencies. This may cause further issues."
-}
-
-# Uninstall any previous Transifex packages to avoid conflicts
-log "Uninstalling any previous Transifex packages"
-python -m pip uninstall -y transifex-client transifex || {
-    log "Note: No previous Transifex packages found to uninstall"
-}
-
-# Install tiktoken directly first
-log "Installing tiktoken package"
-python -m pip install tiktoken || {
-    log "Warning: Failed to install tiktoken. This may cause issues with the translation script."
-}
-
-# Then install the rest of the requirements
-if [ -f "requirements.txt" ]; then
-    log "Installing remaining dependencies from requirements.txt"
-    python -m pip install -r requirements.txt --ignore-installed || {
-        log "Warning: Failed to install some Python dependencies. Some functionality may be limited."
-    }
-fi
-
-# Verify tiktoken installation
-if ! python -c "import tiktoken; print('tiktoken is installed')" > /dev/null 2>&1; then
-    log "Error: tiktoken module could not be imported despite installation attempt."
-    log "Trying alternative installation method..."
-    python -m pip install tiktoken --no-binary tiktoken || {
-        log "Warning: Alternative installation of tiktoken failed."
-    }
-    
-    # Check again
-    if ! python -c "import tiktoken; print('tiktoken is installed')" > /dev/null 2>&1; then
-        log "Error: Could not install tiktoken. The translation script may fail."
-    else
-        log "Successfully installed tiktoken with alternative method."
-    fi
-fi
-
 # Check if target project root exists
 if [ ! -d "$TARGET_PROJECT_ROOT" ]; then
     log "Error: Target project root directory not found: $TARGET_PROJECT_ROOT"
@@ -329,7 +202,8 @@ else
     # Extract the 'source_file' for each resource from the Transifex config.
     # This gives us the configured source files with their full paths relative to the repo root.
     # Example: i18n/src/main/resources/BtcAddresses.properties
-    mapfile -t configured_sources < <(yq e '.[].projects.bisq.resources[].source_file' "$TX_CONFIG_FILE")
+    # We use grep and sed to parse the INI-style .tx/config file, as yq is for YAML.
+    mapfile -t configured_sources < <(grep -E '^\s*source_file\s*=' "$TX_CONFIG_FILE" | sed -E 's/^\s*source_file\s*=\s*//')
 
     # Get the actual English source files present on disk.
     # We use find and then remove the input folder prefix to get paths relative to the input folder,
@@ -425,13 +299,13 @@ log "Returned to the translation script directory"
 
 # Step 3: Run the translation script with the virtual environment Python
 log "Running translation script"
-# If a filter glob is defined in the config, export it as an environment variable
-# for the Python script to use.
-if [ -n "$TRANSLATION_FILTER_GLOB" ]; then
+# If a filter glob is defined in the config, and it is not the literal string "null",
+# export it as an environment variable for the Python script to use.
+if [ -n "$TRANSLATION_FILTER_GLOB" ] && [ "$TRANSLATION_FILTER_GLOB" != "null" ]; then
     log "Translation filter is active. Only files matching '$TRANSLATION_FILTER_GLOB' will be translated."
     export TRANSLATION_FILTER_GLOB
 fi
-"$VENV_DIR/bin/python" src/translate_localization_files.py || {
+python3 -m src.translate_localization_files || {
     log "Error: Failed to run translation script. Exiting."
     exit 1
 }
@@ -481,6 +355,15 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
     PR_BODY="This pull request was automatically generated by the translation script and contains the latest translation updates from Transifex and OpenAI.
 
 This PR is from branch \`$BRANCH_NAME\` on the \`$FORK_REPO_NAME\` fork and targets the \`$TARGET_BRANCH_FOR_PR\` branch on \`$UPSTREAM_REPO_NAME\`."
+
+    # Check for a skipped files report and prepend it to the PR body if it exists.
+    # The python script generates this file if any files fail validation.
+    SKIPPED_FILES_REPORT="/app/logs/skipped_files_report.log"
+    if [ -s "$SKIPPED_FILES_REPORT" ]; then
+        log "Found skipped files report. Prepending to PR description."
+        REPORT_CONTENT=$(cat "$SKIPPED_FILES_REPORT")
+        PR_BODY=$(printf "%s\n\n%s" "$REPORT_CONTENT" "$PR_BODY")
+    fi
 
     # Check if gh cli is installed
     if command_exists gh; then

@@ -45,6 +45,11 @@ from src.translation_validator import (
     synchronize_keys
 )
 
+# A hardcoded chunk size for the number of keys to be sent in a single
+# holistic review API call. This is a safeguard against "request too large"
+# token limit errors from the OpenAI API.
+HOLISTIC_REVIEW_CHUNK_SIZE = 75
+
 # Define the expected JSON schema for the AI's response in the holistic review.
 # This ensures that the AI returns a dictionary where every value is a string.
 LOCALIZATION_SCHEMA = {
@@ -566,7 +571,7 @@ async def _handle_retry(attempt: int, max_retries: int, base_delay: float, key: 
         return False
 
 
-async def run_pre_translation_validation(target_file_path: str, source_file_path: str) -> bool:
+async def run_pre_translation_validation(target_file_path: str, source_file_path: str) -> List[str]:
     """
     Runs a series of validation and preparation checks on a target properties file.
     - Synchronizes keys with the source file (adds missing, removes extra).
@@ -577,9 +582,9 @@ async def run_pre_translation_validation(target_file_path: str, source_file_path
         source_file_path: The absolute path to the source English .properties file.
 
     Returns:
-        True if all non-fixable checks pass, False otherwise.
+        A list of validation error messages. An empty list indicates success.
     """
-    is_valid = True
+    errors: List[str] = []
     filename = os.path.basename(target_file_path)
     logging.info(f"Running pre-translation validation for '{filename}'...")
 
@@ -587,25 +592,25 @@ async def run_pre_translation_validation(target_file_path: str, source_file_path
     try:
         synchronize_keys(target_file_path, source_file_path)
         logging.info(f"Key synchronization complete for '{filename}'.")
-    except (IOError, OSError):
+    except (IOError, OSError) as e:
         logging.exception("Failed to synchronize keys for '%s'", filename)
-        return False # Fail hard if we can't even sync the file
+        errors.append(f"I/O error during key synchronization: {e}")
+        return errors  # Fail hard if we can't even sync the file
 
     # 2. Check encoding and mojibake on the (potentially modified) file
     encoding_errors = check_encoding_and_mojibake(target_file_path)
     if encoding_errors:
-        is_valid = False
-        for error in encoding_errors:
-            logging.error(f"Validation failed for '{filename}': {error}")
+        errors.extend(encoding_errors)
 
     # Load file content for placeholder check
     try:
         # Re-parse the files as they might have been changed by synchronize_keys
         _, target_translations = parse_properties_file(target_file_path)
         _, source_translations = parse_properties_file(source_file_path)
-    except (IOError, OSError):
+    except (IOError, OSError) as e:
         logging.exception("Validation failed for '%s': Could not parse properties file after key sync", filename)
-        return False
+        errors.append(f"Could not parse properties file after key sync: {e}")
+        return errors
 
     # 3. Check placeholder parity
     common_keys = set(source_translations.keys()).intersection(set(target_translations.keys()))
@@ -613,15 +618,14 @@ async def run_pre_translation_validation(target_file_path: str, source_file_path
         source_value = source_translations.get(key, "")
         target_value = target_translations.get(key, "")
         if not check_placeholder_parity(source_value, target_value):
-            is_valid = False
-            logging.error(f"Validation failed for '{filename}': Placeholder mismatch for key '{key}'.")
+            errors.append(f"Placeholder mismatch for key `{key}`.")
 
-    if is_valid:
+    if not errors:
         logging.info(f"Pre-translation validation passed for '{filename}'.")
     else:
-        logging.error(f"Pre-translation validation failed for '{filename}'. See logs for details.")
-        
-    return is_valid
+        logging.error(f"Pre-translation validation failed for '{filename}'.")
+
+    return errors
 
 
 def run_post_translation_validation(
@@ -1213,7 +1217,7 @@ async def process_translation_queue(
         translation_queue_folder: str,
         translated_queue_folder: str,
         glossary_file_path: str
-):
+) -> Tuple[int, Dict[str, List[str]]]:
     """
     Process all .properties files in the translation queue folder.
 
@@ -1221,6 +1225,11 @@ async def process_translation_queue(
         translation_queue_folder (str): The folder containing files to translate.
         translated_queue_folder (str): The folder to save translated files.
         glossary_file_path (str): The glossary file path.
+
+    Returns:
+        A tuple containing:
+        - The number of files successfully processed.
+        - A dictionary of skipped files, mapping filename to a list of error strings.
     """
     properties_files = [f for f in os.listdir(translation_queue_folder) if f.endswith('.properties')]
 
@@ -1235,6 +1244,9 @@ async def process_translation_queue(
     rate_limit = 60  # Number of allowed requests
     rate_period = 60  # Time period in seconds
     rate_limiter = AsyncLimiter(max_rate=rate_limit, time_period=rate_period)
+
+    processed_files_count = 0
+    skipped_files: Dict[str, List[str]] = {}
 
     for translation_file in properties_files:
         # Extract the language code from the filename
@@ -1260,9 +1272,12 @@ async def process_translation_queue(
         logging.info(f"Processing file '{translation_file}' for language '{target_language}'...")
 
         # --- Pre-flight Validator ---
-        is_file_valid = await run_pre_translation_validation(translation_file_path, source_file_path)
-        if not is_file_valid:
-            logging.error(f"Skipping translation for '{translation_file}' due to validation errors.")
+        validation_errors = await run_pre_translation_validation(translation_file_path, source_file_path)
+        if validation_errors:
+            logging.error(f"Skipping translation for '{translation_file}' due to pre-translation validation errors.")
+            for error in validation_errors:
+                logging.error(f"  - {error}")
+            skipped_files[translation_file] = validation_errors
             continue
         # --- End Validator ---
 
@@ -1273,6 +1288,7 @@ async def process_translation_queue(
             logging.error(f"Linter found errors in '{translation_file}'. Skipping translation for this file.")
             for error in lint_errors:
                 logging.error(f"  - {error}")
+            skipped_files[translation_file] = lint_errors
             continue
         # --- End Linter Check ---
 
@@ -1327,39 +1343,69 @@ async def process_translation_queue(
         draft_content = reassemble_file(draft_lines)
 
         # --- Holistic Review Step ---
-        logging.info(f"Performing holistic review for '{translation_file}'...")
-        with open(source_file_path, 'r', encoding='utf-8') as f:
-            source_content = f.read()
+        # Instead of one large review, we chunk the keys to avoid token limits.
+        logging.info(f"Performing holistic review for {len(keys_to_translate)} keys in '{translation_file}'...")
 
-        logging.debug(f"--- SOURCE CONTENT FOR REVIEW ---\n{source_content}")
-        logging.debug(f"--- DRAFT CONTENT FOR REVIEW ---\n{draft_content}")
+        # Create chunks of keys
+        key_chunks = [
+            keys_to_translate[i:i + HOLISTIC_REVIEW_CHUNK_SIZE]
+            for i in range(0, len(keys_to_translate), HOLISTIC_REVIEW_CHUNK_SIZE)
+        ]
 
-        # Get pre-computed style rules for the target language
+        # We need a dictionary of the draft translations to build targeted context for each chunk.
+        # This is easier than parsing the string repeatedly.
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.properties', encoding='utf-8') as temp_f:
+            temp_f.write(draft_content)
+            temp_draft_path = temp_f.name
+        _, draft_translations = parse_properties_file(temp_draft_path)
+        os.remove(temp_draft_path)
+
+        final_corrected_translations = {}
         style_rules_text_for_review = PRECOMPUTED_STYLE_RULES_TEXT.get(language_code, "")
 
-        corrected_translations = await holistic_review_async(
-            source_content=source_content,
-            translated_content=draft_content,
-            target_language=target_language,
-            keys_to_review=keys_to_translate, # Pass the specific keys
-            semaphore=semaphore,
-            rate_limiter=rate_limiter,
-            style_rules_text=style_rules_text_for_review
-        )
+        for i, key_chunk in enumerate(key_chunks):
+            logging.info(f"Reviewing chunk {i + 1}/{len(key_chunks)} ({len(key_chunk)} keys)...")
 
-        if corrected_translations:
-            logging.info("Holistic review successful. Applying corrected translations.")
-            logging.debug(f"--- CORRECTED JSON FROM REVIEW ---\n{json.dumps(corrected_translations, indent=2)}")
+            # Build targeted source and translated content for this chunk only
+            chunk_source_content = "\n".join(
+                [f"{key}={source_translations.get(key, '')}" for key in key_chunk]
+            )
+            chunk_translated_content = "\n".join(
+                [f"{key}={draft_translations.get(key, '')}" for key in key_chunk]
+            )
+
+            corrected_chunk = await holistic_review_async(
+                source_content=chunk_source_content,
+                translated_content=chunk_translated_content,
+                target_language=target_language,
+                keys_to_review=key_chunk,
+                semaphore=semaphore,
+                rate_limiter=rate_limiter,
+                style_rules_text=style_rules_text_for_review
+            )
+
+            if corrected_chunk:
+                final_corrected_translations.update(corrected_chunk)
+            else:
+                logging.warning(f"Holistic review for chunk {i + 1} failed or returned no corrections.")
+                # Even if the review fails for a chunk, we should still include the initial translations
+                # for those keys in the final output. We can do this by "correcting" them to their draft state.
+                for key in key_chunk:
+                    final_corrected_translations[key] = draft_translations.get(key, "")
+
+
+        if final_corrected_translations:
+            logging.info("Holistic review successful. Applying all corrected translations.")
+            logging.debug(f"--- ALL CORRECTED JSON FROM REVIEW ---\n{json.dumps(final_corrected_translations, indent=2)}")
 
             # The corrected_translations dict is the new source of truth.
             # We iterate through our master file structure `draft_lines` and update it in-place.
-            # Note: The `draft_lines` already has the initial translations. We're overwriting them.
             changed_keys_count = 0
             for line_info in draft_lines:
                 if line_info['type'] == 'entry':
                     key = line_info['key']
-                    if key in corrected_translations:
-                        new_value = corrected_translations[key]
+                    if key in final_corrected_translations:
+                        new_value = final_corrected_translations[key]
                         original_source_text = source_translations.get(key, "")
 
                         # Apply the same escaping logic to the corrected value
@@ -1370,13 +1416,13 @@ async def process_translation_queue(
                             logging.debug(f"Review changed key '{key}': FROM '{line_info['value']}' TO '{new_value}'")
                             line_info['value'] = new_value
             if changed_keys_count > 0:
-                logging.info(f"Holistic review changed {changed_keys_count} value(s).")
+                logging.info(f"Holistic review changed {changed_keys_count} value(s) in total.")
             else:
                 logging.info("Holistic review completed without making changes to the draft translation.")
 
             updated_lines = draft_lines
         else:
-            logging.warning("Holistic review failed or returned no corrections. Proceeding with initial translations.")
+            logging.warning("Holistic review failed for all chunks. Proceeding with initial translations.")
             # If review fails, we use the original draft which was already correctly escaped.
             updated_lines = draft_lines
         new_file_content = reassemble_file(updated_lines)
@@ -1402,6 +1448,10 @@ async def process_translation_queue(
             with open(translated_file_path, 'w', encoding='utf-8') as file:
                 file.write(new_file_content)
             logging.info(f"Translated file saved to '{translated_file_path}'.\n")
+
+        processed_files_count += 1
+
+    return processed_files_count, skipped_files
 
 
 def archive_original_files(
@@ -1463,16 +1513,37 @@ async def main():
     logging.info(f"Copied changed files to '{TRANSLATION_QUEUE_FOLDER}' for processing.")
 
     # Step 4: Process the files in the translation queue.
-    await process_translation_queue(
+    processed_files_count, skipped_files = await process_translation_queue(
         translation_queue_folder=TRANSLATION_QUEUE_FOLDER,
         translated_queue_folder=TRANSLATED_QUEUE_FOLDER,
         glossary_file_path=GLOSSARY_FILE_PATH
     )
-    logging.info(f"Completed translations. Translated files are in '{TRANSLATED_QUEUE_FOLDER}'.")
+    if processed_files_count > 0:
+        logging.info(f"Completed translations for {processed_files_count} file(s). Translated files are in '{TRANSLATED_QUEUE_FOLDER}'.")
+    else:
+        logging.info("No files were successfully translated.")
 
-    # Step 5: Copy translated files back to the input folder, overwriting the originals.
+    # Step 5: Write skipped files report
+    report_path = os.path.join(PROJECT_ROOT_DIR, 'logs', 'skipped_files_report.log')
+    if skipped_files:
+        logging.info(f"Some files were skipped. Writing report to {report_path}")
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write("## ⚠️ Translation Pipeline Warnings\n\n")
+            f.write("The following files were skipped during the AI translation process due to validation or linter errors. These issues must be addressed manually.\n\n")
+            for filename, errors in skipped_files.items():
+                f.write(f"### 📄 `{filename}`\n")
+                for error in errors:
+                    f.write(f"- {error}\n")
+                f.write("\n")
+    else:
+        # Ensure no old report file is left
+        if os.path.exists(report_path):
+            os.remove(report_path)
+
+    # Step 6: Copy translated files back to the input folder, overwriting the originals.
     copy_translated_files_back(TRANSLATED_QUEUE_FOLDER, INPUT_FOLDER)
-    logging.info("Copied translated files back to the input folder.")
+    if processed_files_count > 0:
+        logging.info("Copied translated files back to the input folder.")
 
     # Optional: Clean up translation queue folders.
     if DRY_RUN:

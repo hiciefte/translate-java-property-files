@@ -4,6 +4,8 @@
 
 # Run the translator service daily at 3:00 AM server time.
 # IMPORTANT: Replace '/path/to/your/project' with the absolute path to this project's root directory on your server.
-0 3 * * * cd /path/to/your/project/docker && docker compose run --rm translator >> /path/to/your/project/logs/cron_job.log 2>&1
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+0 3 * * * cd /path/to/your/project/docker && /usr/bin/docker compose run --rm translator >> /path/to/your/project/logs/cron_job.log 2>&1
 
 # An empty line at the end of the crontab is recommended for portability. 
