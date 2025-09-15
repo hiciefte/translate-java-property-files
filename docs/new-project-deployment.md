@@ -126,7 +126,9 @@ Once the manual run is successful, you can schedule the service to run automatic
     SHELL=/bin/bash
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-    0 3 * * * cd /opt/translator-service/docker && /usr/bin/docker compose run --rm translator >> /opt/translator-service/logs/cron_job.log 2>&1
+    # Run the translator service daily at 3:00 AM server time.
+    # This command first ensures the log directory exists, then runs the container.
+    0 3 * * * cd /opt/translator-service/docker && mkdir -p ../logs && /usr/bin/docker compose run --rm translator >> /opt/translator-service/logs/cron_job.log 2>&1
     ```
 3.  Save and close the file.
 

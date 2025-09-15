@@ -287,7 +287,6 @@ REBUILD_TRIGGER_FILES=(
     "src/" # Trailing slash implies directory and its contents
     "docker/docker-entrypoint.sh"
     "update-translations.sh" # Copied into image
-    "docker/translator-cron" # Copied into image
 )
 
 # Files/dirs that, if changed, require a service restart (if not a full rebuild).
