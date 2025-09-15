@@ -87,7 +87,6 @@ cd /app # Return to the application's working directory
 
 # --- Execute Main Command ---
 # The entrypoint has finished its setup. The container's main command can now be executed.
-# The working directory is set to the cloned repository for the main command.
-cd /target_repo
+# The update-translations.sh script is responsible for managing its own working directory.
 log "Handing off to the main container command:" "$@"
 exec "$@" 
