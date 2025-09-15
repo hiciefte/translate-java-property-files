@@ -23,7 +23,14 @@ review_model_name: "gpt-4o"
 # All other changed .properties files will still be included in the final PR.
 # This is useful for targeting specific sets of files, like 'mobile_*.properties'.
 # If commented out or empty, all changed .properties files will be translated.
-# translation_file_filter_glob: "mobile_*.properties"
+# Set to null or remove to translate all changed files.
+translation_file_filter_glob: null
+
+# Optional: Pull source files (*_en.properties) from Transifex as well as translations.
+# Set to `true` if the canonical source of truth for English strings is Transifex.
+# The default behavior (`false`) is to only pull translation files and assume
+# the source files in the Git repository are the source of truth.
+pull_source_files_from_transifex: false
 
 # Translation queue folders
 translation_queue_folder: "translation_queue"

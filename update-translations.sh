@@ -135,9 +135,12 @@ TARGET_PROJECT_ROOT=$(get_config_value "target_project_root" "$CONFIG_FILE")
 INPUT_FOLDER=$(get_config_value "input_folder" "$CONFIG_FILE")
 # Read the optional glob filter for selective translation
 TRANSLATION_FILTER_GLOB=$(get_config_value "translation_file_filter_glob" "$CONFIG_FILE")
+# Read the optional flag to pull source files
+PULL_SOURCE_FILES=$(get_config_value "pull_source_files_from_transifex" "$CONFIG_FILE")
 
 log "Target project root from config: \"$TARGET_PROJECT_ROOT\""
 log "Input folder from config: \"$INPUT_FOLDER\""
+log "Pull source files from Transifex: ${PULL_SOURCE_FILES:-false}"
 
 if [ -z "$TARGET_PROJECT_ROOT" ]; then
     log "Error: TARGET_PROJECT_ROOT is not set in $CONFIG_FILE or is empty."
@@ -280,12 +283,18 @@ if command_exists tx; then
     fi
     
     # Pull translations with -t option
-    log "Using tx pull -t -f --use-git-timestamps command"
+    TX_PULL_CMD="tx pull -t -f --use-git-timestamps"
+    if [[ "$PULL_SOURCE_FILES" == "true" ]]; then
+        log "Configuration directs to pull source files as well. Modifying tx command."
+        TX_PULL_CMD="tx pull -s -t -f --use-git-timestamps"
+    fi
+
+    log "Using tx command: $TX_PULL_CMD"
     log "Listing permissions for current directory ($(pwd)) before tx pull:"
     ls -la .
     log "Listing permissions for ./i18n/src/main/resources before tx pull:"
     ls -la ./i18n/src/main/resources
-    tx pull -t -f --use-git-timestamps || {
+    $TX_PULL_CMD || {
         log "Error during tx pull. Exiting."
         exit 1
     }

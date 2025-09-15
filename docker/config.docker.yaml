@@ -112,3 +112,12 @@ brand_technical_glossary:
   - Wise
   - Wise-USD
   - Zelle
+
+# Set to null or remove to translate all changed files.
+# translation_file_filter_glob: null
+
+# Optional: Pull source files (*_en.properties) from Transifex as well as translations.
+# Set to `true` if the canonical source of truth for English strings is Transifex.
+# The default behavior (`false`) is to only pull translation files and assume
+# the source files in the Git repository are the source of truth.
+pull_source_files_from_transifex: false
