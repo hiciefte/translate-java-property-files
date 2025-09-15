@@ -32,7 +32,8 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
         from src.translate_localization_files import process_translation_queue, LANGUAGE_CODES, NAME_TO_CODE
 
         # Configure the async mocks
-        mock_pre_validator.return_value = True
+        # The pre-validator now returns a list of errors; an empty list means success.
+        mock_pre_validator.return_value = []
         mock_post_validator.return_value = True # Post-validation is now mocked
         mock_holistic_review.return_value = None
         mock_load_glossary.return_value = {}  # Mock the glossary to be empty
@@ -40,7 +41,7 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
         # 1. Mock the file system interactions for both source and target files
         # The first call to parse_properties_file is for the target file.
         # The second call is for the source file.
-        # The third call (from post-translation validator) is now SKIPPED.
+        # The third call is to parse the temporary draft file for holistic review.
         mock_parse_properties.side_effect = [
             (
                 [{'type': 'entry', 'key': 'test.key', 'value': 'This has a {0} placeholder.', 'original_value': '...'}],
@@ -49,6 +50,11 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
             (
                 [], # Parsed lines for source are not used in this test
                 {"test.key": "This has a {0} placeholder."}
+            ),
+            (
+                # This simulates parsing the draft content after the AI's first pass.
+                [{'type': 'entry', 'key': 'test.key', 'value': "Dies ist ein ''{0}'' Beispiel.", 'original_value': "..."}],
+                {"test.key": "Dies ist ein ''{0}'' Beispiel."}
             )
         ]
 
@@ -82,12 +88,14 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
         mock_post_validator.assert_called_once()
         mock_holistic_review.assert_awaited()
 
-        # Ensure parser was used exactly as expected: target, source
-        self.assertEqual(mock_parse_properties.call_count, 2)
+        # Ensure parser was used exactly as expected: target, source, and draft
+        self.assertEqual(mock_parse_properties.call_count, 3)
         calls = [c.args[0] for c in mock_parse_properties.call_args_list]
         self.assertTrue(calls[0].endswith('app_de.properties'))
         self.assertTrue(calls[1].endswith('app.properties'))
-        
+        # The third call is to a temporary file, so we just check it's a .properties file
+        self.assertTrue(calls[2].endswith('.properties'))
+
         output_file_path = os.path.join(self.translated_dir, 'app_de.properties')
         self.assertTrue(os.path.exists(output_file_path))
 
