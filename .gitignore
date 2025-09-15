@@ -6,8 +6,13 @@ __pycache__/
 .DS_Store
 logs/*
 !logs/.gitkeep
+# Ignore all secret files, but keep the directory structure placeholder.
 secrets/*
 !secrets/.gitkeep
+# Ignore environment files. The .env file in the docker directory is for server deployment secrets.
+# The root .env is for local non-docker testing. Neither should be in git.
+/.env
 docker/.env
 docker/docker-compose.override.yml
+# Ignore local config file, but track the example.
 /config.yaml

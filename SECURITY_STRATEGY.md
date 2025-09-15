@@ -7,7 +7,7 @@ This document outlines the security strategy for the automated translation servi
 1.  **Least Privilege**: Components (API tokens, SSH keys) are granted only the permissions necessary for their function.
 2.  **Dedicated Credentials**: The service uses dedicated credentials (SSH deploy keys, GPG keys) to limit the blast radius of a compromise.
 3.  **Secure by Default**: The default configuration for server deployment is secure, and local development overrides use secure methods like SSH agent forwarding.
-4.  **No Secrets in Git**: All sensitive information is stored outside of the Git repository.
+4.  **No Secrets in Git**: All sensitive information is stored outside of the Git repository. The project's `.gitignore` file is configured to ignore the `docker/.env` and root `/.env` files, preventing accidental commits of secrets.
 
 ## 1. Server Deployment Security
 
@@ -21,12 +21,13 @@ This model is for the automated, scheduled execution of the service on a product
 *   **SSH Deploy Key**: A dedicated, **passphrase-less** SSH key pair is used for the service.
     *   The private key resides on the host server (e.g., in `~/.ssh/translator_deploy_key`).
     *   The public key is configured as a **Deploy Key** with **write access** on the bot's **forked** GitHub repository. This key is used exclusively for pushing translated commits.
-*   **GPG Private Key**: The bot's GPG private key is stored in `secrets/gpg_bot_key/bot_secret_key.asc` on the host.
+*   **GPG Private Key**: The bot's GPG private key is stored on the host at `secrets/gpg_bot_key/bot_secret_key.asc` and protected with strict file permissions. It is imported into the container's GPG keyring at runtime by the entrypoint script.
 
 ### Docker Image and Container Security
 
-*   **Self-Contained GPG Key**: The GPG private key is securely **built into the Docker image** during the `docker compose build` step. It is **not** mounted at runtime. This hardens the container but means the image must be treated as a sensitive asset and stored in a secure/private Docker registry.
-*   **Runtime Secrets**: API tokens and other secrets from `docker/.env` are injected into the container as environment variables at runtime. The entrypoint script writes these to `/etc/environment` and sets permissions to `600` (`-rw-------`) so they are only accessible by `root` and the `cron` daemon.
+*   **Runtime Secrets**: API tokens and other secrets from `docker/.env` are injected into the container as environment variables at runtime.
+    *   For interactive sessions, these are available directly.
+    *   For automated `cron` jobs, the entrypoint script writes these variables to `/etc/environment` and sets permissions to `600` (`-rw-------`). This is necessary because the `cron` daemon does not inherit the runtime environment, and this file is the standard, secure mechanism for providing it.
 *   **Privilege Dropping**: The container starts as `root` to perform initial setup (like cloning the repo and setting permissions) and then drops privileges to a non-root `appuser` to execute the main translation script.
 *   **No Persistent Container**: The service runs as a transient container via `docker compose run`, which is triggered by a host-level cron job. The container is created for the job and destroyed upon completion, minimizing its attack surface.
 
@@ -52,7 +53,7 @@ Rapid revocation is critical if a credential is compromised.
     2.  Generate a new GPG key pair.
     3.  Replace the key files in the host's `secrets/gpg_bot_key/` directory.
     4.  Update `GIT_SIGNING_KEY` in `docker/.env`.
-    5.  **You must rebuild and redeploy the Docker image** as the old key is baked into the existing image.
+    5.  The new key will be imported on the next container run. No image rebuild is required.
 
 3.  **API Token Compromise (`OPENAI_API_KEY`, etc.)**:
     1.  Immediately revoke the compromised token on the respective platform (OpenAI, Transifex, GitHub).

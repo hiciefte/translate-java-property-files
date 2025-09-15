@@ -36,7 +36,7 @@ docker compose build # Run this once or whenever you change the python scripts
 docker compose run --rm translator
 ```
 
-**NOTE FOR MACOS USERS:** Due to a known issue with how Docker for Mac handles volume mounts for SSH keys, the final step of the script (`git push` and creating a pull request) will fail with a "Permission denied" error. However, the entire translation and validation process will run successfully. You can inspect the results and logs locally. The automated PR creation is intended to be run on the server.
+**NOTE FOR MACOS USERS:** Due to a known issue with how Docker for Mac handles volume mounts for SSH keys, the final step of the script (`git push` and creating a pull request) will fail with a "Permission denied" error. However, the entire translation and validation process will run successfully. You can inspect the results and logs locally. The automated PR creation is intended to be run on the server. See the **[Local Development Guide](./docs/how-to-run-locally.md)** for more details.
 
 If you need to test the full Git workflow locally on a Mac, please use the "Legacy Python Script" method below, which uses your local Git and SSH setup directly.
 
@@ -71,11 +71,12 @@ The service is configured through a combination of YAML files and a single envir
 *   **`docker/.env`**: **Secrets.** Contains all sensitive information: API keys, tokens, and Git repository URLs. This file is not checked into version control. Use `docker/.env.example` as a template.
 *   **`config.yaml`**: **Local configuration.** Used by `run-local-translation.sh` for local, non-Docker runs.
 *   **`docker/config.docker.yaml`**: **Server configuration.** This is the configuration file used by the service when running inside Docker. It points to paths within the container (e.g., `/target_repo`).
-*   **`glossary.json`**: **DEPRECATED.** The glossary has been merged into `config.example.yaml`. This file may be removed in the future.
+*   **`glossary.json`**: Provides language-specific translations for key terms to ensure consistency.
+*   **`translation_file_filter_glob`** (optional, in `config.yaml`): A glob pattern that limits which changed `.properties` files are processed by the AI translator. This is useful for workflows where you want to pull all updated files from Transifex but only run the AI step on a specific subset (e.g., `mobile_*.properties`).
 
 ## Troubleshooting
 
-*   **Local Docker Run Fails on `git push` (macOS)**: This is an expected limitation. Please see the note under the "Local Development" section.
+*   **Local Docker Run Fails on `git push` (macOS)**: This is an expected limitation. Please see the note under the "Local Development" section and the [Local Development Guide](./docs/how-to-run-locally.md).
 *   **Validation Errors in Pull Request**: The PR description now includes a report of any files that were skipped due to linter or validation errors. These errors must be fixed manually in the source repository. See `docs/llm/debug-docker-service.md` for more details on common errors.
 *   **Server Deployment Issues**: Refer to the detailed deployment guide and the debugging documentation in the `docs/` directory.
 

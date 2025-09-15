@@ -47,8 +47,11 @@ from src.translation_validator import (
 
 # A hardcoded chunk size for the number of keys to be sent in a single
 # holistic review API call. This is a safeguard against "request too large"
-# token limit errors from the OpenAI API.
-HOLISTIC_REVIEW_CHUNK_SIZE = 75
+# token limit errors from the OpenAI API. It can be overridden.
+HOLISTIC_REVIEW_CHUNK_SIZE = int(os.environ.get(
+    "HOLISTIC_REVIEW_CHUNK_SIZE",
+    75
+))
 
 # Define the expected JSON schema for the AI's response in the holistic review.
 # This ensures that the AI returns a dictionary where every value is a string.
@@ -1062,6 +1065,8 @@ def move_files_to_archive(input_folder_path: str, archive_folder_path: str):
             if DRY_RUN:
                 logging.info(f"[Dry Run] Would move file '{source_path}' to '{dest_path}'.")
             else:
+                # Ensure the destination subdirectory exists before moving.
+                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
                 shutil.move(source_path, dest_path)
                 logging.info(f"Moved file '{source_path}' to '{dest_path}'.")
     logging.info(f"All translation files in '{input_folder_path}' have been archived.")
@@ -1133,8 +1138,9 @@ def get_changed_translation_files(input_folder_path: str, repo_root: str) -> Lis
         rel_input_folder = os.path.relpath(input_folder_path, repo_root)
 
         # Run 'git status --porcelain rel_input_folder' to get changed files in that folder
+        # We include untracked files with '--untracked-files=normal'
         result = subprocess.run(
-            ['git', 'status', '--porcelain', rel_input_folder],
+            ['git', 'status', '--porcelain', '--untracked-files=normal', rel_input_folder],
             cwd=repo_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -1149,7 +1155,10 @@ def get_changed_translation_files(input_folder_path: str, repo_root: str) -> Lis
             status, filepath = line[:2], line[3:]
             if status.strip().startswith('R') and ' -> ' in filepath:
                 filepath = filepath.split(' -> ', 1)[1]
-            if status.strip() in {'M', 'A', 'AM', 'MM', 'RM', 'R'}:
+
+            cleaned_status = status.strip()
+            # We now also check for '??' (untracked files)
+            if cleaned_status in {'M', 'A', 'AM', 'MM', 'RM', 'R', '??'}:
                 if filepath.endswith('.properties'):
                     # Check if it's a translation file (has language suffix)
                     if re.search(r'_[a-z]{2,3}(?:_[A-Z]{2})?\.properties$', filepath):
@@ -1231,7 +1240,13 @@ async def process_translation_queue(
         - The number of files successfully processed.
         - A dictionary of skipped files, mapping filename to a list of error strings.
     """
-    properties_files = [f for f in os.listdir(translation_queue_folder) if f.endswith('.properties')]
+    properties_files = []
+    for root, _, files in os.walk(translation_queue_folder):
+        for name in files:
+            if name.endswith('.properties'):
+                # Get the relative path from the queue folder to preserve subdirectories
+                relative_path = os.path.relpath(os.path.join(root, name), translation_queue_folder)
+                properties_files.append(relative_path)
 
     # Load the glossary from the JSON file
     glossary = load_glossary(glossary_file_path)
@@ -1474,6 +1489,7 @@ def archive_original_files(
         if DRY_RUN:
             logging.info(f"[Dry Run] Would archive '{source_path}' to '{dest_path}'.")
         else:
+            os.makedirs(os.path.dirname(dest_path), exist_ok=True)
             shutil.copy2(source_path, dest_path)
             logging.info(f"Archived original file '{source_path}' to '{dest_path}'.")
 

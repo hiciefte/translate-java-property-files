@@ -27,9 +27,25 @@ git clone <your-repository-url> /opt/translator-service
 cd /opt/translator-service
 ```
 
-## Step 2: Add Secrets
+## Step 2: Configure the Service
 
-You need to place the GPG key and create the `.env` file with your API tokens.
+Before adding secrets, you must create the main configuration file for the service.
+
+```bash
+# Copy the example config to create your instance-specific config
+cp config.example.yaml config.yaml
+
+# Now, edit config.yaml to set the correct paths and repository details.
+# At a minimum, you must set:
+# - target_project_root
+# - input_folder
+# You must use absolute paths inside the container, e.g., /target_repo
+nano config.yaml
+```
+
+## Step 3: Add Secrets and Set Permissions
+
+You need to place the GPG key and create the `.env` file with your API tokens. **This is a security-critical step.**
 
 1.  **GPG Private Key**:
     -   Copy your ASCII-armored GPG private key.
@@ -62,9 +78,19 @@ You need to place the GPG key and create the `.env` file with your API tokens.
     FORK_REPO_URL=git@github.com:your-username/your-fork.git
     # The HTTPS URL of the MAIN repository you are translating for.
     UPSTREAM_REPO_URL=https://github.com/original-org/original-repo.git
+
+    # Optional: Explicitly tell the script where to find the config file inside the container.
+    # This is recommended for robustness. It should match the volume mount in docker-compose.yml.
+    # TRANSLATOR_CONFIG_FILE=/app/config.yaml
     ```
 
-## Step 3: Build the Docker Image
+3.  **Harden File Permissions**:
+    -   Restrict access to your secret files so only the owner can read them.
+    ```bash
+    chmod 600 docker/.env secrets/gpg_bot_key/bot_secret_key.asc
+    ```
+
+## Step 4: Build the Docker Image
 
 Navigate to the `docker` directory and run the build command. This will create a self-contained image with all dependencies and your GPG key imported and trusted.
 
@@ -73,7 +99,7 @@ cd /opt/translator-service/docker
 docker compose build
 ```
 
-## Step 4: Perform a Manual Test Run
+## Step 5: Perform a Manual Test Run
 
 Before setting up the cron job, it's crucial to test that everything is working correctly.
 
@@ -85,7 +111,7 @@ docker compose run --rm translator
 
 If the run succeeds, you should see a new pull request created in your forked repository.
 
-## Step 5: Schedule the Cron Job
+## Step 6: Schedule the Cron Job
 
 Once the manual run is successful, you can schedule the service to run automatically.
 
@@ -93,10 +119,14 @@ Once the manual run is successful, you can schedule the service to run automatic
     ```bash
     sudo crontab -e
     ```
-2.  Paste the following line at the bottom of the file. This will run the translator every day at 3:00 AM.
+2.  Paste the following line at the bottom of the file. This is a robust example that sets the required environment and uses absolute paths to avoid common cron issues. It will run the translator every day at 3:00 AM.
 
     ```cron
-    0 3 * * * cd /opt/translator-service/docker && docker compose run --rm translator >> /opt/translator-service/logs/cron_job.log 2>&1
+    # Set a sane environment for the cron job
+    SHELL=/bin/bash
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+    0 3 * * * cd /opt/translator-service/docker && /usr/bin/docker compose run --rm translator >> /opt/translator-service/logs/cron_job.log 2>&1
     ```
 3.  Save and close the file.
 
