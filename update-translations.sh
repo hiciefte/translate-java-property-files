@@ -75,6 +75,9 @@ done
 
 BLOCKING_KEYWORD="[PIPELINE-BLOCK]"
 log "Checking for manually-blocked PRs with keyword '$BLOCKING_KEYWORD' in the title..."
+if ! command -v gh >/dev/null 2>&1; then
+    log "GitHub CLI (gh) not found; PR-blocking checks may be incomplete or skipped." "WARNING"
+fi
 if command_exists gh && [ -n "${GITHUB_TOKEN:-}" ]; then
   # Use the 'search' flag to query PR titles on the upstream repo.
   # Filter by '@me' which gh resolves to the currently authenticated user.
@@ -105,6 +108,19 @@ log "Starting Git and Transifex validation..."
 # Load configuration from YAML file
 # Use the environment variable if it's set, otherwise default to config.yaml in the CWD.
 CONFIG_FILE="${TRANSLATOR_CONFIG_FILE:-config.yaml}"
+
+if [ ! -f "$CONFIG_FILE" ]; then
+    log "Configuration file not found at '$CONFIG_FILE'." "ERROR"
+    # Attempt to find it in the script's directory as a fallback for local runs.
+    SCRIPT_DIR_REAL=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    if [ -f "$SCRIPT_DIR_REAL/$CONFIG_FILE" ]; then
+        CONFIG_FILE="$SCRIPT_DIR_REAL/$CONFIG_FILE"
+        log "Found config file in script directory: $CONFIG_FILE" "INFO"
+    else
+        log "Also not found in script directory. Aborting." "ERROR"
+        exit 1
+    fi
+fi
 log "Using configuration file: $CONFIG_FILE"
 
 # Helper function to parse values from config.yaml robustly using yq
@@ -271,7 +287,7 @@ if command_exists tx; then
     if [ -f "$TARGET_PROJECT_ROOT/.tx/config" ]; then
         log ".tx/config exists in project directory"
         log ".tx/config contents (without sensitive data):"
-        grep -Evi 'password|token|secret' "$TARGET_PROJECT_ROOT/.tx/config"
+        grep -Evi 'password|token|secret|api[_-]?key|auth(entication)?|credential(s)?' "$TARGET_PROJECT_ROOT/.tx/config"
     else
         log "Warning: .tx/config not found in project directory"
     fi
@@ -293,11 +309,17 @@ if command_exists tx; then
     # Execute the pull command. Redirect stderr to stdout (2>&1) and pipe the combined
     # output to grep. This filters out all verbose progress and skipping messages.
     # The final `|| true` prevents the script from exiting if grep finds no output.
-    $TX_PULL_CMD 2>&1 | grep -v -E 'Pulling file|Creating download job|File was not found locally' || true
+    $TX_PULL_CMD 2>&1 | grep -v -E 'Pulling file|Creating download job|File was not found locally'
+    tx_exit_code=${PIPESTATUS[0]}
+
+    if [[ $tx_exit_code -ne 0 ]]; then
+        log "Error: 'tx pull' command failed with exit code $tx_exit_code." "ERROR"
+        exit "$tx_exit_code"
+    fi
 
     # Verify that files have been updated
-    if ! git status --porcelain | grep -q '\.properties'; then
-        log "Error: Transifex pull did not update any .properties files. This might indicate an issue with the Transifex CLI or the configuration."
+    if ! git status --porcelain | grep -qE '\.(properties|po|mo)$'; then
+        log "Error: Transifex pull did not update any translation files (.properties/.po/.mo). This might indicate an issue with the Transifex CLI or the configuration." "ERROR"
         exit 1
     fi
 
@@ -363,7 +385,7 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
     log "Staging translation file changes (.properties, .po, .mo) and deletions"
     find "$ABSOLUTE_INPUT_FOLDER" \( -name '*.properties' -o -name '*.po' -o -name '*.mo' \) -print0 | xargs -0 git add
     # Stage deletions for removed translation files
-    git ls-files --deleted "$ABSOLUTE_INPUT_FOLDER" | grep -E '\.(properties|po|mo)$' | xargs -r git rm
+    git ls-files -z --deleted "$ABSOLUTE_INPUT_FOLDER"       | grep -z -E '\.(properties|po|mo)$'       | xargs -0 -r git rm
 
     # Commit changes, signing if a key is configured
     if git config --get commit.gpgsign >/dev/null 2>&1 && git config --get user.signingkey >/dev/null 2>&1; then
@@ -379,7 +401,6 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
       log "Pushing changes to origin ($FORK_REPO_NAME)"
       # Before pushing, derive the owner from the 'origin' remote URL.
       # This ensures the user in the PR head matches the push destination.
-      local fork_owner
       fork_owner=$(git remote get-url origin | sed -E 's#.*[:/](.+)/[^/]+(\.git)?$#\1#')
 
       if [ -z "$fork_owner" ]; then
@@ -390,7 +411,6 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
 
       # If FORK_REPO_NAME is set, validate it matches the remote.
       if [ -n "${FORK_REPO_NAME:-}" ]; then
-          local fork_repo_owner
           fork_repo_owner=$(echo "$FORK_REPO_NAME" | cut -d'/' -f1)
           if [[ "$fork_owner" != "$fork_repo_owner" ]]; then
               log "Error: The owner of the 'origin' remote ('$fork_owner') does not match the configured FORK_REPO_NAME owner ('$fork_repo_owner')." "ERROR"
