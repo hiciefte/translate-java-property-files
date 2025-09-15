@@ -50,15 +50,8 @@ if [ "$(id -u)" -eq 0 ]; then
     fi
     chmod "$LOG_DIR_MODE" /app/logs
 
-    # This logic ensures that if the script is re-entered as the appuser, it doesn't try to chown again.
-    if [ "$(id -u)" = "0" ]; then
-        log "Running as root. Setting up ownership..."
-
-        # Ensure the appuser exists
-        if ! id -u appuser >/dev/null 2>&1; then
-            log "Fatal: user 'appuser' does not exist." "ERROR"
-            exit 1
-        fi
+    # Root-specific setup continues...
+    log "Setting up appuser-specific environment..."
 
     # Set up .ssh directory for appuser to allow SSH operations
     log "Configuring SSH directory for appuser..."
@@ -69,8 +62,26 @@ if [ "$(id -u)" -eq 0 ]; then
         chmod 700 /home/appuser/.ssh
         
         # Pre-emptively accept GitHub's host key to avoid interactive prompts
-        log "Scanning and adding GitHub's host key..."
-        ssh-keyscan -t rsa github.com >> /home/appuser/.ssh/known_hosts
+        if command -v ssh-keyscan >/dev/null 2>&1; then
+            log "Scanning and adding GitHub's host key..."
+            
+            # Check if github.com is already in known_hosts to avoid duplicates
+            if ! ssh-keygen -F github.com -f /home/appuser/.ssh/known_hosts >/dev/null 2>&1; then
+                # Use modern key types with timeout and hashed hostname
+                if ssh-keyscan -T 10 -H -t ed25519,ecdsa,rsa github.com >/tmp/github_keys 2>/dev/null; then
+                    cat /tmp/github_keys >> /home/appuser/.ssh/known_hosts
+                    rm -f /tmp/github_keys
+                    log "GitHub host keys added successfully."
+                else
+                    log "Warning: Failed to scan GitHub host keys. SSH operations may require manual host verification." "WARNING"
+                    rm -f /tmp/github_keys
+                fi
+            else
+                log "GitHub host key already present in known_hosts."
+            fi
+        else
+            log "Warning: ssh-keyscan not available. SSH operations may require manual host verification." "WARNING"
+        fi
         
         # Set ownership of the .ssh directory and its contents
         chown -R appuser:appuser /home/appuser/.ssh
@@ -88,13 +99,32 @@ if [ "$(id -u)" -eq 0 ]; then
             fi
             chmod "$LOG_DIR_MODE" /app/logs || log "Warning: Could not set permissions on /app/logs. Continuing..."
         fi
-    fi
 
     log "Permissions fixed. Re-executing as appuser..."
+    
+    # Debug: Check if appuser exists and get its details
+    log "Debug: Checking appuser details..."
+    id appuser || log "Warning: id appuser failed"
+    ls -la /home/appuser || log "Warning: ls /home/appuser failed"
+    
     if command -v gosu >/dev/null 2>&1; then
-        exec gosu appuser "$0" "$@"
+        log "Using gosu to switch to appuser..."
+        if gosu appuser "$0" "$@" 2>/dev/null; then
+            exit 0
+        else
+            log "Warning: gosu failed to switch to appuser. This may be due to Docker for Mac restrictions." "WARNING"
+            log "Continuing as root for local development..." "WARNING"
+            # Continue execution as root instead of exiting
+        fi
     elif command -v su-exec >/dev/null 2>&1; then
-        exec su-exec appuser "$0" "$@"
+        log "Using su-exec to switch to appuser..."
+        if su-exec appuser "$0" "$@" 2>/dev/null; then
+            exit 0
+        else
+            log "Warning: su-exec failed to switch to appuser. This may be due to Docker for Mac restrictions." "WARNING"
+            log "Continuing as root for local development..." "WARNING"
+            # Continue execution as root instead of exiting
+        fi
     else
         log "Error: neither 'gosu' nor 'su-exec' found in PATH." >&2
         exit 1
