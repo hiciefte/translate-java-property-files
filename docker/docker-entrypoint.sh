@@ -50,6 +50,46 @@ if [ "$(id -u)" -eq 0 ]; then
     fi
     chmod "$LOG_DIR_MODE" /app/logs
 
+    # This logic ensures that if the script is re-entered as the appuser, it doesn't try to chown again.
+    if [ "$(id -u)" = "0" ]; then
+        log "Running as root. Setting up ownership..."
+
+        # Ensure the appuser exists
+        if ! id -u appuser >/dev/null 2>&1; then
+            log "Fatal: user 'appuser' does not exist." "ERROR"
+            exit 1
+        fi
+
+    # Set up .ssh directory for appuser to allow SSH operations
+    log "Configuring SSH directory for appuser..."
+    mkdir -p /home/appuser/.ssh
+    
+    # Check if the .ssh directory is writable (it might be mounted read-only on Docker for Mac)
+    if [ -w "/home/appuser/.ssh" ]; then
+        chmod 700 /home/appuser/.ssh
+        
+        # Pre-emptively accept GitHub's host key to avoid interactive prompts
+        log "Scanning and adding GitHub's host key..."
+        ssh-keyscan -t rsa github.com >> /home/appuser/.ssh/known_hosts
+        
+        # Set ownership of the .ssh directory and its contents
+        chown -R appuser:appuser /home/appuser/.ssh
+        log "SSH directory configured successfully."
+    else
+        log "SSH directory is read-only (likely mounted from host). Skipping SSH configuration." "WARNING"
+        log "This is normal for local development with Docker for Mac." "INFO"
+    fi
+
+        # Ensure log directory exists and is owned by appuser
+        # This is critical if logs are written from within the container by the appuser
+        if [ -d "/app/logs" ]; then
+            if find /app/logs -mindepth 1 -maxdepth 1 \( ! -uid "$APPUSER_UID" -o ! -gid "$APPUSER_GID" \) -print -quit | read -r; then
+                chown -R appuser:appuser /app/logs || log "Warning: unable to chown /app/logs; continuing"
+            fi
+            chmod "$LOG_DIR_MODE" /app/logs || log "Warning: Could not set permissions on /app/logs. Continuing..."
+        fi
+    fi
+
     log "Permissions fixed. Re-executing as appuser..."
     if command -v gosu >/dev/null 2>&1; then
         exec gosu appuser "$0" "$@"
@@ -90,11 +130,11 @@ git config --global user.email "$GIT_USER_EMAIL"
 
 if [ -n "$GPG_SIGNING_KEY" ]; then
     git config --global user.signingkey "$GPG_SIGNING_KEY"
-    git config --global commit.gpgsign true
+        git config --global commit.gpgsign true 
     log "Git user configured with GPG signing key."
-else
+    else
     git config --global --unset-all user.signingkey >/dev/null 2>&1 || true
-    git config --global commit.gpgsign false
+        git config --global commit.gpgsign false 
     log "Git user configured without a GPG signing key; commit signing disabled."
 fi
 
@@ -115,7 +155,7 @@ else
     # Use parameter expansion with error message for required variables
     FORK_REPO_URL="https://github.com/${FORK_REPO_NAME:?FORK_REPO_NAME must be set}.git"
     git clone "$FORK_REPO_URL" "$TARGET_REPO_DIR"
-    cd "$TARGET_REPO_DIR"
+        cd "$TARGET_REPO_DIR"
 fi
 
 # --- Git Remote and Branch Harmonization ---
