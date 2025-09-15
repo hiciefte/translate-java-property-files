@@ -314,7 +314,10 @@ if command_exists tx; then
         log "Warning: .tx/config not found in project directory"
     fi
     
-    # Pull translations with -t option
+    # Pull translations with -t option.
+    # The --quiet (-q) flag is used to suppress the verbose "skipping" messages
+    # for languages that exist on Transifex but not in the local repository.
+    # The --force (-f) flag ensures local files are overwritten with remote changes.
     TX_PULL_CMD="tx pull -t -f --use-git-timestamps"
     if [[ "$PULL_SOURCE_FILES" == "true" ]]; then
         log "Configuration directs to pull source files as well. Modifying tx command."
@@ -326,21 +329,32 @@ if command_exists tx; then
     ls -la .
     log "Listing permissions for input folder '${ABSOLUTE_INPUT_FOLDER}' before tx pull:"
     ls -la "${ABSOLUTE_INPUT_FOLDER}" || true
-    $TX_PULL_CMD || {
-        log "Error during tx pull. Exiting."
+    
+    # Execute the pull command. Redirect stderr to stdout (2>&1) and pipe the combined
+    # output to grep. This filters out all verbose progress and skipping messages.
+    # The final `|| true` prevents the script from exiting if grep finds no output.
+    $TX_PULL_CMD 2>&1 | grep -v -E 'Pulling file|Creating download job|File was not found locally' || true
+
+    # Check the exit code of the tx command itself using PIPESTATUS
+    # This is crucial because the `|| true` would mask a real failure from the tx client.
+    tx_exit_code=${PIPESTATUS[0]}
+    if [ $tx_exit_code -ne 0 ]; then
+        log "Error during tx pull (Exit Code: $tx_exit_code). Exiting."
         exit 1
-    }
+    fi
+
     log "Successfully pulled translations"
 else
     log "Error: Transifex CLI not found. Please install it manually."
     exit 1
 fi
 
-# Navigate back to the translation script directory
-cd - > /dev/null
-log "Returned to the translation script directory"
+# Navigate back to the application's root directory to run the python script.
+# This ensures that the module path `src.translate_localization_files` is resolved correctly.
+cd /app
+log "Returned to the application root directory: $(pwd)"
 
-# Step 3: Run the translation script with the virtual environment Python
+# Step 3: Run the translation script
 log "Running translation script"
 # If a filter glob is defined in the config, and it is not the literal string "null",
 # export it as an environment variable for the Python script to use.
@@ -353,6 +367,10 @@ python3 -m src.translate_localization_files || {
     log "Error: Failed to run translation script. Exiting."
     exit 1
 }
+
+# Change back to the target project root for the final git operations.
+cd "$TARGET_PROJECT_ROOT"
+log "Changed back to target project root: $(pwd)"
 
 # Step 4: Clean up archived translation files before committing
 log "Cleaning up archived translation files"
