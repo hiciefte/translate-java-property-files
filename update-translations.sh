@@ -73,7 +73,7 @@ log "No pending translation PRs found. Proceeding with translation check."
 log "Update script started. Checking for TX_TOKEN..."
 
 # Check if TX_TOKEN is already set in the environment
-if [ -n "$TX_TOKEN" ]; then
+if [ -n "${TX_TOKEN:-}" ]; then
     log "TX_TOKEN is already set in the environment."
 else
     log "TX_TOKEN not found in environment. Attempting to load from .env files..."
@@ -101,7 +101,7 @@ else
 fi
 
 # Ensure TX_TOKEN is set now (either from initial env or sourced from file)
-if [ -z "$TX_TOKEN" ]; then
+if [ -z "${TX_TOKEN:-}" ]; then
     log "Error: TX_TOKEN environment variable is not set and could not be loaded from .env files."
     log "Please ensure TX_TOKEN is available as an environment variable or in a .env file."
     log "For Docker, ensure it's passed via docker-compose.yml environment section from your host's .env file."
@@ -127,8 +127,9 @@ get_config_value() {
     local key="$1"
     local config_file="$2"
     # Use yq to safely read the value. The -e flag exits with non-zero status if the key is not found.
+    # The -r flag outputs raw strings, preventing issues with "null" or extra quotes.
     # The '|| true' prevents the script from exiting if a key is not found (for optional keys).
-    yq -e ".$key" "$config_file" || true
+    yq -e -r ".$key" "$config_file" || true
 }
 
 TARGET_PROJECT_ROOT=$(get_config_value "target_project_root" "$CONFIG_FILE")
@@ -213,7 +214,7 @@ else
     # Get the actual English source files present on disk.
     # We use find and then remove the input folder prefix to get paths relative to the input folder,
     # which should match the format in the Transifex config.
-    shopt -s globstar
+    # globstar not needed; using find
     mapfile -t actual_sources_full_path < <(find "$ABSOLUTE_INPUT_FOLDER" -type f -name '*_en.properties')
 
     declare -A configured_relative_paths
@@ -241,27 +242,35 @@ else
     log "INFO" "All source files are correctly configured in Transifex."
 fi
 
+# Determine the default branch to reset against
+DEFAULT_BRANCH="${TARGET_BRANCH_FOR_PR:-}"
+if [ -z "$DEFAULT_BRANCH" ]; then
+  DEFAULT_BRANCH="$(git remote show upstream 2>/dev/null | awk -F': ' '/HEAD branch/ {print $2}')"
+  DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
+fi
+log "Using default branch: ${DEFAULT_BRANCH}"
+
 # Reset the repository to a clean state to avoid any conflicts or leftover files.
-log "Resetting local repository to a clean state against upstream/main in $TARGET_PROJECT_ROOT"
+log "Resetting local repository to a clean state against upstream/${DEFAULT_BRANCH} in $TARGET_PROJECT_ROOT"
 # Fetch the latest from upstream to ensure our reference is current.
 git fetch upstream
 # Reset to the upstream main branch, discarding all local changes and commits.
-git reset --hard upstream/main
+git reset --hard "upstream/${DEFAULT_BRANCH}"
 # Clean untracked files and directories, but exclude critical local dev files.
 log "Cleaning untracked files, excluding development directories..."
 git clean -fde "venv/" -e ".idea/" -e "*.iml" -e "secrets/" -e "docker/.env"
 
-# Save the current branch (should be main as set by entrypoint)
-ORIGINAL_BRANCH=$(git branch --show-current)
-log "Current branch (should be main): $ORIGINAL_BRANCH"
-if [ "$ORIGINAL_BRANCH" != "main" ]; then
-    log "Warning: Expected to be on main branch, but on $ORIGINAL_BRANCH. Checking out main."
-    git checkout main
+# Save the current branch
+ORIGINAL_BRANCH=$(git branch --show-current || true)
+log "Current branch: $ORIGINAL_BRANCH"
+if [ "$ORIGINAL_BRANCH" != "${DEFAULT_BRANCH}" ]; then
+    log "Warning: Expected to be on ${DEFAULT_BRANCH} branch, but on ${ORIGINAL_BRANCH}. Checking out ${DEFAULT_BRANCH}."
+    git checkout "${DEFAULT_BRANCH}"
 fi
 
-# The entrypoint script already reset main to upstream/main and updated submodules.
+# The entrypoint script already reset the branch to upstream and updated submodules.
 # No further git pull or submodule init/update should be necessary here before tx pull.
-log "Proceeding with Transifex operations. Current HEAD:"
+log "Proceeding with Transifex operations. Current HEAD on ${DEFAULT_BRANCH}:"
 git log -1 --pretty=%H
 
 # Step 2: Use Transifex CLI to pull the latest translations
@@ -292,8 +301,8 @@ if command_exists tx; then
     log "Using tx command: $TX_PULL_CMD"
     log "Listing permissions for current directory ($(pwd)) before tx pull:"
     ls -la .
-    log "Listing permissions for ./i18n/src/main/resources before tx pull:"
-    ls -la ./i18n/src/main/resources
+    log "Listing permissions for ${ABSOLUTE_INPUT_FOLDER} before tx pull:"
+    ls -la "${ABSOLUTE_INPUT_FOLDER}" || true
     $TX_PULL_CMD || {
         log "Error during tx pull. Exiting."
         exit 1
@@ -323,8 +332,8 @@ python3 -m src.translate_localization_files || {
 
 # Step 4: Clean up archived translation files before committing
 log "Cleaning up archived translation files"
-if [ -d "$INPUT_FOLDER/archive" ]; then # This now uses the cleaned INPUT_FOLDER
-    rm -rf "$INPUT_FOLDER/archive"
+if [ -d "$ABSOLUTE_INPUT_FOLDER/archive" ]; then
+    rm -rf "$ABSOLUTE_INPUT_FOLDER/archive"
     log "Deleted archived translation files"
 fi
 
@@ -347,15 +356,21 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
     log "Creating new branch: $BRANCH_NAME"
     git checkout -b "$BRANCH_NAME"
     
-    # Add only translation files
-    log "Adding translation files to git"
-    # Be specific about the path and ignore errors for optional types
-    git add i18n/src/main/resources/*.properties || log "Warning: No *.properties files found to add in i18n/src/main/resources/."
+    # Add only translation files that have changed
+    log "Adding changed translation files to git"
+    # We find all .properties files within the input folder and add them.
+    # This is more robust than a hardcoded path and handles subdirectories.
+    find "$ABSOLUTE_INPUT_FOLDER" -name '*.properties' -print0 | xargs -0 git add
 
-    # Commit changes with GPG signing
-    log "Committing changes with GPG signing"
-    git commit -S -m "Automated translation update"
-    
+    # Commit changes, signing if a key is configured
+    if git config --get commit.gpgsign >/dev/null 2>&1 && git config --get user.signingkey >/dev/null 2>&1; then
+      log "Committing with GPG signing"
+      git commit -S -m "Automated translation update"
+    else
+      log "Committing without GPG signing"
+      git commit -m "Automated translation update"
+    fi
+
     # Push the branch to GitHub
     log "Pushing changes to origin ($FORK_REPO_NAME)"
     git push origin "$BRANCH_NAME"
@@ -418,11 +433,10 @@ log "Re-initializing and updating git submodules after returning to original bra
 git submodule init
 git submodule update --recursive
 
-log "Deactivating virtual environment"
-deactivate || true
+# No virtual environment to deactivate
 
 # Send a heartbeat ping to the health check URL if it is configured
-if [ -n "$HEALTHCHECK_URL" ]; then
+if [ -n "${HEALTHCHECK_URL:-}" ]; then
     log "Sending successful heartbeat to health check URL..."
     # Use curl with options to fail silently and handle connection timeouts
     curl -fsS --retry 3 --max-time 10 "$HEALTHCHECK_URL" > /dev/null || log "Warning: Health check ping failed."

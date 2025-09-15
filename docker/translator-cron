@@ -6,6 +6,6 @@
 # IMPORTANT: Replace '/path/to/your/project' with the absolute path to this project's root directory on your server.
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-0 3 * * * cd /path/to/your/project/docker && /usr/bin/docker compose run --rm translator >> /path/to/your/project/logs/cron_job.log 2>&1
+0 3 * * * cd /path/to/your/project/docker && mkdir -p ../logs && /usr/bin/docker compose run --rm translator >> /path/to/your/project/logs/cron_job.log 2>&1
 
 # An empty line at the end of the crontab is recommended for portability. 

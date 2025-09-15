@@ -24,7 +24,7 @@ review_model_name: "gpt-4o"
 # This is useful for targeting specific sets of files, like 'mobile_*.properties'.
 # If commented out or empty, all changed .properties files will be translated.
 # Set to null or remove to translate all changed files.
-translation_file_filter_glob: null
+# translation_file_filter_glob: null
 
 # Optional: Pull source files (*_en.properties) from Transifex as well as translations.
 # Set to `true` if the canonical source of truth for English strings is Transifex.

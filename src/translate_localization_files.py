@@ -1543,6 +1543,9 @@ async def main():
     report_path = os.path.join(PROJECT_ROOT_DIR, 'logs', 'skipped_files_report.log')
     if skipped_files:
         logging.info(f"Some files were skipped. Writing report to {report_path}")
+        # Ensure the directory exists before trying to write the file.
+        report_dir = os.path.dirname(report_path)
+        os.makedirs(report_dir, exist_ok=True)
         with open(report_path, 'w', encoding='utf-8') as f:
             f.write("## ⚠️ Translation Pipeline Warnings\n\n")
             f.write("The following files were skipped during the AI translation process due to validation or linter errors. These issues must be addressed manually.\n\n")

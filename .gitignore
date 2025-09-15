@@ -4,10 +4,10 @@ __pycache__/
 *.iml
 .idea/
 .DS_Store
-logs/*
+logs/**
 !logs/.gitkeep
 # Ignore all secret files, but keep the directory structure placeholder.
-secrets/*
+secrets/**
 !secrets/.gitkeep
 # Ignore environment files. The .env file in the docker directory is for server deployment secrets.
 # The root .env is for local non-docker testing. Neither should be in git.

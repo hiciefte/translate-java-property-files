@@ -4,11 +4,13 @@ set -euo pipefail
 # If this script is run as root, fix permissions for the target repository
 # and then re-execute this script as the non-root 'appuser'.
 if [ "$(id -u)" = '0' ]; then
-    echo "[Entrypoint] Running as root. Fixing /target_repo permissions..."
+    # Allow target repo directory to be customized via environment variable
+    TARGET_REPO_DIR="${TARGET_REPO_DIR:-/target_repo}"
+    echo "[Entrypoint] Running as root. Ensuring ${TARGET_REPO_DIR} exists and has correct permissions..."
     # Ensure the target directory exists and is owned by appuser.
     # This makes the container resilient to the volume's initial state.
-    mkdir -p /target_repo
-    chown -R appuser:appuser /target_repo
+    mkdir -p "$TARGET_REPO_DIR"
+    chown -R appuser:appuser "$TARGET_REPO_DIR"
     echo "[Entrypoint] Permissions fixed. Re-executing as appuser..."
     # Use gosu to drop privileges and run the rest of the script as appuser.
     # "$@" passes along any command given to the entrypoint (e.g., from docker-compose).
@@ -34,6 +36,7 @@ fi
 
 # Derive upstream if not provided (fallback to fork).
 ACTUAL_UPSTREAM_REPO_URL="${UPSTREAM_REPO_URL:-$FORK_REPO_URL}"
+# Use the same logic as the root block to ensure consistency
 TARGET_REPO_DIR="${TARGET_REPO_DIR:-/target_repo}"
 
 # --- Git User Configuration ---
@@ -63,9 +66,17 @@ fi
     log "Fetching latest changes from upstream..."
     git fetch --prune --tags upstream
 
-    log "Checking out 'main' and resetting to match 'upstream/main'..."
-    git checkout main
-        git reset --hard upstream/main
+    # Determine the default branch to reset against
+    DEFAULT_BRANCH="${TARGET_BRANCH_FOR_PR:-}"
+    if [ -z "$DEFAULT_BRANCH" ]; then
+      DEFAULT_BRANCH="$(git remote show upstream 2>/dev/null | awk -F': ' '/HEAD branch/ {print $2}')"
+      DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
+    fi
+    log "Using default branch: ${DEFAULT_BRANCH}"
+
+    log "Checking out '${DEFAULT_BRANCH}' and resetting to match 'upstream/${DEFAULT_BRANCH}'..."
+    git checkout "$DEFAULT_BRANCH"
+    git reset --hard "upstream/${DEFAULT_BRANCH}"
 else
     log "No repository found in $TARGET_REPO_DIR. Cloning from fork..."
     git clone "$FORK_REPO_URL" "$TARGET_REPO_DIR"
@@ -77,9 +88,17 @@ else
     log "Fetching latest changes from upstream..."
     git fetch --prune --tags upstream
 
-    log "Checking out 'main' and resetting to match 'upstream/main'..."
-    git checkout main
-        git reset --hard upstream/main
+    # Determine the default branch for the initial checkout
+    DEFAULT_BRANCH="${TARGET_BRANCH_FOR_PR:-}"
+    if [ -z "$DEFAULT_BRANCH" ]; then
+      DEFAULT_BRANCH="$(git remote show upstream 2>/dev/null | awk -F': ' '/HEAD branch/ {print $2}')"
+      DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
+    fi
+    log "Using default branch: ${DEFAULT_BRANCH}"
+
+    log "Checking out '${DEFAULT_BRANCH}' and resetting to match 'upstream/${DEFAULT_BRANCH}'..."
+    git checkout "$DEFAULT_BRANCH"
+    git reset --hard "upstream/${DEFAULT_BRANCH}"
 fi
 
 log "Repository is up to date."
