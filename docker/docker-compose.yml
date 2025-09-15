@@ -14,7 +14,7 @@ services:
       # Mount the glossary file (located in project root)
       - ../glossary.json:/app/glossary.json:ro
       # Mount SSH keys from host user's home (read-only for appuser)
-      # - ${HOME}/.ssh:/home/appuser/.ssh:ro
+      - ${HOME}/.ssh:/home/appuser/.ssh:ro
       # Mount logs directory (in project root) for persistence
       - ../logs:/app/logs
       # Mount a named volume for the target repository to persist it across restarts
