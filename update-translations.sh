@@ -62,7 +62,7 @@ check_and_exit_if_blocked() {
 # Check for required tools
 for tool in yq git tx curl; do
     if ! command -v "$tool" >/dev/null 2>&1; then
-        log "Error: Required tool '$tool' is not installed."
+        log "Required tool '$tool' is not installed." "ERROR"
         exit 1
     fi
 done
@@ -198,7 +198,7 @@ else
     # Check for unconfigured source files before proceeding.
     # This prevents pulling translations for files that are no longer part of the source.
     #
-    log "INFO" "Checking for source files that are not configured in Transifex..."
+    log "Checking for source files that are not configured in Transifex..." "INFO"
 
     # Extract the 'source_file' for each resource from the Transifex config.
     # This gives us the configured source files with their full paths relative to the repo root.
@@ -223,18 +223,18 @@ else
         relative_path=${full_path#"$TARGET_PROJECT_ROOT/"}
         if [[ -z "${configured_relative_paths["$relative_path"]}" ]]; then
             if ! $unconfigured_files_found; then
-                log "WARNING" "Found source files not configured in Transifex:"
+                log "Found source files not configured in Transifex:" "WARNING"
                 unconfigured_files_found=true
             fi
-            log "WARNING" "  - $relative_path"
+            log "  - $relative_path" "WARNING"
         fi
     done
 
     if $unconfigured_files_found; then
-        log "ERROR" "Aborting due to unconfigured source files. Please update the Transifex config at '$TX_CONFIG_FILE' and push the changes."
+        log "Aborting due to unconfigured source files. Please update the Transifex config at '$TX_CONFIG_FILE' and push the changes." "ERROR"
         exit 1
     fi
-    log "INFO" "All source files are correctly configured in Transifex."
+    log "All source files are correctly configured in Transifex." "INFO"
 fi
 
 # Determine the default branch and remote to reset against
@@ -287,7 +287,7 @@ if command_exists tx; then
     if [ -f "$TARGET_PROJECT_ROOT/.tx/config" ]; then
         log ".tx/config exists in project directory"
         log ".tx/config contents (without sensitive data):"
-        grep -Evi 'password|token|secret|api[_-]?key|auth(entication)?|credential(s)?' "$TARGET_PROJECT_ROOT/.tx/config"
+        grep -Evi 'password|token|secret|api[_-]?key|auth(entication)?|credential(s)?' "$TARGET_PROJECT_ROOT/.tx/config" || true
     else
         log "Warning: .tx/config not found in project directory"
     fi
@@ -306,15 +306,14 @@ if command_exists tx; then
     log "Listing permissions for input folder '${ABSOLUTE_INPUT_FOLDER}' before tx pull:"
     log_cmd ls -la "${ABSOLUTE_INPUT_FOLDER}"
     
-    # Execute the pull command. Redirect stderr to stdout (2>&1) and pipe the combined
-    # output to grep. This filters out all verbose progress and skipping messages.
-    # The final `|| true` prevents the script from exiting if grep finds no output.
-    $TX_PULL_CMD 2>&1 | grep -v -E 'Pulling file|Creating download job|File was not found locally'
-    tx_exit_code=${PIPESTATUS[0]}
-
-    if [[ $tx_exit_code -ne 0 ]]; then
-        log "Error: 'tx pull' command failed with exit code $tx_exit_code." "ERROR"
-        exit "$tx_exit_code"
+    # Execute and filter output, but preserve original tx exit code.
+    set +e
+    { $TX_PULL_CMD 2>&1 | grep -v -E 'Pulling file|Creating download job|File was not found locally'; }
+    TX_STATUS=${PIPESTATUS[0]}
+    set -e
+    if [ $TX_STATUS -ne 0 ]; then
+        log "Transifex pull failed (exit $TX_STATUS). See previous logs for details." "ERROR"
+        exit $TX_STATUS
     fi
 
     # Verify that files have been updated
@@ -384,8 +383,8 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
     # Add translation files that have changed and stage deletions
     log "Staging translation file changes (.properties, .po, .mo) and deletions"
     find "$ABSOLUTE_INPUT_FOLDER" \( -name '*.properties' -o -name '*.po' -o -name '*.mo' \) -print0 | xargs -0 git add
-    # Stage deletions for removed translation files
-    git ls-files -z --deleted "$ABSOLUTE_INPUT_FOLDER"       | grep -z -E '\.(properties|po|mo)$'       | xargs -0 -r git rm
+    # Stage deletions for removed translation files (avoid non-zero grep under pipefail)
+    git ls-files --deleted "$ABSOLUTE_INPUT_FOLDER" | awk '/\.(properties|po|mo)$/' | xargs -r git rm
 
     # Commit changes, signing if a key is configured
     if git config --get commit.gpgsign >/dev/null 2>&1 && git config --get user.signingkey >/dev/null 2>&1; then
@@ -397,8 +396,9 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
     fi
 
     # Push the branch to GitHub
+    PUSH_OK=0
     if git remote | grep -qx 'origin'; then
-      log "Pushing changes to origin ($FORK_REPO_NAME)"
+      log "Pushing changes to 'origin' remote"
       # Before pushing, derive the owner from the 'origin' remote URL.
       # This ensures the user in the PR head matches the push destination.
       fork_owner=$(git remote get-url origin | sed -E 's#.*[:/](.+)/[^/]+(\.git)?$#\1#')
@@ -419,12 +419,19 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
           fi
       fi
 
-      git push origin "$BRANCH_NAME"
+      if git push origin "$BRANCH_NAME"; then
+          PUSH_OK=1
+      else
+          log "Failed to push branch '$BRANCH_NAME' to origin." "ERROR"
+      fi
     else
-      log "Error: 'origin' remote not found; cannot push PR branch. Configure a fork remote named 'origin' or adjust the script."
+      log "'origin' remote not found; cannot push PR branch. Configure a fork remote named 'origin' or adjust the script." "ERROR"
     fi
     
-    # Step 5: Create a GitHub pull request
+    # Step 5: Create a GitHub pull request (only if push succeeded)
+    if [ "${PUSH_OK:-0}" -ne 1 ]; then
+        log "Skipping PR creation because the branch was not pushed." "WARNING"
+    else
     log "Creating GitHub pull request to $UPSTREAM_REPO_NAME"
     PR_TITLE="Automated Translation Update - $(date +'%Y-%m-%d %H:%M:%S')"
     PR_BODY="This pull request was automatically generated by the translation script and contains the latest translation updates from Transifex and OpenAI.
@@ -466,7 +473,8 @@ This PR is from branch \`$BRANCH_NAME\` on the \`$FORK_REPO_NAME\` fork and targ
             fi
         fi
     else
-        log "Error: GitHub CLI (gh) not found. Cannot create pull request."
+        log "GitHub CLI (gh) not found. Cannot create pull request." "ERROR"
+    fi
     fi
 else
     log "No translation changes to commit"
