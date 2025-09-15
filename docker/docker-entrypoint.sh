@@ -12,17 +12,31 @@ if [ "$(id -u)" = '0' ]; then
     mkdir -p "$TARGET_REPO_DIR"
     chown -R appuser:appuser "$TARGET_REPO_DIR"
 
-    # Also ensure the application's log directory is writable by the appuser
+    # Also ensure the application's log directory exists, is a directory, and is owned by appuser
+    if [ -e /app/logs ] && [ ! -d /app/logs ]; then
+        echo "[Entrypoint] Error: /app/logs exists but is not a directory" >&2; exit 1
+    fi
     mkdir -p /app/logs
     chown -R appuser:appuser /app/logs
+    chmod 0755 /app/logs
 
     echo "[Entrypoint] Permissions fixed. Re-executing as appuser..."
-    # Use gosu to drop privileges and run the rest of the script as appuser.
-    # "$@" passes along any command given to the entrypoint (e.g., from docker-compose).
-    exec gosu appuser "$0" "$@"
+    # Drop privileges and re-run this script as 'appuser'
+    if command -v gosu >/dev/null 2>&1; then
+        exec gosu appuser "$0" "$@"
+    elif command -v su-exec >/dev/null 2>&1; then
+        exec su-exec appuser "$0" "$@"
+    else
+        log "Error: neither 'gosu' nor 'su-exec' found in PATH."
+        exit 1
+    fi
 fi
 
-# --- From this point on, the script is guaranteed to be running as appuser ---
+# --- Appuser-Level Execution ---
+# This part of the script runs as the non-root 'appuser'
+
+# Ensure logs directory exists when not started as root
+[ -d /app/logs ] || mkdir -p /app/logs
 
 # Log function for this script
 log() {
