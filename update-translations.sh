@@ -126,6 +126,10 @@ log "Using configuration file: $CONFIG_FILE"
 get_config_value() {
     local key="$1"
     local config_file="$2"
+    if ! command -v yq >/dev/null 2>&1; then
+        log "Error: 'yq' is required but not found in PATH."
+        exit 1
+    fi
     # Use yq to safely read the value. The -e flag exits with non-zero status if the key is not found.
     # The -r flag outputs raw strings, preventing issues with "null" or extra quotes.
     # The '|| true' prevents the script from exiting if a key is not found (for optional keys).
@@ -242,20 +246,31 @@ else
     log "INFO" "All source files are correctly configured in Transifex."
 fi
 
-# Determine the default branch to reset against
+# Determine the default branch and remote to reset against
 DEFAULT_BRANCH="${TARGET_BRANCH_FOR_PR:-}"
+REMOTE="upstream" # Default to upstream
+if ! git remote | grep -q "^${REMOTE}$"; then
+    log "Warning: Remote '${REMOTE}' not found. Falling back to 'origin'."
+    REMOTE="origin"
+    if ! git remote | grep -q "^${REMOTE}$"; then
+        log "Error: Remote 'origin' also not found. Cannot proceed."
+        exit 1
+    fi
+fi
+log "Using remote: ${REMOTE}"
+
 if [ -z "$DEFAULT_BRANCH" ]; then
-  DEFAULT_BRANCH="$(git remote show upstream 2>/dev/null | awk -F': ' '/HEAD branch/ {print $2}')"
+  DEFAULT_BRANCH="$(git remote show ${REMOTE} 2>/dev/null | awk -F': ' '/HEAD branch/ {print $2}')"
   DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
 fi
 log "Using default branch: ${DEFAULT_BRANCH}"
 
 # Reset the repository to a clean state to avoid any conflicts or leftover files.
-log "Resetting local repository to a clean state against upstream/${DEFAULT_BRANCH} in $TARGET_PROJECT_ROOT"
-# Fetch the latest from upstream to ensure our reference is current.
-git fetch upstream
-# Reset to the upstream main branch, discarding all local changes and commits.
-git reset --hard "upstream/${DEFAULT_BRANCH}"
+log "Resetting local repository to a clean state against ${REMOTE}/${DEFAULT_BRANCH} in $TARGET_PROJECT_ROOT"
+# Fetch the latest from the determined remote to ensure our reference is current.
+git fetch "${REMOTE}"
+# Reset to the remote main branch, discarding all local changes and commits.
+git reset --hard "${REMOTE}/${DEFAULT_BRANCH}"
 # Clean untracked files and directories, but exclude critical local dev files.
 log "Cleaning untracked files, excluding development directories..."
 git clean -fde "venv/" -e ".idea/" -e "*.iml" -e "secrets/" -e "docker/.env"
@@ -423,10 +438,14 @@ else
 fi
 
 # Go back to original branch
-log "Returning to original branch: $ORIGINAL_BRANCH"
-log "Listing permissions for $TARGET_PROJECT_ROOT/.git before checkout $ORIGINAL_BRANCH:"
-ls -la "$TARGET_PROJECT_ROOT/.git"
-git checkout --force "$ORIGINAL_BRANCH"
+if [ -n "$ORIGINAL_BRANCH" ] && [ "$ORIGINAL_BRANCH" != "$DEFAULT_BRANCH" ]; then
+  log "Returning to original branch: $ORIGINAL_BRANCH"
+  log "Listing permissions for $TARGET_PROJECT_ROOT/.git before checkout $ORIGINAL_BRANCH:"
+  ls -la "$TARGET_PROJECT_ROOT/.git"
+  git checkout --force "$ORIGINAL_BRANCH"
+else
+  log "Staying on ${DEFAULT_BRANCH} (no original branch to return to)."
+fi
 
 # Re-initialize and update submodules after returning to original branch
 log "Re-initializing and updating git submodules after returning to original branch"

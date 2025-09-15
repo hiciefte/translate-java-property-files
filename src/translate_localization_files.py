@@ -92,6 +92,10 @@ except FileNotFoundError:
     LOG_FILE_PATH = DEFAULT_LOG_FILE_PATH
     LOG_LEVEL = DEFAULT_LOG_LEVEL
     LOG_TO_CONSOLE = DEFAULT_LOG_TO_CONSOLE
+except (yaml.YAMLError, OSError) as e:
+    print(f"Warning: Error loading or parsing configuration file '{CONFIG_FILE}': {e}. Using default logging settings.")
+    LOG_FILE_PATH = DEFAULT_LOG_FILE_PATH
+    LOG_LEVEL = DEFAULT_LOG_LEVEL
 except Exception as e:
     print(f"Warning: Error loading or parsing configuration file '{CONFIG_FILE}': {e}. Using default logging settings.")
     LOG_FILE_PATH = DEFAULT_LOG_FILE_PATH
@@ -129,7 +133,7 @@ else:
 # token limit errors from the OpenAI API.
 # It can be configured in config.yaml and overridden by an environment variable.
 _default_chunk_size = config.get('holistic_review_chunk_size', 75)
-HOLISTIC_REVIEW_CHUNK_size = int(os.environ.get(
+HOLISTIC_REVIEW_CHUNK_SIZE = int(os.environ.get(
     "HOLISTIC_REVIEW_CHUNK_SIZE",
     _default_chunk_size
 ))
@@ -320,8 +324,10 @@ def lint_properties_file(file_path: str) -> List[str]:
 
                     # Temporarily remove a trailing backslash if it's for line continuation,
                     # so it's not incorrectly flagged as an invalid escape sequence.
-                    value_to_check = value.rstrip()
-                    if value_to_check.endswith('\\'):
+                    value_to_check = value.rstrip('\r\n')
+                    # Treat as continuation only if an odd number of trailing backslashes
+                    m = re.search(r'(\\+)$', value_to_check)
+                    if m and (len(m.group(1)) % 2 == 1):
                         value_to_check = value_to_check[:-1]
 
                     # Allow: \t \n \f \r \\ \= \: \# \! space, \", and \uXXXX (4 hex digits)
@@ -1131,25 +1137,28 @@ def extract_language_from_filename(filename: str, supported_codes: List[str]) ->
 
 def move_files_to_archive(input_folder_path: str, archive_folder_path: str):
     """
-    Move processed files to an archive folder.
+    Move processed files to an archive folder, preserving subdirectories.
 
     Args:
         input_folder_path (str): The input folder path.
         archive_folder_path (str): The archive folder path.
     """
     os.makedirs(archive_folder_path, exist_ok=True)
-    for filename in os.listdir(input_folder_path):
-        if filename.endswith('.properties') and re.search(r'_[a-z]{2,3}(?:_[A-Z]{2})?\.properties$', filename):
-            source_path = os.path.join(input_folder_path, filename)
-            dest_path = os.path.join(archive_folder_path, filename)
+    for root, _, files in os.walk(input_folder_path):
+        for filename in files:
+            if filename.endswith('.properties') and re.search(r'_[a-z]{2,3}(?:_[A-Z]{2})?\.properties$', filename):
+                # Construct relative path to maintain directory structure
+                relative_path = os.path.relpath(os.path.join(root, filename), input_folder_path)
+                source_path = os.path.join(input_folder_path, relative_path)
+                dest_path = os.path.join(archive_folder_path, relative_path)
 
-            if DRY_RUN:
-                logging.info(f"[Dry Run] Would move file '{source_path}' to '{dest_path}'.")
-            else:
-                # Ensure the destination subdirectory exists before moving.
-                os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                shutil.move(source_path, dest_path)
-                logging.info(f"Moved file '{source_path}' to '{dest_path}'.")
+                if DRY_RUN:
+                    logging.info(f"[Dry Run] Would move file '{source_path}' to '{dest_path}'.")
+                else:
+                    # Ensure the destination subdirectory exists before moving.
+                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                    shutil.move(source_path, dest_path)
+                    logging.info(f"Moved file '{source_path}' to '{dest_path}'.")
     logging.info(f"All translation files in '{input_folder_path}' have been archived.")
 
 
@@ -1158,22 +1167,24 @@ def copy_translated_files_back(
         input_folder_path: str
 ):
     """
-    Copy translated translation files back to the input folder, overwriting existing ones.
+    Copy translated translation files back to the input folder, overwriting existing ones and preserving subdirectories.
 
     Args:
         translated_queue_folder (str): The folder containing translated files.
         input_folder_path (str): The input folder path.
     """
-    for filename in os.listdir(translated_queue_folder):
-        if filename.endswith('.properties') and re.search(r'_[a-z]{2,3}(?:_[A-Z]{2})?\.properties$', filename):
-            translated_file_path = os.path.join(translated_queue_folder, filename)
-            dest_path = os.path.join(input_folder_path, filename)
-
-            if DRY_RUN:
-                logging.info(f"[Dry Run] Would copy translated file '{translated_file_path}' back to '{dest_path}'.")
-            else:
-                shutil.copy2(translated_file_path, dest_path)
-                logging.info(f"Copied translated file '{translated_file_path}' back to '{dest_path}'.")
+    for root, _dirs, files in os.walk(translated_queue_folder):
+        for name in files:
+            if name.endswith('.properties') and re.search(r'_[a-z]{2,3}(?:_[A-Z]{2})?\.properties$', name):
+                rel_path = os.path.relpath(os.path.join(root, name), translated_queue_folder)
+                translated_file_path = os.path.join(translated_queue_folder, rel_path)
+                dest_path = os.path.join(input_folder_path, rel_path)
+                if DRY_RUN:
+                    logging.info(f"[Dry Run] Would copy translated file '{translated_file_path}' back to '{dest_path}'.")
+                else:
+                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                    shutil.copy2(translated_file_path, dest_path)
+                    logging.info(f"Copied translated file '{translated_file_path}' back to '{dest_path}'.")
 
 
 def validate_paths(input_folder: str, translation_queue: str, translated_queue: str, repo_root: str):
@@ -1217,6 +1228,9 @@ def get_changed_translation_files(input_folder_path: str, repo_root: str) -> Lis
     try:
         # Calculate the relative path of input_folder from repo_root
         rel_input_folder = os.path.relpath(input_folder_path, repo_root)
+
+        # Log the command being run for traceability
+        logging.info(f"Running git status in '{repo_root}' for path '{rel_input_folder}'")
 
         # Run 'git status --porcelain rel_input_folder' to get changed files in that folder
         # We include untracked files with '--untracked-files=normal'
@@ -1444,8 +1458,8 @@ async def process_translation_queue(
 
         # Create chunks of keys
         key_chunks = [
-            keys_to_translate[i:i + HOLISTIC_REVIEW_CHUNK_size]
-            for i in range(0, len(keys_to_translate), HOLISTIC_REVIEW_CHUNK_size)
+            keys_to_translate[i:i + HOLISTIC_REVIEW_CHUNK_SIZE]
+            for i in range(0, len(keys_to_translate), HOLISTIC_REVIEW_CHUNK_SIZE)
         ]
 
         # We need a dictionary of the draft translations to build targeted context for each chunk.
