@@ -317,13 +317,11 @@ if command_exists tx; then
     fi
     
     # Pull translations with -t option.
-    # The --quiet (-q) flag is used to suppress the verbose "skipping" messages
-    # for languages that exist on Transifex but not in the local repository.
     # The --force (-f) flag ensures local files are overwritten with remote changes.
-    TX_PULL_CMD="tx pull -q -t -f --use-git-timestamps"
+    TX_PULL_CMD="tx pull -t -f --use-git-timestamps"
     if [[ "$PULL_SOURCE_FILES" == "true" ]]; then
         log "Configuration directs to pull source files as well. Modifying tx command."
-        TX_PULL_CMD="tx pull -q -s -t -f --use-git-timestamps"
+        TX_PULL_CMD="tx pull -s -t -f --use-git-timestamps"
     fi
 
     log "Using tx command: $TX_PULL_CMD"
@@ -337,15 +335,12 @@ if command_exists tx; then
     # The final `|| true` prevents the script from exiting if grep finds no output.
     $TX_PULL_CMD 2>&1 | grep -v -E 'Pulling file|Creating download job|File was not found locally' || true
 
-    # Check the exit code of the tx command itself using PIPESTATUS
-    # This is crucial because the `|| true` would mask a real failure from the tx client.
-    tx_exit_code=${PIPESTATUS[0]}
-    if [ $tx_exit_code -ne 0 ]; then
-        log "Error during tx pull (Exit Code: $tx_exit_code). Exiting."
+    # Verify that files have been updated
+    if ! git status --porcelain | grep -q '\.properties'; then
+        log "Error: Transifex pull did not update any .properties files. This might indicate an issue with the Transifex CLI or the configuration."
         exit 1
     fi
 
-    log "Successfully pulled translations"
 else
     log "Error: Transifex CLI not found. Please install it manually."
     exit 1
