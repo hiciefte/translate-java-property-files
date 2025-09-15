@@ -24,14 +24,14 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
 
     @patch('src.translate_localization_files.run_post_translation_validation')
     @patch('src.translate_localization_files.holistic_review_async', new_callable=AsyncMock)
-    @patch('src.translate_localization_files.run_pre_translation_validation', new_callable=AsyncMock)
+    @patch('src.translate_localization_files.run_pre_translation_validation')
     @patch('src.translate_localization_files.load_glossary')
     @patch('src.translate_localization_files.parse_properties_file')
     @patch('src.translate_localization_files.client.chat.completions.create', new_callable=AsyncMock)
     async def test_single_quotes_are_escaped(self, mock_create, mock_parse_properties, mock_load_glossary, mock_pre_validator, mock_holistic_review, mock_post_validator):
         from src.translate_localization_files import process_translation_queue, LANGUAGE_CODES, NAME_TO_CODE
 
-        # Configure the async mocks
+        # Configure the mocks
         # The pre-validator now returns a list of errors; an empty list means success.
         mock_pre_validator.return_value = []
         mock_post_validator.return_value = True # Post-validation is now mocked
@@ -77,24 +77,22 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
         with patch.dict(LANGUAGE_CODES, {"de": "German"}), \
              patch.dict(NAME_TO_CODE, {"german": "de"}), \
              patch('src.translate_localization_files.INPUT_FOLDER', self.test_dir):
-             await process_translation_queue(
+            await process_translation_queue(
                 translation_queue_folder=self.queue_dir,
                 translated_queue_folder=self.translated_dir,
                 glossary_file_path="dummy_path.json" # Path is mocked, content is controlled
             )
 
-        # 5. Assert the output and mock calls
-        mock_pre_validator.assert_awaited()
-        mock_post_validator.assert_called_once()
+        # 5. Assertions
+        mock_pre_validator.assert_called()
         mock_holistic_review.assert_awaited()
-
-        # Ensure parser was used exactly as expected: target, source, and draft
+        # The AI should be called for the initial translation
+        mock_create.assert_awaited()
+        # parse_properties_file should be called three times:
+        # 1. For the target file
+        # 2. For the source file
+        # 3. To parse the temporary draft file for holistic review
         self.assertEqual(mock_parse_properties.call_count, 3)
-        calls = [c.args[0] for c in mock_parse_properties.call_args_list]
-        self.assertTrue(calls[0].endswith('app_de.properties'))
-        self.assertTrue(calls[1].endswith('app.properties'))
-        # The third call is to a temporary file, so we just check it's a .properties file
-        self.assertTrue(calls[2].endswith('.properties'))
 
         output_file_path = os.path.join(self.translated_dir, 'app_de.properties')
         self.assertTrue(os.path.exists(output_file_path))

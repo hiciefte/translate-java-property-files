@@ -40,6 +40,14 @@ check_and_exit_if_blocked() {
     exit 0
 }
 
+# Check for required tools
+for tool in yq git tx gh curl; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        log "Error: Required tool '$tool' is not installed."
+        exit 1
+    fi
+done
+
 # --- Pull Request Gate ---
 # This gate prevents the script from running if there's already a pending PR.
 # It checks for two conditions:
@@ -338,8 +346,9 @@ log "Running translation script"
 # export it as an environment variable for the Python script to use.
 if [ -n "$TRANSLATION_FILTER_GLOB" ] && [ "$TRANSLATION_FILTER_GLOB" != "null" ]; then
     log "Translation filter is active. Only files matching '$TRANSLATION_FILTER_GLOB' will be translated."
-    export TRANSLATION_FILTER_GLOB
 fi
+# Export filter glob if set (used by Python translation script)
+[ -n "$TRANSLATION_FILTER_GLOB" ] && [ "$TRANSLATION_FILTER_GLOB" != "null" ] && export TRANSLATION_FILTER_GLOB
 python3 -m src.translate_localization_files || {
     log "Error: Failed to run translation script. Exiting."
     exit 1

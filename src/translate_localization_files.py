@@ -96,11 +96,10 @@ except (yaml.YAMLError, OSError) as e:
     print(f"Warning: Error loading or parsing configuration file '{CONFIG_FILE}': {e}. Using default logging settings.")
     LOG_FILE_PATH = DEFAULT_LOG_FILE_PATH
     LOG_LEVEL = DEFAULT_LOG_LEVEL
-except Exception as e:
+except (AttributeError, KeyError, TypeError, ValueError) as e:
     print(f"Warning: Error loading or parsing configuration file '{CONFIG_FILE}': {e}. Using default logging settings.")
     LOG_FILE_PATH = DEFAULT_LOG_FILE_PATH
     LOG_LEVEL = DEFAULT_LOG_LEVEL
-    LOG_TO_CONSOLE = DEFAULT_LOG_TO_CONSOLE
 
 log_dir_to_create = os.path.dirname(LOG_FILE_PATH)
 if log_dir_to_create:
@@ -147,78 +146,6 @@ LOCALIZATION_SCHEMA = {
     },
     "additionalProperties": False
 }
-
-# Determine the correct path to config.yaml relative to the script's location
-SCRIPT_REAL_PATH = os.path.realpath(__file__)
-SCRIPT_DIR = os.path.dirname(SCRIPT_REAL_PATH)
-# Allow overriding the config file path via an environment variable for flexibility.
-# If TRANSLATOR_CONFIG_FILE is set, use it; otherwise, default to 'config.yaml'.
-_default_config_path = os.path.join(SCRIPT_DIR, '..', 'config.yaml')
-CONFIG_FILE = os.environ.get('TRANSLATOR_CONFIG_FILE', _default_config_path)
-
-# Default logging settings if config is unavailable or incomplete
-DEFAULT_LOG_FILE_PATH = "logs/translation_log_default.log"
-DEFAULT_LOG_LEVEL = logging.INFO
-DEFAULT_LOG_TO_CONSOLE = True
-
-config = {}
-try:
-    with open(CONFIG_FILE, 'r', encoding='utf-8') as config_file_stream:
-        loaded_config = yaml.safe_load(config_file_stream)
-        if loaded_config:
-            config = loaded_config
-
-    logging_config = config.get('logging', {})
-    LOG_FILE_PATH = logging_config.get('log_file_path', DEFAULT_LOG_FILE_PATH)
-    LOG_LEVEL_STR = logging_config.get('log_level', 'INFO').upper()
-    LOG_TO_CONSOLE = logging_config.get('log_to_console', DEFAULT_LOG_TO_CONSOLE)
-    LOG_LEVEL = getattr(logging, LOG_LEVEL_STR, DEFAULT_LOG_LEVEL)
-
-except FileNotFoundError:
-    print(f"Warning: Configuration file '{CONFIG_FILE}' not found. Using default logging settings.")
-    LOG_FILE_PATH = DEFAULT_LOG_FILE_PATH
-    LOG_LEVEL = DEFAULT_LOG_LEVEL
-    LOG_TO_CONSOLE = DEFAULT_LOG_TO_CONSOLE
-except Exception as e:
-    print(f"Warning: Error loading or parsing configuration file '{CONFIG_FILE}': {e}. Using default logging settings.")
-    LOG_FILE_PATH = DEFAULT_LOG_FILE_PATH
-    LOG_LEVEL = DEFAULT_LOG_LEVEL
-    LOG_TO_CONSOLE = DEFAULT_LOG_TO_CONSOLE
-
-log_dir_to_create = os.path.dirname(LOG_FILE_PATH)
-if log_dir_to_create:
-    os.makedirs(log_dir_to_create, exist_ok=True)
-
-handlers = [logging.FileHandler(LOG_FILE_PATH)]
-if LOG_TO_CONSOLE:
-    handlers.append(logging.StreamHandler())
-
-logging.basicConfig(
-    level=LOG_LEVEL,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=handlers
-)
-
-# Load environment variables strategically
-# SCRIPT_DIR is .../project_root/src (absolute path)
-PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir))
-
-dotenv_path_project_root = os.path.join(PROJECT_ROOT_DIR, '.env')
-dotenv_path_docker_dir = os.path.join(PROJECT_ROOT_DIR, 'docker', '.env')
-
-if os.path.exists(dotenv_path_project_root):
-    load_dotenv(dotenv_path_project_root)
-    logging.info("Loaded environment variables from: %s", dotenv_path_project_root)
-elif os.path.exists(dotenv_path_docker_dir):
-    load_dotenv(dotenv_path_docker_dir)
-    logging.info("Loaded environment variables from: %s", dotenv_path_docker_dir)
-else:
-    logging.info(
-        "No .env file found in project root ('%s') or in docker/ ('%s'). Relying on system environment variables if any.",
-        dotenv_path_project_root,
-        dotenv_path_docker_dir
-    )
-    # load_dotenv() with no args will search CWD; this is likely redundant if the above checks cover CWD for root.
 
 # Initialize the OpenAI client with your API key
 api_key_from_env = os.environ.get('OPENAI_API_KEY')
@@ -661,7 +588,7 @@ async def _handle_retry(attempt: int, max_retries: int, base_delay: float, key: 
         return False
 
 
-async def run_pre_translation_validation(target_file_path: str, source_file_path: str) -> List[str]:
+def run_pre_translation_validation(target_file_path: str, source_file_path: str) -> List[str]:
     """
     Runs a series of validation and preparation checks on a target properties file.
     - Synchronizes keys with the source file (adds missing, removes extra).
@@ -1382,7 +1309,7 @@ async def process_translation_queue(
         logging.info(f"Processing file '{translation_file}' for language '{target_language}'...")
 
         # --- Pre-flight Validator ---
-        validation_errors = await run_pre_translation_validation(translation_file_path, source_file_path)
+        validation_errors = run_pre_translation_validation(translation_file_path, source_file_path)
         if validation_errors:
             logging.error(f"Skipping translation for '{translation_file}' due to pre-translation validation errors.")
             for error in validation_errors:
