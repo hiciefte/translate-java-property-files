@@ -118,7 +118,9 @@ command_exists() {
 }
 
 # Load configuration from YAML file
-CONFIG_FILE="config.yaml" # This should be /app/config.yaml, which is config.docker.yaml mounted
+# Use the environment variable if it's set, otherwise default to config.yaml in the CWD.
+CONFIG_FILE="${TRANSLATOR_CONFIG_FILE:-config.yaml}"
+log "Using configuration file: $CONFIG_FILE"
 
 # Helper function to parse values from config.yaml robustly using yq
 get_config_value() {

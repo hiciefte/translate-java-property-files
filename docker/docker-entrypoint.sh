@@ -85,29 +85,9 @@ fi
 log "Repository is up to date."
 cd /app # Return to the application's working directory
 
-# --- SSH Configuration ---
-# The local dev environment uses SSH Agent Forwarding, while the server uses a mounted key.
-# This logic detects the SSH agent socket and configures Git to use it if present.
-if [ -S "$SSH_AUTH_SOCK" ]; then
-    log "SSH Agent socket found. Configuring Git to use SSH Agent Forwarding."
-    # When using the agent, we don't need to write to known_hosts, which might be in a read-only volume.
-    export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-else
-    log "No SSH Agent socket found. Using mounted SSH keys."
-    # Fix for macOS users: Comment out UseKeychain option if it exists in ssh config,
-    # as it's not supported on Linux and causes git operations to fail.
-    SSH_CONFIG_FILE="/home/appuser/.ssh/config"
-    if [ -f "$SSH_CONFIG_FILE" ]; then
-        log "Checking for incompatible macOS SSH options in $SSH_CONFIG_FILE..."
-        # Use sed to comment out the line. The -i.bak creates a backup for safety.
-        sed -i.bak 's/^\s*UseKeychain\s.*$/# &/' "$SSH_CONFIG_FILE"
-    fi
-fi
-
-# We expect this script to be run from the repository root.
-# All subsequent git commands will be run from here.
-cd /target_repo
-
 # --- Execute Main Command ---
+# The entrypoint has finished its setup. The container's main command can now be executed.
+# The working directory is set to the cloned repository for the main command.
+cd /target_repo
 log "Handing off to the main container command:" "$@"
 exec "$@" 

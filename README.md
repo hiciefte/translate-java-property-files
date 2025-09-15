@@ -23,73 +23,22 @@ There are two primary ways to run the translation tool: locally for development/
 
 ### 1. Local Development (Docker Recommended)
 
-This is the easiest and most consistent way to run the full translation pipeline on your local machine. It uses Docker to replicate the server environment and securely uses your local SSH keys via SSH Agent Forwarding.
-
-For a detailed walkthrough, see the **[Local Development Guide](./docs/how-to-run-locally.md)**.
+This is the easiest and most consistent way to test the translation pipeline on your local machine, as it uses Docker to replicate the server environment.
 
 **Prerequisites:**
 *   Docker and Docker Compose
-*   Your SSH key added to the SSH agent on your host machine.
-
-**One-Time Setup:**
-
-1.  **Enable SSH Agent Forwarding**: For local development, Docker needs access to your host's SSH agent to handle Git operations securely.
-
-    a. **Create a Stable Symlink (macOS users):** Docker for Mac can have trouble mounting the default SSH socket. Create a stable symlink to it by running this command once in your terminal:
-    ```bash
-    ln -sf $SSH_AUTH_SOCK ~/.ssh/ssh_auth_sock
-    ```
-
-    b. **Create Docker Override File**: This file tells Docker to use the SSH agent. Create `docker/docker-compose.override.yml` with the following content:
-    ```yaml
-    services:
-      translator:
-        volumes:
-          # Forward the SSH agent socket from the host to the container via the stable symlink.
-          # Linux users can replace the source with: ${SSH_AUTH_SOCK}
-          - ~/.ssh/ssh_auth_sock:/ssh-agent
-        environment:
-          # Tell the SSH client inside the container where to find the agent socket.
-          - SSH_AUTH_SOCK=/ssh-agent
-    ```
-    *(This file is ignored by Git, so it will not interfere with server deployments.)*
-
-2.  **Add SSH Key to Agent**: This allows the container to use your key without needing your passphrase.
-    ```bash
-    # On macOS (stores passphrase in Keychain)
-    ssh-add --apple-use-keychain ~/.ssh/id_rsa
-
-    # On Linux
-    ssh-add ~/.ssh/id_rsa
-    ```
-    *(Replace `id_rsa` if your key has a different name.)*
 
 **Run the Translation:**
 Navigate to the `docker` directory and use `docker compose run`.
 ```bash
 cd docker
+docker compose build # Run this once or whenever you change the python scripts
 docker compose run --rm translator
 ```
-Docker Compose will automatically use the settings in `docker-compose.yml` and merge them with local-only settings from `docker/docker-compose.override.yml` to set up the correct environment.
 
-**macOS Docker Troubleshooting: "Operation not supported" Error**
+**NOTE FOR MACOS USERS:** Due to a known issue with how Docker for Mac handles volume mounts for SSH keys, the final step of the script (`git push` and creating a pull request) will fail with a "Permission denied" error. However, the entire translation and validation process will run successfully. You can inspect the results and logs locally. The automated PR creation is intended to be run on the server.
 
-If you are on macOS and the `docker compose run` command fails with a mount error related to `/private/tmp/...`, it's because the default SSH key mount in `docker-compose.yml` conflicts with the SSH agent forwarding used for local development.
-
-**To fix this:**
-1. Open `docker/docker-compose.yml`.
-2. Find and comment out the line that mounts the SSH directory:
-   ```yaml
-   # ...
-   volumes:
-     # ...
-     # COMMENT OUT THE LINE BELOW FOR LOCAL MACOS DEVELOPMENT
-     # - ${HOME}/.ssh:/home/appuser/.ssh:ro
-     # ...
-   ```
-3. Run the `docker compose run` command again.
-
-**IMPORTANT:** Do **not** commit this change to Git. This line is required for the server deployment.
+If you need to test the full Git workflow locally on a Mac, please use the "Legacy Python Script" method below, which uses your local Git and SSH setup directly.
 
 ### 2. Server Deployment
 
@@ -126,7 +75,7 @@ The service is configured through a combination of YAML files and a single envir
 
 ## Troubleshooting
 
-*   **macOS Docker Run Fails (SSH)**: See the "macOS Docker Troubleshooting" section under "Local Development" above.
+*   **Local Docker Run Fails on `git push` (macOS)**: This is an expected limitation. Please see the note under the "Local Development" section.
 *   **Validation Errors in Pull Request**: The PR description now includes a report of any files that were skipped due to linter or validation errors. These errors must be fixed manually in the source repository. See `docs/llm/debug-docker-service.md` for more details on common errors.
 *   **Server Deployment Issues**: Refer to the detailed deployment guide and the debugging documentation in the `docs/` directory.
 

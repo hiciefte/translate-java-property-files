@@ -23,6 +23,10 @@ services:
     # This allows the entrypoint to fix volume permissions before the main application runs.
     env_file:
       - .env
+    environment:
+      # Pass the absolute path of the config file inside the container to the application.
+      # This makes the script's starting location irrelevant for finding its config.
+      - TRANSLATOR_CONFIG_FILE=/app/config.yaml
     # Note: Place the .env file alongside this compose file (docker/.env)
     # with API keys and HOST_UID/GID.
     # An example is provided in docker/.env.example
