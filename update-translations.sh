@@ -22,8 +22,30 @@ mkdir -p "$LOG_DIR"
 
 # Function to log messages
 log() {
-    # Use "$*" to log all arguments as a single string
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] [UPDATE_SCRIPT] $*" | tee -a "$LOG_FILE"
+    local message="$1"
+    local level="${2:-INFO}" # Default to INFO
+    local color_code
+    case "$level" in
+        "INFO") color_code='\033[0;32m';; # Green
+        "WARNING") color_code='\033[1;33m';; # Yellow
+        "ERROR") color_code='\033[0;31m';; # Red
+        "DEBUG") color_code='\033[0;34m';; # Blue
+        *) color_code='\033[0m';; # No Color
+    esac
+    local timestamp
+    timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+    # Log to stderr
+    >&2 echo -e "${color_code}[${timestamp}] [${level}] ${message}\033[0m"
+}
+
+# Run a command, prefix with '+', and tee its output to the log.
+log_cmd() {
+  log "+ $*" "DEBUG"
+  "$@" 2>&1 | sed 's/^/| /' | tee -a "$LOG_FILE"
+}
+
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
 }
 
 # Helper function to check for blocking PRs and exit if found.
@@ -31,19 +53,16 @@ log() {
 # Arguments:
 #   $1: The reason for skipping (e.g., "Found manually-blocking PR #123").
 check_and_exit_if_blocked() {
-    local reason="$1"
-    log "$reason. Skipping current run."
-    if [ -n "${HEALTHCHECK_URL:-}" ]; then
-        log "Sending successful (skipped) heartbeat to health check URL..."
-        curl -fsS --retry 3 --max-time 10 "$HEALTHCHECK_URL" > /dev/null || log "Warning: Health check ping failed on skipped run."
-    fi
-    exit 0
+    log "BLOCKING CONDITION DETECTED: $1" "ERROR"
+    log "Aborting translation run. Please resolve the blocking issue." "ERROR"
+    # Optional: Add a health check ping for failure here
+    exit 0 # Exit cleanly to prevent cron from flagging it as a failure
 }
 
 # Check for required tools
-for tool in yq git tx gh curl; do
+for tool in yq git tx curl; do
     if ! command -v "$tool" >/dev/null 2>&1; then
-        log "Error: Required tool '$tool' is not installed."
+        log "Required tool '$tool' is not installed." "ERROR"
         exit 1
     fi
 done
@@ -56,78 +75,52 @@ done
 
 BLOCKING_KEYWORD="[PIPELINE-BLOCK]"
 log "Checking for manually-blocked PRs with keyword '$BLOCKING_KEYWORD' in the title..."
-# Use the 'search' flag to query PR titles on the upstream repo.
-# Filter by '@me' which gh resolves to the currently authenticated user.
-MANUAL_BLOCK_PR=$(gh pr list --state open --author "@me" --repo "$UPSTREAM_REPO_NAME" --search "in:title $BLOCKING_KEYWORD" --json number -q '.[0].number' || true)
-
-if [ -n "$MANUAL_BLOCK_PR" ]; then
-    check_and_exit_if_blocked "Found manually-blocking PR #${MANUAL_BLOCK_PR} authored by the bot's account"
+if ! command -v gh >/dev/null 2>&1; then
+    log "GitHub CLI (gh) not found; PR-blocking checks may be incomplete or skipped." "WARNING"
 fi
-log "No manually-blocked PRs found."
-
-log "Checking for existing open translation PRs on repo '$UPSTREAM_REPO_NAME'..."
-# Note: The 'gh pr list' command requires GITHUB_TOKEN to be in the environment.
-# We query by author ('@me') against the UPSTREAM repository, then filter by branch name prefix.
-# The '|| true' ensures the script doesn't exit if grep finds no matches.
-# 'head -n 1' ensures we only ever get one branch name, even if something unexpected happens.
-EXISTING_PR_BRANCH=$(gh pr list --state open --author "@me" --repo "$UPSTREAM_REPO_NAME" --json headRefName -q '.[].headRefName' | grep "^${TRANSLATION_BRANCH_PREFIX}" | head -n 1 || true)
-
-if [ -n "$EXISTING_PR_BRANCH" ]; then
-    check_and_exit_if_blocked "Found existing open translation PR from branch: $EXISTING_PR_BRANCH"
-fi
-
-log "No pending translation PRs found. Proceeding with translation check."
-
-log "Update script started. Checking for TX_TOKEN..."
-
-# Check if TX_TOKEN is already set in the environment
-if [ -n "${TX_TOKEN:-}" ]; then
-    log "TX_TOKEN is already set in the environment."
+if command_exists gh && [ -n "${GITHUB_TOKEN:-}" ]; then
+  # Use the 'search' flag to query PR titles on the upstream repo.
+  # Filter by '@me' which gh resolves to the currently authenticated user.
+  MANUAL_BLOCK_PR=$(gh pr list --state open --author "@me" --repo "$UPSTREAM_REPO_NAME" --search "in:title $BLOCKING_KEYWORD" --json number -q '.[0].number' || true)
+  if [ -n "$MANUAL_BLOCK_PR" ]; then
+      check_and_exit_if_blocked "Found manually-blocking PR #${MANUAL_BLOCK_PR} authored by the bot's account"
+  fi
+  log "No manually-blocked PRs found."
 else
-    log "TX_TOKEN not found in environment. Attempting to load from .env files..."
-    # Load environment variables from .env file if it exists
-    ENV_FILE=".env"
-    HOME_ENV_FILE="$HOME/.env"
-
-    if [ -f "$HOME_ENV_FILE" ]; then
-        log "Loading environment variables from $HOME_ENV_FILE"
-        set -a  # automatically export all variables
-        # shellcheck source=~/.env
-        source "$HOME_ENV_FILE"
-        set +a  # disable auto-export
-        log "Environment variables potentially loaded from $HOME_ENV_FILE."
-    elif [ -f "$ENV_FILE" ]; then
-        log "Loading environment variables from $ENV_FILE (in PWD: $(pwd))"
-        set -a  # automatically export all variables
-        # shellcheck source=./.env
-        source "$ENV_FILE"
-        set +a  # disable auto-export
-        log "Environment variables potentially loaded from $ENV_FILE."
-    else
-        log "No .env file found in current directory or home directory."
-    fi
+  log "Skipping manual PR-block check (gh not available or GITHUB_TOKEN unset)." "DEBUG"
 fi
 
-# Ensure TX_TOKEN is set now (either from initial env or sourced from file)
-if [ -z "${TX_TOKEN:-}" ]; then
-    log "Error: TX_TOKEN environment variable is not set and could not be loaded from .env files."
-    log "Please ensure TX_TOKEN is available as an environment variable or in a .env file."
-    log "For Docker, ensure it's passed via docker-compose.yml environment section from your host's .env file."
-    exit 1
+if command_exists gh && [ -n "${GITHUB_TOKEN:-}" ]; then
+  log "Checking for existing open translation PRs on repo '$UPSTREAM_REPO_NAME'..."
+  # Note: The 'gh pr list' command requires GITHUB_TOKEN to be in the environment.
+  EXISTING_PR_BRANCH=$(gh pr list --state open --author "@me" --repo "$UPSTREAM_REPO_NAME" --json headRefName -q '.[].headRefName' | grep "^${TRANSLATION_BRANCH_PREFIX}" | head -n 1 || true)
+  if [ -n "$EXISTING_PR_BRANCH" ]; then
+      check_and_exit_if_blocked "Found existing open translation PR from branch: $EXISTING_PR_BRANCH"
+  fi
+  log "No pending translation PRs found. Proceeding with translation check."
+else
+  log "Skipping existing-PR check (gh not available or GITHUB_TOKEN unset)." "DEBUG"
 fi
 
-# Export TX_TOKEN explicitly to be absolutely sure (though set -a during source should do it)
-export TX_TOKEN
-log "TX_TOKEN is confirmed set and exported."
 
-# Function to check if a command exists
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
-
+# --- Git Repository and Transifex Configuration Validation ---
+log "Starting Git and Transifex validation..."
 # Load configuration from YAML file
 # Use the environment variable if it's set, otherwise default to config.yaml in the CWD.
 CONFIG_FILE="${TRANSLATOR_CONFIG_FILE:-config.yaml}"
+
+if [ ! -f "$CONFIG_FILE" ]; then
+    log "Configuration file not found at '$CONFIG_FILE'." "ERROR"
+    # Attempt to find it in the script's directory as a fallback for local runs.
+    SCRIPT_DIR_REAL=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    if [ -f "$SCRIPT_DIR_REAL/$CONFIG_FILE" ]; then
+        CONFIG_FILE="$SCRIPT_DIR_REAL/$CONFIG_FILE"
+        log "Found config file in script directory: $CONFIG_FILE" "INFO"
+    else
+        log "Also not found in script directory. Aborting." "ERROR"
+        exit 1
+    fi
+fi
 log "Using configuration file: $CONFIG_FILE"
 
 # Helper function to parse values from config.yaml robustly using yq
@@ -155,7 +148,7 @@ log "Target project root from config: \"$TARGET_PROJECT_ROOT\""
 log "Input folder from config: \"$INPUT_FOLDER\""
 log "Pull source files from Transifex: ${PULL_SOURCE_FILES:-false}"
 
-if [ -z "$TARGET_PROJECT_ROOT" ]; then
+if [ -z "$TARGET_PROJECT_ROOT" ] || [ "$TARGET_PROJECT_ROOT" = "null" ]; then
     log "Error: TARGET_PROJECT_ROOT is not set in $CONFIG_FILE or is empty."
     exit 1
 fi
@@ -165,7 +158,7 @@ if [ ! -d "$TARGET_PROJECT_ROOT" ]; then
     exit 1
 fi
 
-if [ -z "$INPUT_FOLDER" ]; then
+if [ -z "$INPUT_FOLDER" ] || [ "$INPUT_FOLDER" = "null" ]; then
     log "Error: INPUT_FOLDER is not set in $CONFIG_FILE or is empty."
     exit 1
 fi
@@ -188,16 +181,6 @@ if [ ! -d "$ABSOLUTE_INPUT_FOLDER" ]; then
     exit 1
 fi
 
-log "Starting deployment process"
-log "Target project root: $TARGET_PROJECT_ROOT"
-log "Input folder: $INPUT_FOLDER" # Added log for input folder
-
-# Check if target project root exists
-if [ ! -d "$TARGET_PROJECT_ROOT" ]; then
-    log "Error: Target project root directory not found: $TARGET_PROJECT_ROOT"
-    exit 1
-fi
-
 # Change directory to the target project root
 cd "$TARGET_PROJECT_ROOT" || {
     log "Error: Could not change directory to target project root: $TARGET_PROJECT_ROOT"
@@ -215,7 +198,7 @@ else
     # Check for unconfigured source files before proceeding.
     # This prevents pulling translations for files that are no longer part of the source.
     #
-    log "INFO" "Checking for source files that are not configured in Transifex..."
+    log "Checking for source files that are not configured in Transifex..." "INFO"
 
     # Extract the 'source_file' for each resource from the Transifex config.
     # This gives us the configured source files with their full paths relative to the repo root.
@@ -240,18 +223,18 @@ else
         relative_path=${full_path#"$TARGET_PROJECT_ROOT/"}
         if [[ -z "${configured_relative_paths["$relative_path"]}" ]]; then
             if ! $unconfigured_files_found; then
-                log "WARNING" "Found source files not configured in Transifex:"
+                log "Found source files not configured in Transifex:" "WARNING"
                 unconfigured_files_found=true
             fi
-            log "WARNING" "  - $relative_path"
+            log "  - $relative_path" "WARNING"
         fi
     done
 
     if $unconfigured_files_found; then
-        log "ERROR" "Aborting due to unconfigured source files. Please update the Transifex config at '$TX_CONFIG_FILE' and push the changes."
+        log "Aborting due to unconfigured source files. Please update the Transifex config at '$TX_CONFIG_FILE' and push the changes." "ERROR"
         exit 1
     fi
-    log "INFO" "All source files are correctly configured in Transifex."
+    log "All source files are correctly configured in Transifex." "INFO"
 fi
 
 # Determine the default branch and remote to reset against
@@ -277,19 +260,14 @@ log "Using default branch: ${DEFAULT_BRANCH}"
 log "Resetting local repository to a clean state against ${REMOTE}/${DEFAULT_BRANCH} in $TARGET_PROJECT_ROOT"
 # Fetch the latest from the determined remote to ensure our reference is current.
 git fetch "${REMOTE}"
-# Reset to the remote main branch, discarding all local changes and commits.
-git reset --hard "${REMOTE}/${DEFAULT_BRANCH}"
+# Save current branch before switching to default
+ORIGINAL_BRANCH=$(git branch --show-current || true)
+log "Current branch: $ORIGINAL_BRANCH"
+# Check out the default branch and align it with the remote
+git checkout -B "${DEFAULT_BRANCH}" "${REMOTE}/${DEFAULT_BRANCH}"
 # Clean untracked files and directories, but exclude critical local dev files.
 log "Cleaning untracked files, excluding development directories..."
 git clean -fde "venv/" -e ".idea/" -e "*.iml" -e "secrets/" -e "docker/.env"
-
-# Save the current branch
-ORIGINAL_BRANCH=$(git branch --show-current || true)
-log "Current branch: $ORIGINAL_BRANCH"
-if [ "$ORIGINAL_BRANCH" != "${DEFAULT_BRANCH}" ]; then
-    log "Warning: Expected to be on ${DEFAULT_BRANCH} branch, but on ${ORIGINAL_BRANCH}. Checking out ${DEFAULT_BRANCH}."
-    git checkout "${DEFAULT_BRANCH}"
-fi
 
 # The entrypoint script already reset the branch to upstream and updated submodules.
 # No further git pull or submodule init/update should be necessary here before tx pull.
@@ -309,12 +287,13 @@ if command_exists tx; then
     if [ -f "$TARGET_PROJECT_ROOT/.tx/config" ]; then
         log ".tx/config exists in project directory"
         log ".tx/config contents (without sensitive data):"
-        grep -v "password" "$TARGET_PROJECT_ROOT/.tx/config"
+        grep -Evi 'password|token|secret|api[_-]?key|auth(entication)?|credential(s)?' "$TARGET_PROJECT_ROOT/.tx/config" || true
     else
         log "Warning: .tx/config not found in project directory"
     fi
     
-    # Pull translations with -t option
+    # Pull translations with -t option.
+    # The --force (-f) flag ensures local files are overwritten with remote changes.
     TX_PULL_CMD="tx pull -t -f --use-git-timestamps"
     if [[ "$PULL_SOURCE_FILES" == "true" ]]; then
         log "Configuration directs to pull source files as well. Modifying tx command."
@@ -323,24 +302,41 @@ if command_exists tx; then
 
     log "Using tx command: $TX_PULL_CMD"
     log "Listing permissions for current directory ($(pwd)) before tx pull:"
-    ls -la .
+    log_cmd ls -la .
     log "Listing permissions for input folder '${ABSOLUTE_INPUT_FOLDER}' before tx pull:"
-    ls -la "${ABSOLUTE_INPUT_FOLDER}" || true
-    $TX_PULL_CMD || {
-        log "Error during tx pull. Exiting."
+    log_cmd ls -la "${ABSOLUTE_INPUT_FOLDER}"
+    
+    # Execute and filter output, but preserve original tx exit code.
+    set +e
+    { $TX_PULL_CMD 2>&1 | grep -v -E 'Pulling file|Creating download job|File was not found locally'; }
+    TX_STATUS=${PIPESTATUS[0]}
+    set -e
+    if [ $TX_STATUS -ne 0 ]; then
+        log "Transifex pull failed (exit $TX_STATUS). See previous logs for details." "ERROR"
+        exit $TX_STATUS
+    fi
+
+    # Verify that files have been updated
+    if ! git status --porcelain | grep -qE '\.(properties|po|mo)$'; then
+        log "Error: Transifex pull did not update any translation files (.properties/.po/.mo). This might indicate an issue with the Transifex CLI or the configuration." "ERROR"
         exit 1
-    }
-    log "Successfully pulled translations"
+    fi
+
 else
     log "Error: Transifex CLI not found. Please install it manually."
     exit 1
 fi
 
-# Navigate back to the translation script directory
-cd - > /dev/null
-log "Returned to the translation script directory"
+# Navigate back to the application's root directory to run the python script.
+# This ensures that the module path `src.translate_localization_files` is resolved correctly.
+if [ -d /app ]; then
+  cd /app
+  log "Returned to the application root directory: $(pwd)"
+else
+  log "Warning: /app not found; staying in $(pwd) to run Python."
+fi
 
-# Step 3: Run the translation script with the virtual environment Python
+# Step 3: Run the translation script
 log "Running translation script"
 # If a filter glob is defined in the config, and it is not the literal string "null",
 # export it as an environment variable for the Python script to use.
@@ -353,6 +349,10 @@ python3 -m src.translate_localization_files || {
     log "Error: Failed to run translation script. Exiting."
     exit 1
 }
+
+# Change back to the target project root for the final git operations.
+cd "$TARGET_PROJECT_ROOT"
+log "Changed back to target project root: $(pwd)"
 
 # Step 4: Clean up archived translation files before committing
 log "Cleaning up archived translation files"
@@ -380,11 +380,11 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
     log "Creating new branch: $BRANCH_NAME"
     git checkout -b "$BRANCH_NAME"
     
-    # Add only translation files that have changed
-    log "Adding changed translation files to git"
-    # We find all .properties files within the input folder and add them.
-    # This is more robust than a hardcoded path and handles subdirectories.
-    find "$ABSOLUTE_INPUT_FOLDER" -name '*.properties' -print0 | xargs -0 git add
+    # Add translation files that have changed and stage deletions
+    log "Staging translation file changes (.properties, .po, .mo) and deletions"
+    find "$ABSOLUTE_INPUT_FOLDER" \( -name '*.properties' -o -name '*.po' -o -name '*.mo' \) -print0 | xargs -0 git add
+    # Stage deletions for removed translation files (avoid non-zero grep under pipefail)
+    git ls-files --deleted "$ABSOLUTE_INPUT_FOLDER" | awk '/\.(properties|po|mo)$/' | xargs -r git rm
 
     # Commit changes, signing if a key is configured
     if git config --get commit.gpgsign >/dev/null 2>&1 && git config --get user.signingkey >/dev/null 2>&1; then
@@ -396,10 +396,42 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
     fi
 
     # Push the branch to GitHub
-    log "Pushing changes to origin ($FORK_REPO_NAME)"
-    git push origin "$BRANCH_NAME"
+    PUSH_OK=0
+    if git remote | grep -qx 'origin'; then
+      log "Pushing changes to 'origin' remote"
+      # Before pushing, derive the owner from the 'origin' remote URL.
+      # This ensures the user in the PR head matches the push destination.
+      fork_owner=$(git remote get-url origin | sed -E 's#.*[:/](.+)/[^/]+(\.git)?$#\1#')
+
+      if [ -z "$fork_owner" ]; then
+          log "Error: Could not determine the fork owner from the 'origin' remote URL. Cannot create PR." "ERROR"
+          exit 1
+      fi
+      log "Determined fork owner for PR head as: '$fork_owner'"
+
+      # If FORK_REPO_NAME is set, validate it matches the remote.
+      if [ -n "${FORK_REPO_NAME:-}" ]; then
+          fork_repo_owner=$(echo "$FORK_REPO_NAME" | cut -d'/' -f1)
+          if [[ "$fork_owner" != "$fork_repo_owner" ]]; then
+              log "Error: The owner of the 'origin' remote ('$fork_owner') does not match the configured FORK_REPO_NAME owner ('$fork_repo_owner')." "ERROR"
+              log "Please align the 'origin' remote with the expected fork repository." "ERROR"
+              exit 1
+          fi
+      fi
+
+      if git push origin "$BRANCH_NAME"; then
+          PUSH_OK=1
+      else
+          log "Failed to push branch '$BRANCH_NAME' to origin." "ERROR"
+      fi
+    else
+      log "'origin' remote not found; cannot push PR branch. Configure a fork remote named 'origin' or adjust the script." "ERROR"
+    fi
     
-    # Step 5: Create a GitHub pull request
+    # Step 5: Create a GitHub pull request (only if push succeeded)
+    if [ "${PUSH_OK:-0}" -ne 1 ]; then
+        log "Skipping PR creation because the branch was not pushed." "WARNING"
+    else
     log "Creating GitHub pull request to $UPSTREAM_REPO_NAME"
     PR_TITLE="Automated Translation Update - $(date +'%Y-%m-%d %H:%M:%S')"
     PR_BODY="This pull request was automatically generated by the translation script and contains the latest translation updates from Transifex and OpenAI.
@@ -429,7 +461,8 @@ This PR is from branch \`$BRANCH_NAME\` on the \`$FORK_REPO_NAME\` fork and targ
                 --body "$PR_BODY" \
                 --repo "$UPSTREAM_REPO_NAME" \
                 --base "$TARGET_BRANCH_FOR_PR" \
-                --head "$(echo $FORK_REPO_NAME | cut -d'/' -f1):$BRANCH_NAME")
+                --head "$(git remote get-url origin \
+                   | sed -E 's#.*[:/](.+)/[^/]+(\.git)?$#\1#'):$BRANCH_NAME")
             
             PR_CREATE_EXIT_CODE=$?
 
@@ -440,7 +473,8 @@ This PR is from branch \`$BRANCH_NAME\` on the \`$FORK_REPO_NAME\` fork and targ
             fi
         fi
     else
-        log "Error: GitHub CLI (gh) not found. Cannot create pull request."
+        log "GitHub CLI (gh) not found. Cannot create pull request." "ERROR"
+    fi
     fi
 else
     log "No translation changes to commit"
