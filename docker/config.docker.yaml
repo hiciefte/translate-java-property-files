@@ -27,7 +27,7 @@ max_concurrent_api_calls: 1
 logging:
   log_level: "INFO"
   log_file_path: "/app/logs/translation_log.log"
-  log_to_console: true 
+  log_to_console: true
 review_model_name: "gpt-4o"
 style_rules:
   de:
