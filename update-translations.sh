@@ -22,15 +22,30 @@ mkdir -p "$LOG_DIR"
 
 # Function to log messages
 log() {
-    local ts level msg
-    ts="$(date +'%Y-%m-%d %H:%M:%S')"
-    if [ $# -gt 1 ] && [[ "$1" =~ ^(INFO|WARNING|ERROR|DEBUG)$ ]]; then
-        level="$1"; shift
-    else
-        level="INFO"
-    fi
-    msg="$*"
-    echo "[$ts] [UPDATE_SCRIPT] [$level] $msg" | tee -a "$LOG_FILE"
+    local message="$1"
+    local level="${2:-INFO}" # Default to INFO
+    local color_code
+    case "$level" in
+        "INFO") color_code='\033[0;32m';; # Green
+        "WARNING") color_code='\033[1;33m';; # Yellow
+        "ERROR") color_code='\033[0;31m';; # Red
+        "DEBUG") color_code='\033[0;34m';; # Blue
+        *) color_code='\033[0m';; # No Color
+    esac
+    local timestamp
+    timestamp=$(date "+%Y-%m-%d %H:%M:%S")
+    # Log to stderr
+    >&2 echo -e "${color_code}[${timestamp}] [${level}] ${message}\033[0m"
+}
+
+# Run a command, prefix with '+', and tee its output to the log.
+log_cmd() {
+  log "+ $*" "DEBUG"
+  "$@" 2>&1 | sed 's/^/| /' | tee -a "$LOG_FILE"
+}
+
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
 }
 
 # Helper function to check for blocking PRs and exit if found.
@@ -38,13 +53,10 @@ log() {
 # Arguments:
 #   $1: The reason for skipping (e.g., "Found manually-blocking PR #123").
 check_and_exit_if_blocked() {
-    local reason="$1"
-    log "$reason. Skipping current run."
-    if [ -n "${HEALTHCHECK_URL:-}" ]; then
-        log "Sending successful (skipped) heartbeat to health check URL..."
-        curl -fsS --retry 3 --max-time 10 "$HEALTHCHECK_URL" > /dev/null || log "Warning: Health check ping failed on skipped run."
-    fi
-    exit 0
+    log "BLOCKING CONDITION DETECTED: $1" "ERROR"
+    log "Aborting translation run. Please resolve the blocking issue." "ERROR"
+    # Optional: Add a health check ping for failure here
+    exit 0 # Exit cleanly to prevent cron from flagging it as a failure
 }
 
 # Check for required tools
@@ -63,75 +75,33 @@ done
 
 BLOCKING_KEYWORD="[PIPELINE-BLOCK]"
 log "Checking for manually-blocked PRs with keyword '$BLOCKING_KEYWORD' in the title..."
-# Use the 'search' flag to query PR titles on the upstream repo.
-# Filter by '@me' which gh resolves to the currently authenticated user.
-MANUAL_BLOCK_PR=$(gh pr list --state open --author "@me" --repo "$UPSTREAM_REPO_NAME" --search "in:title $BLOCKING_KEYWORD" --json number -q '.[0].number' || true)
-
-if [ -n "$MANUAL_BLOCK_PR" ]; then
-    check_and_exit_if_blocked "Found manually-blocking PR #${MANUAL_BLOCK_PR} authored by the bot's account"
-fi
-log "No manually-blocked PRs found."
-
-log "Checking for existing open translation PRs on repo '$UPSTREAM_REPO_NAME'..."
-# Note: The 'gh pr list' command requires GITHUB_TOKEN to be in the environment.
-# We query by author ('@me') against the UPSTREAM repository, then filter by branch name prefix.
-# The '|| true' ensures the script doesn't exit if grep finds no matches.
-# 'head -n 1' ensures we only ever get one branch name, even if something unexpected happens.
-EXISTING_PR_BRANCH=$(gh pr list --state open --author "@me" --repo "$UPSTREAM_REPO_NAME" --json headRefName -q '.[].headRefName' | grep "^${TRANSLATION_BRANCH_PREFIX}" | head -n 1 || true)
-
-if [ -n "$EXISTING_PR_BRANCH" ]; then
-    check_and_exit_if_blocked "Found existing open translation PR from branch: $EXISTING_PR_BRANCH"
-fi
-
-log "No pending translation PRs found. Proceeding with translation check."
-
-log "Update script started. Checking for TX_TOKEN..."
-
-# Check if TX_TOKEN is already set in the environment
-if [ -n "${TX_TOKEN:-}" ]; then
-    log "TX_TOKEN is already set in the environment."
+if command_exists gh && [ -n "${GITHUB_TOKEN:-}" ]; then
+  # Use the 'search' flag to query PR titles on the upstream repo.
+  # Filter by '@me' which gh resolves to the currently authenticated user.
+  MANUAL_BLOCK_PR=$(gh pr list --state open --author "@me" --repo "$UPSTREAM_REPO_NAME" --search "in:title $BLOCKING_KEYWORD" --json number -q '.[0].number' || true)
+  if [ -n "$MANUAL_BLOCK_PR" ]; then
+      check_and_exit_if_blocked "Found manually-blocking PR #${MANUAL_BLOCK_PR} authored by the bot's account"
+  fi
+  log "No manually-blocked PRs found."
 else
-    log "TX_TOKEN not found in environment. Attempting to load from .env files..."
-    # Load environment variables from .env file if it exists
-    ENV_FILE=".env"
-    HOME_ENV_FILE="$HOME/.env"
-
-    if [ -f "$HOME_ENV_FILE" ]; then
-        log "Loading environment variables from $HOME_ENV_FILE"
-        set -a  # automatically export all variables
-        # shellcheck source=~/.env
-        source "$HOME_ENV_FILE"
-        set +a  # disable auto-export
-        log "Environment variables potentially loaded from $HOME_ENV_FILE."
-    elif [ -f "$ENV_FILE" ]; then
-        log "Loading environment variables from $ENV_FILE (in PWD: $(pwd))"
-        set -a  # automatically export all variables
-        # shellcheck source=./.env
-        source "$ENV_FILE"
-        set +a  # disable auto-export
-        log "Environment variables potentially loaded from $ENV_FILE."
-    else
-        log "No .env file found in current directory or home directory."
-    fi
+  log "Skipping manual PR-block check (gh not available or GITHUB_TOKEN unset)." "DEBUG"
 fi
 
-# Ensure TX_TOKEN is set now (either from initial env or sourced from file)
-if [ -z "${TX_TOKEN:-}" ]; then
-    log "Error: TX_TOKEN environment variable is not set and could not be loaded from .env files."
-    log "Please ensure TX_TOKEN is available as an environment variable or in a .env file."
-    log "For Docker, ensure it's passed via docker-compose.yml environment section from your host's .env file."
-    exit 1
+if command_exists gh && [ -n "${GITHUB_TOKEN:-}" ]; then
+  log "Checking for existing open translation PRs on repo '$UPSTREAM_REPO_NAME'..."
+  # Note: The 'gh pr list' command requires GITHUB_TOKEN to be in the environment.
+  EXISTING_PR_BRANCH=$(gh pr list --state open --author "@me" --repo "$UPSTREAM_REPO_NAME" --json headRefName -q '.[].headRefName' | grep "^${TRANSLATION_BRANCH_PREFIX}" | head -n 1 || true)
+  if [ -n "$EXISTING_PR_BRANCH" ]; then
+      check_and_exit_if_blocked "Found existing open translation PR from branch: $EXISTING_PR_BRANCH"
+  fi
+  log "No pending translation PRs found. Proceeding with translation check."
+else
+  log "Skipping existing-PR check (gh not available or GITHUB_TOKEN unset)." "DEBUG"
 fi
 
-# Export TX_TOKEN explicitly to be absolutely sure (though set -a during source should do it)
-export TX_TOKEN
-log "TX_TOKEN is confirmed set and exported."
 
-# Function to check if a command exists
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
-
+# --- Git Repository and Transifex Configuration Validation ---
+log "Starting Git and Transifex validation..."
 # Load configuration from YAML file
 # Use the environment variable if it's set, otherwise default to config.yaml in the CWD.
 CONFIG_FILE="${TRANSLATOR_CONFIG_FILE:-config.yaml}"
@@ -192,16 +162,6 @@ log "Absolute input folder: \"$ABSOLUTE_INPUT_FOLDER\""
 
 if [ ! -d "$ABSOLUTE_INPUT_FOLDER" ]; then
     log "Error: Input folder does not exist or is not a directory: $ABSOLUTE_INPUT_FOLDER (derived from $TARGET_PROJECT_ROOT and $INPUT_FOLDER)"
-    exit 1
-fi
-
-log "Starting deployment process"
-log "Target project root: $TARGET_PROJECT_ROOT"
-log "Input folder: $INPUT_FOLDER" # Added log for input folder
-
-# Check if target project root exists
-if [ ! -d "$TARGET_PROJECT_ROOT" ]; then
-    log "Error: Target project root directory not found: $TARGET_PROJECT_ROOT"
     exit 1
 fi
 
@@ -326,9 +286,9 @@ if command_exists tx; then
 
     log "Using tx command: $TX_PULL_CMD"
     log "Listing permissions for current directory ($(pwd)) before tx pull:"
-    ls -la .
+    log_cmd ls -la .
     log "Listing permissions for input folder '${ABSOLUTE_INPUT_FOLDER}' before tx pull:"
-    ls -la "${ABSOLUTE_INPUT_FOLDER}" || true
+    log_cmd ls -la "${ABSOLUTE_INPUT_FOLDER}"
     
     # Execute the pull command. Redirect stderr to stdout (2>&1) and pipe the combined
     # output to grep. This filters out all verbose progress and skipping messages.
@@ -417,6 +377,28 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
     # Push the branch to GitHub
     if git remote | grep -qx 'origin'; then
       log "Pushing changes to origin ($FORK_REPO_NAME)"
+      # Before pushing, derive the owner from the 'origin' remote URL.
+      # This ensures the user in the PR head matches the push destination.
+      local fork_owner
+      fork_owner=$(git remote get-url origin | sed -E 's#.*[:/](.+)/[^/]+(\.git)?$#\1#')
+
+      if [ -z "$fork_owner" ]; then
+          log "Error: Could not determine the fork owner from the 'origin' remote URL. Cannot create PR." "ERROR"
+          exit 1
+      fi
+      log "Determined fork owner for PR head as: '$fork_owner'"
+
+      # If FORK_REPO_NAME is set, validate it matches the remote.
+      if [ -n "${FORK_REPO_NAME:-}" ]; then
+          local fork_repo_owner
+          fork_repo_owner=$(echo "$FORK_REPO_NAME" | cut -d'/' -f1)
+          if [[ "$fork_owner" != "$fork_repo_owner" ]]; then
+              log "Error: The owner of the 'origin' remote ('$fork_owner') does not match the configured FORK_REPO_NAME owner ('$fork_repo_owner')." "ERROR"
+              log "Please align the 'origin' remote with the expected fork repository." "ERROR"
+              exit 1
+          fi
+      fi
+
       git push origin "$BRANCH_NAME"
     else
       log "Error: 'origin' remote not found; cannot push PR branch. Configure a fork remote named 'origin' or adjust the script."
@@ -452,7 +434,8 @@ This PR is from branch \`$BRANCH_NAME\` on the \`$FORK_REPO_NAME\` fork and targ
                 --body "$PR_BODY" \
                 --repo "$UPSTREAM_REPO_NAME" \
                 --base "$TARGET_BRANCH_FOR_PR" \
-                --head "$(echo $FORK_REPO_NAME | cut -d'/' -f1):$BRANCH_NAME")
+                --head "$(git remote get-url origin \
+                   | sed -E 's#.*[:/](.+)/[^/]+(\.git)?$#\1#'):$BRANCH_NAME")
             
             PR_CREATE_EXIT_CODE=$?
 
