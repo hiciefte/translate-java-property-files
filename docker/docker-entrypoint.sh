@@ -1,14 +1,31 @@
-#!/usr/bin/env bash
+#!/bin/bash
+#
+# Entrypoint script for the Translate Java Property Files service.
+# This script handles initial setup, privilege dropping, and Git repository management.
+#
+
+# --- Strict Mode ---
 set -euo pipefail
 
-# If this script is run as root, fix permissions for the target repository
-# and then re-execute this script as the non-root 'appuser'.
-if [ "$(id -u)" = '0' ]; then
-    # Allow target repo directory to be customized via environment variable
+# --- Log Function ---
+# Moved to the top to be available for all parts of the script, including error paths.
+log() {
+    # Use "$*" to log all arguments as a single string, preserving quotes and spaces.
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] [Entrypoint] $*"
+}
+
+# --- Root-Level Execution ---
+# This block runs only if the container is started as root (UID 0).
+# Its primary jobs are to fix permissions and then drop to the non-root 'appuser'.
+if [ "$(id -u)" -eq 0 ]; then
+    log "Running as root. Ensuring /target_repo exists and has correct permissions..."
+
+    # The TARGET_REPO_DIR can be overridden by an environment variable.
+    # Default to /target_repo if not set.
     TARGET_REPO_DIR="${TARGET_REPO_DIR:-/target_repo}"
-    echo "[Entrypoint] Running as root. Ensuring ${TARGET_REPO_DIR} exists and has correct permissions..."
-    # Ensure the target directory exists and is owned by appuser.
-    # This makes the container resilient to the volume's initial state.
+
+    # Ensure the target repo directory exists and is owned by appuser.
+    # This is crucial because the volume might be mounted from the host with root ownership.
     mkdir -p "$TARGET_REPO_DIR"
     chown -R appuser:appuser "$TARGET_REPO_DIR"
 
@@ -16,9 +33,11 @@ if [ "$(id -u)" = '0' ]; then
     if [ -e /app/logs ] && [ ! -d /app/logs ]; then
         echo "[Entrypoint] Error: /app/logs exists but is not a directory" >&2; exit 1
     fi
+    # Allow overriding via LOG_DIR_MODE (default 0755)
+    LOG_DIR_MODE="${LOG_DIR_MODE:-0755}"
     mkdir -p /app/logs
     chown -R appuser:appuser /app/logs
-    chmod 0755 /app/logs
+    chmod "$LOG_DIR_MODE" /app/logs
 
     echo "[Entrypoint] Permissions fixed. Re-executing as appuser..."
     # Drop privileges and re-run this script as 'appuser'
@@ -27,7 +46,8 @@ if [ "$(id -u)" = '0' ]; then
     elif command -v su-exec >/dev/null 2>&1; then
         exec su-exec appuser "$0" "$@"
     else
-        log "Error: neither 'gosu' nor 'su-exec' found in PATH."
+        # Use echo directly as log() may not be available if this block is moved
+        echo "[$(date +'%Y-%m-%d %H:%M:%S')] [Entrypoint] Error: neither 'gosu' nor 'su-exec' found in PATH." >&2
         exit 1
     fi
 fi
@@ -37,9 +57,14 @@ fi
 
 # Ensure logs directory exists when not started as root
 [ -d /app/logs ] || mkdir -p /app/logs
+# Align permissions if we can modify the directory
+if [ -w /app/logs ]; then
+  chmod "${LOG_DIR_MODE:-0755}" /app/logs
+fi
 
 # Log function for this script
 log() {
+    # Use "$*" to log all arguments as a single string, preserving quotes and spaces.
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] [Entrypoint] $*"
 }
 
