@@ -2,9 +2,11 @@
 __pycache__/
 *.pyc
 .venv/
+venv/
 .pytest_cache/
 .mypy_cache/
 .coverage
+.coverage.*
 htmlcov/
 dist/
 build/
@@ -32,7 +34,9 @@ build/
 # Environment files.
 # Catches .env, .env.local, .env.*, etc.
 /.env*
+!/.env.example
 docker/.env*
+!docker/.env.example
 
 # Docker Compose override files
 docker/docker-compose.override.yml

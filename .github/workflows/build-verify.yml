@@ -6,9 +6,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  verify:
-    name: Lint, Scan, and Build
+  build-and-verify:
     runs-on: ubuntu-latest
+    permissions:
+      security-events: write
 
     steps:
       - name: Checkout repository
@@ -30,11 +31,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
       - name: Scan Python dependencies for vulnerabilities
         run: |
-          pip install pip-audit
           pip-audit -r requirements.txt
           pip-audit -r requirements-dev.txt
+
+      - name: Lint Python code
+        run: |
+          ruff check .
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -46,9 +55,6 @@ jobs:
           pip install -r requirements-dev.txt
           pytest
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -59,7 +65,13 @@ jobs:
           mkdir -p secrets/gpg_bot_key
           touch secrets/gpg_bot_key/bot_public_key.asc
           touch secrets/gpg_bot_key/bot_secret_key.asc
+          # The build process requires a .env file to be present, but the values are not
+          # used in the CI environment. We create a dummy file to satisfy this requirement.
           echo "DUMMY_KEY=123" > docker/.env
+
+      # QEMU not required unless building multi-arch
+      # - name: Set up QEMU
+      #   uses: docker/setup-qemu-action@v3
 
       - name: Build Docker Image
         uses: docker/build-push-action@v5
@@ -81,8 +93,9 @@ jobs:
         uses: aquasecurity/trivy-action@0.31.0
         with:
           image-ref: 'translator-app:ci-${{ github.sha }}'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
+          # Temporarily switch to 'table' format to identify the new CVEs causing the failure.
+          format: 'table'
+          # output: 'trivy-results.sarif'
           # Fail the build if any critical or high severity vulnerabilities are found.
           exit-code: '1'
           # Ignore vulnerabilities that are not yet fixed by the base image maintainers, or that
@@ -94,7 +107,7 @@ jobs:
           # This provides a clear, version-controlled record of accepted risks.
           trivyignores: '.trivyignore'
 
-      - name: Upload Trivy scan results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: 'trivy-results.sarif' 
+      # - name: Upload Trivy scan results to GitHub Security tab
+      #   uses: github/codeql-action/upload-sarif@v3
+      #   with:
+      #     sarif_file: 'trivy-results.sarif' 
