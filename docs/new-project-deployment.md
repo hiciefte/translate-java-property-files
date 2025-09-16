@@ -5,18 +5,23 @@ This guide provides a complete walkthrough for deploying a new, isolated instanc
 ## Prerequisites
 
 1.  **A Linux Server**: A fresh VPS instance (e.g., Ubuntu 22.04) is recommended.
-2.  **Docker and Docker Compose**: Ensure they are installed.
+2.  **Docker and Docker Compose**: Ensure they are installed and that **BuildKit is enabled**.
     -   [Install Docker Engine](https://docs.docker.com/engine/install/ubuntu/)
     -   [Install Docker Compose](https://docs.docker.com/compose/install/)
+    -   Enable BuildKit by setting these environment variables in your `~/.bashrc` or `~/.profile`:
+        ```bash
+        export DOCKER_BUILDKIT=1
+        export COMPOSE_DOCKER_CLI_BUILD=1
+        ```
 3.  **Git**: `sudo apt-get update && sudo apt-get install -y git`
-4.  **GitHub Deploy Key**: You must have a dedicated SSH key pair for this service.
-    -   Generate one with `ssh-keygen -t ed25519 -C "translator-bot-deploy-key"`.
-    -   Add the public key (`~/.ssh/id_ed25519.pub`) as a "Deploy Key" with "Allow write access" in your **forked** GitHub repository's settings (`Settings -> Deploy Keys`).
-5.  **GPG Key**: You must have a GPG key pair for signing commits. The private key should be in ASCII-armored format.
+4.  **GitHub Deploy Key**: A dedicated SSH key for the service.
+    -   Generate one: `ssh-keygen -t ed25519 -C "translator-bot-deploy-key"`
+    -   Add the **public key** (`id_ed25519.pub`) as a "Deploy Key" with "Allow write access" in the **forked** GitHub repository's settings (`Settings -> Deploy Keys`).
+5.  **GPG Key**: A GPG key for signing commits, in ASCII-armored format.
 6.  **API Tokens**:
     -   `OPENAI_API_KEY`: From your OpenAI account.
     -   `TX_TOKEN`: From your Transifex account.
-    -   `GITHUB_TOKEN`: A GitHub Personal Access Token with `repo` scope.
+    -   `GITHUB_TOKEN`: A GitHub Personal Access Token with `repo` and `workflow` scopes.
 
 ## Step 1: Clone the Project
 
@@ -27,31 +32,19 @@ git clone <your-repository-url> /opt/translator-service
 cd /opt/translator-service
 ```
 
-## Step 2: Configure the Service
+## Step 2: Add Secrets
 
-Before adding secrets, you must create the main configuration file for the service.
+This is a security-critical step. You must place the deploy key, GPG key, and API tokens in the correct locations.
 
-```bash
-# Copy the example config to create your instance-specific config
-cp config.example.yaml config.yaml
+1.  **SSH Deploy Key**:
+    -   Copy your **private** SSH key (`id_ed25519`).
+    -   Place it into the file at `secrets/deploy_key/id_ed25519`. The filename must match the key type.
 
-# Now, edit config.yaml to set the correct paths and repository details.
-# At a minimum, you must set:
-# - target_project_root
-# - input_folder
-# You must use absolute paths inside the container, e.g., /target_repo
-nano config.yaml
-```
-
-## Step 3: Add Secrets and Set Permissions
-
-You need to place the GPG key and create the `.env` file with your API tokens. **This is a security-critical step.**
-
-1.  **GPG Private Key**:
+2.  **GPG Private Key**:
     -   Copy your ASCII-armored GPG private key.
     -   Paste it into the file at `secrets/gpg_bot_key/bot_secret_key.asc`.
 
-2.  **Create the `.env` File**:
+3.  **Create the `.env` File**:
     -   Create a new file at `docker/.env`.
     -   Add the following content, replacing the placeholder values. **Do not use quotes**.
 
@@ -66,37 +59,44 @@ You need to place the GPG key and create the `.env` file with your API tokens. *
     OPENAI_API_KEY=sk-YourOpenAI_API_Key
     TX_TOKEN=YourTransifexToken
 
-    # === Git Author and GPG Signing ===
-    # This must match the name and email associated with your GPG key.
-    GIT_AUTHOR_NAME=Your Bot Name
-    GIT_AUTHOR_EMAIL=your-bot-email@example.com
-    # Find this with 'gpg --list-secret-keys --keyid-format LONG'
-    GIT_SIGNING_KEY=YourGpgKeyId
-
-    # === Git Repository URLs ===
-    # The SSH URL of your FORK of the repository.
-    FORK_REPO_URL=git@github.com:your-username/your-fork.git
-    # The HTTPS URL of the MAIN repository you are translating for.
-    UPSTREAM_REPO_URL=https://github.com/original-org/original-repo.git
-
-    # Optional: Explicitly tell the script where to find the config file inside the container.
-    # This is recommended for robustness. It should match the volume mount in docker-compose.yml.
-    # TRANSLATOR_CONFIG_FILE=/app/config.yaml
+    # === Git Repository Names ===
+    # The 'owner/repo' name of your FORK.
+    FORK_REPO_NAME=your-username/your-fork
+    # The 'owner/repo' name of the MAIN repository.
+    UPSTREAM_REPO_NAME=original-org/original-repo
     ```
 
-3.  **Harden File Permissions**:
-    -   Restrict access to your secret files so only the owner can read them.
+4.  **Harden File Permissions**:
+    -   Restrict access to all secret files.
     ```bash
-    chmod 600 docker/.env secrets/gpg_bot_key/bot_secret_key.asc
+    chmod -R 600 secrets/
+    chmod 600 docker/.env
     ```
+
+## Step 3: Configure the Service
+
+Create and edit the main configuration file for the service.
+
+```bash
+# Copy the example config to create your instance-specific config
+cp config.example.yaml config.yaml
+
+# Now, edit config.yaml to set the correct paths and repository details.
+# At a minimum, you must set:
+# - target_project_root: /target_repo
+# - input_folder: i18n/src/main/resources
+# The paths must be absolute paths inside the container.
+nano config.yaml
+```
 
 ## Step 4: Build the Docker Image
 
-Navigate to the `docker` directory and run the build command. This will create a self-contained image with all dependencies and your GPG key imported and trusted.
+Navigate to the `docker` directory and run the build command. This will securely build a self-contained image with all dependencies, including your SSH and GPG keys.
 
 ```bash
-cd /opt/translator-service/docker
-docker compose build
+# Ensure you are in the project root first
+cd /opt/translator-service
+docker compose -f docker/docker-compose.yml build
 ```
 
 ## Step 5: Perform a Manual Test Run
@@ -106,29 +106,30 @@ Before setting up the cron job, it's crucial to test that everything is working 
 ```bash
 # This command will start the service, clone the repo, and run the translation script.
 # Monitor the output for any errors.
-docker compose run --rm translator
+docker compose -f docker/docker-compose.yml run --rm translator
 ```
 
-If the run succeeds, you should see a new pull request created in your forked repository.
+If the run succeeds, you should see a new pull request created in the upstream repository.
 
 ## Step 6: Schedule the Cron Job
 
-Once the manual run is successful, you can schedule the service to run automatically.
+Once the manual run is successful, schedule the service to run automatically.
 
 1.  Open the root user's crontab for editing:
     ```bash
     sudo crontab -e
     ```
-2.  Paste the following line at the bottom of the file. This is a robust example that sets the required environment and uses absolute paths to avoid common cron issues. It will run the translator every day at 3:00 AM.
+2.  Paste the following line at the bottom of the file. This is a robust example that sets the required environment and uses absolute paths. It will run the translator every day at 3:00 AM.
 
     ```cron
     # Set a sane environment for the cron job
     SHELL=/bin/bash
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    DOCKER_BUILDKIT=1
+    COMPOSE_DOCKER_CLI_BUILD=1
 
     # Run the translator service daily at 3:00 AM server time.
-    # This command first ensures the log directory exists, then runs the container.
-    0 3 * * * cd /opt/translator-service/docker && mkdir -p ../logs && /usr/bin/docker compose run --rm translator >> /opt/translator-service/logs/cron_job.log 2>&1
+    0 3 * * * cd /opt/translator-service/ && /usr/bin/docker compose -f docker/docker-compose.yml run --rm translator >> /opt/translator-service/logs/cron_job.log 2>&1
     ```
 3.  Save and close the file.
 
