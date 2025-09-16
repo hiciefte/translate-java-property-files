@@ -226,10 +226,10 @@ else
     mapfile -t configured_sources < <(awk -F'=' '/^[[:space:]]*source_file[[:space:]]*=/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2}' "$TX_CONFIG_FILE")
 
     # Get the actual English source files present on disk.
-    # We use find and then remove the input folder prefix to get paths relative to the input folder,
-    # which should match the format in the Transifex config.
+    # We assume source files are .properties files that do NOT follow the language code pattern (_xx or _xx_XX).
+    # This correctly identifies files like 'app.properties' while excluding 'app_de.properties'.
     # globstar not needed; using find
-    mapfile -t actual_sources_full_path < <(find "$ABSOLUTE_INPUT_FOLDER" -type f -name '*_en.properties')
+    mapfile -t actual_sources_full_path < <(find "$ABSOLUTE_INPUT_FOLDER" -type f -name '*.properties' -not -name '*_*.properties')
 
     declare -A configured_relative_paths
     for src in "${configured_sources[@]}"; do
@@ -445,14 +445,17 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
         find "$ABSOLUTE_INPUT_FOLDER" \( -name '*.properties' -o -name '*.po' -o -name '*.mo' \) -print0 | xargs -0 git add
         # Stage deletions for removed translation files (use repo-relative pathspec)
         REL_INPUT_FOLDER="${ABSOLUTE_INPUT_FOLDER#"$TARGET_PROJECT_ROOT/"}"
-        git ls-files --deleted -- "$REL_INPUT_FOLDER" \
-          | awk '/\.(properties|po|mo)$/' \
-          | xargs -r git rm
+        git ls-files -z --deleted -- "$REL_INPUT_FOLDER" \
+          | grep -zE '\.(properties|po|mo)$' \
+          | xargs -0 -r git rm
 
         # Commit changes, signing if a key is configured
         if git config --get commit.gpgsign >/dev/null 2>&1 && git config --get user.signingkey >/dev/null 2>&1; then
           log "Committing with GPG signing"
-          git commit -S -m "Automated translation update"
+          if ! git commit -S -m "Automated translation update"; then
+            log "GPG signing failed; retrying unsigned." "WARNING"
+            git commit -m "Automated translation update"
+          fi
         else
           log "Committing without GPG signing"
           git commit -m "Automated translation update"

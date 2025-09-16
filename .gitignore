@@ -3,15 +3,20 @@ __pycache__/
 *.pyc
 *.iml
 .idea/
+# User-specific files
 .DS_Store
-logs/**
-!logs/.gitkeep
-# Ignore all secret files, but keep the directory structure placeholder.
-secrets/
+
+# Logs
+/logs/
+!/logs/.gitkeep
+
+# Secrets
 # This directory contains sensitive information like API keys and should never be committed.
-!secrets/.gitkeep
-# Ignore environment files. The .env file in the docker directory is for server deployment secrets.
-# The root .env is for local non-docker testing. Neither should be in git.
+/secrets/
+!/secrets/.gitkeep
+
+# Environment files. The .env file in the docker directory is for server deployment secrets.
+# It should be ignored to prevent accidental commits of sensitive data.
 /.env
 docker/.env
 docker/docker-compose.override.yml

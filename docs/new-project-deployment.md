@@ -64,8 +64,9 @@ This is a security-critical step. You must place the deploy key, GPG key, and AP
     # === Git Author Identity ===
     # This name and email will be used for the commit author and committer.
     # The email MUST be a verified email on the GitHub account associated with the GPG key.
-    GIT_AUTHOR_NAME="Translation Bot (Takahiro Nagasawa)"
-    GIT_AUTHOR_EMAIL=takahiro.nagasawa@proton.me
+    # Do not use quotes around the values.
+    GIT_AUTHOR_NAME=Translation Bot
+    GIT_AUTHOR_EMAIL=your-email@example.com
 
     # === Git Repository Names ===
     # The 'owner/repo' name of your FORK.
