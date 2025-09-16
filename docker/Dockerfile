@@ -86,8 +86,14 @@ RUN TX_VERSION="v1.6.17" && \
     tx --version
 
 # === GPG Key Import for Bot ===
+# Copy the GPG secret key into a temporary location
 COPY secrets/gpg_bot_key/bot_secret_key.asc /tmp/bot_secret_key.asc
 
+# Set correct ownership for the key so appuser can read it.
+RUN chown appuser:appuser /tmp/bot_secret_key.asc
+
+# Import the GPG key for the appuser.
+# This step is skipped in CI builds by checking the SKIP_GPG_IMPORT build argument.
 RUN if [ "$SKIP_GPG_IMPORT" = "true" ]; then \
       echo "Skipping GPG key import for CI build."; \
     else \
