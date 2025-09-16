@@ -18,9 +18,9 @@ services:
     command: ["/app/update-translations.sh"]
     volumes:
       # Mount the target repository into the container.
-      # The '${VOLUME_NAME:-target-repo-data}' allows for multiple, isolated instances
-      # by using a named volume that can be overridden by an environment variable.
-      - ${VOLUME_NAME:-target-repo-data}:/target_repo
+      # The logical name 'target-repo-data' is static. The actual volume name on the host
+      # is set in the top-level 'volumes' section using the environment variable.
+      - target-repo-data:/target_repo
       # Mount configuration and glossary files.
       - ./config.docker.yaml:/app/config.yaml:ro
       - ../glossary.json:/app/glossary.json:ro
@@ -39,10 +39,10 @@ services:
     # An example is provided in docker/.env.example
 
 # Define the named volume. The name used here is the default.
-# The ${VOLUME_NAME} environment variable in the service's volumes section
-# can still point to a differently named volume if needed.
+# The ${VOLUME_NAME} environment variable from .env will override the on-disk name.
 volumes:
   target-repo-data:
+    name: ${VOLUME_NAME:-target-repo-data}
 
 # Define the secret for the SSH deploy key.
 # The filename can be controlled via the DEPLOY_KEY_NAME environment variable.

@@ -139,6 +139,24 @@ if [ -w /app/logs ]; then
   chmod "$LOG_DIR_MODE" /app/logs || log "Warning: Could not set permissions on /app/logs. Continuing..."
 fi
 
+# Ensure the log directory exists and is owned by appuser
+if [ -d "/app/logs" ]; then
+    chown -R appuser:appuser /app/logs
+fi
+
+# Attempt to switch to the appuser.
+# If this fails (e.g., on Docker for Mac), check the ALLOW_RUN_AS_ROOT flag.
+log "[Entrypoint] Using gosu to switch to appuser..."
+if ! gosu appuser "$0" "$@"; then
+    log "Warning: gosu failed to switch to appuser." "WARNING"
+    if [ "${ALLOW_RUN_AS_ROOT:-false}" = "true" ]; then
+      log "ALLOW_RUN_AS_ROOT=true; continuing as root."
+    else
+      log "Refusing to continue as root. Set ALLOW_RUN_AS_ROOT=true to override." "ERROR"
+      exit 1
+    fi
+fi
+
 log "Starting entrypoint script as user: $(whoami)"
 
 # If running as root (e.g., ALLOW_RUN_AS_ROOT=true in local dev), allow git to operate on /target_repo
