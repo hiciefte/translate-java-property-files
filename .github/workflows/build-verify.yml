@@ -45,13 +45,9 @@ jobs:
           pip-audit -r requirements.txt
           pip-audit -r requirements-dev.txt
 
-      - name: Lint Python code
+      - name: Lint and Test Python code
         run: |
           ruff check .
-
-      - name: Run unit tests with pytest
-        run: |
-          pip install -r requirements-dev.txt
           pytest
 
       - name: Set up Docker Buildx
