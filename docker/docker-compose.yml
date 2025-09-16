@@ -9,6 +9,7 @@ services:
         # Pass the deploy key name as a build argument.
         # This can be set in the .env file or the shell environment.
         - DEPLOY_KEY_NAME=${DEPLOY_KEY_NAME:-id_ed25519}
+      # Requires DOCKER_BUILDKIT=1 and COMPOSE_DOCKER_CLI_BUILD=1
       secrets:
         # Make the deploy_key secret available to the build process
         - deploy_key

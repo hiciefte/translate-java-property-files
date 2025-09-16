@@ -44,15 +44,37 @@ This project uses `pip-tools` to manage Python dependencies, ensuring reproducib
 
 ### Updating Dependencies
 
-If you need to add, remove, or update a dependency:
-1.  Modify the appropriate `.in` file (`requirements.in` or `requirements-dev.in`).
-2.  Install `pip-tools` if you haven't already: `pip install pip-tools`.
+When you need to add or update a Python dependency, please edit the appropriate `.in` file:
+
+-   `requirements.in` for production dependencies.
+-   `requirements-dev.in` for development and testing dependencies.
+
+After editing, follow these steps:
+
+1.  Ensure you have `pip-tools` installed in your environment (`pip install pip-tools`).
+2.  Navigate to the project's root directory.
 3.  Re-compile the locked requirement files by running the following commands from the project root:
     ```bash
-    pip-compile requirements.in
-    pip-compile requirements-dev.in
+    # (Optionally add --generate-hashes for stronger integrity)
+    pip-compile requirements.in --generate-hashes
+    pip-compile requirements-dev.in --generate-hashes
     ```
 4.  Commit the changes to both the `.in` file and the generated `.txt` file to your pull request.
+
+### Installing the locked dependencies locally
+Use pip-tools' pip-sync to exactly match the lockfiles:
+```bash
+pip-sync requirements.txt requirements-dev.txt
+```
+
+## Code Style
+This project uses `black` for code formatting and `ruff` for linting. Please ensure your contributions are formatted correctly before submitting a pull request.
+You can run the formatter and linter from the project root:
+```bash
+black .
+ruff . --fix
+```
+This will automatically format your code and fix any simple linting issues.
 
 ## Code of Conduct
 

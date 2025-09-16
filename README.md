@@ -19,46 +19,44 @@ The entire process is designed to be run as an automated, scheduled job on a ser
 
 ## 🚀 Getting Started
 
-There are two primary ways to run the translation tool: locally for development/testing or on a server for automated production runs.
+The `translator` service is designed to run in a Docker container. This is the only recommended way to run the service. The process is identical for local testing and server deployment, using Docker to create a secure and consistent environment.
+Before building locally, enable BuildKit:
+```bash
+export DOCK-ER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1
+```
 
-### 1. Local Development & Server Deployment (Docker)
+### 1.1. Deploy Key Setup
 
-This is the only recommended way to run the service. The process is identical for local testing and server deployment, using Docker to create a secure and consistent environment.
+The service uses an SSH deploy key to interact with Git repositories.
 
-**Prerequisites:**
-*   Docker and Docker Compose
-*   A dedicated SSH keypair to be used as a deploy key.
-
-**One-Time Setup:**
-1.  **Create Secrets Directory**: If it doesn't exist, create the directory for the deploy key:
-    ```bash
-    mkdir -p secrets/deploy_key
-    ```
-2.  **Provide Deploy Key**: Place your **private** SSH deploy key in the `secrets/deploy_key/` directory. By default, the system looks for a file named `id_ed25519`.
-    ```
+-   **Generate a new key:** Create a new SSH key specifically for this service (it's recommended to use the `ed25519` algorithm). Do not use a password/passphrase for this key.
+-   **Add to GitHub:** Add the public key as a deploy key to the GitHub repository you want to push translations to. **Crucially, you must check "Allow write access."**
+-   **Place the key:** Put the private key file in the `secrets/deploy_key/` directory. By default, the system looks for a file named `id_ed25519`.
+    ```text
     secrets/deploy_key/id_ed25519
     ```
-    This key **must not** have a passphrase. It will be baked securely into the Docker image.
-3.  **Configure Environment**: Copy the example `.env` file and fill in your secrets (API keys, repository URLs).
-    ```bash
-    cp docker/.env.example docker/.env
-    # Now edit docker/.env with your values
-    ```
-4.  **(Optional) Customize Deploy Key Name**: If your deploy key is not named `id_ed25519`, you can specify its name by adding the `DEPLOY_KEY_NAME` variable to your `docker/.env` file:
-    ```
+-   **Custom key name (optional):** If your key file has a different name, you must create a file named `.env` inside the `docker/` directory and specify the filename:
+    ```env
     # In docker/.env
     DEPLOY_KEY_NAME=your_key_name_here
     ```
 
-**Run the Translation:**
-Navigate to the `docker` directory and use `docker compose run`.
-```bash
-cd docker
-docker compose build # Run this once or whenever you change the scripts or Dockerfile
+### 1.2. Configuration
+
+-   Copy the `config.example.yaml` to `config.yaml`.
+-   Edit `config.yaml` and set the `target_project_root` to the path where the Git repository will be cloned inside the container. This is typically `/target_repo`.
+-   Set the `input_folder` to the path (relative to `target_project_root`) where the `.properties` files are located.
+
+### 1.3. Building and Running the Service
+
+Once the deploy key is in place and the configuration is set, you can build and run the service with a single command from the project root:
+
+   ```bash
+# To run the full translation and PR creation pipeline
 docker compose run --rm translator
 ```
 
-**NOTE:** Because the service uses a baked-in deploy key, the final `git push` step will now work correctly on all platforms, including macOS. The previous SSH agent forwarding workarounds are no longer needed.
+**NOTE:** The baked-in deploy key must be read-only and scoped to the target repo, rotated regularly, and used only in non-public images. With this in place, `git push` works across platforms; SSH agent forwarding is no longer needed.
 
 ### 2. Server Deployment Details
 

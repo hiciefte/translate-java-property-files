@@ -390,10 +390,14 @@ if [ -n "$TRANSLATION_FILTER_GLOB" ] && [ "$TRANSLATION_FILTER_GLOB" != "null" ]
 fi
 # Export filter glob if set (used by Python translation script)
 [ -n "$TRANSLATION_FILTER_GLOB" ] && [ "$TRANSLATION_FILTER_GLOB" != "null" ] && export TRANSLATION_FILTER_GLOB
-python3 -u -m src.translate_localization_files || {
-    log "Error: Failed to run translation script. Exiting."
-    exit 1
-}
+set +e
+python3 -u -m src.translate_localization_files
+PY_EXIT=$?
+set -e
+if [ $PY_EXIT -ne 0 ]; then
+  log "Error: Translation script exited with code $PY_EXIT"
+  exit $PY_EXIT
+fi
 
 # Change back to the target project root for the final git operations.
 cd "$TARGET_PROJECT_ROOT"

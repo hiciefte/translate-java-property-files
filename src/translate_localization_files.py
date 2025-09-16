@@ -1,4 +1,5 @@
 import asyncio
+import datetime as _dt
 import json
 import logging
 import os
@@ -9,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import uuid
+from email.utils import parsedate_to_datetime
 from typing import Dict, List, Tuple, Optional, Any
 
 # --- Python Version Check ---
@@ -50,6 +52,11 @@ from src.translation_validator import (
 # Create a dedicated logger for this script to avoid conflicts with the root logger.
 logger = logging.getLogger("translation_script")
 
+# Define PROJECT_ROOT_DIR once at the top level so it can be used by configuration loading.
+SCRIPT_REAL_PATH = os.path.realpath(__file__)
+SCRIPT_DIR = os.path.dirname(SCRIPT_REAL_PATH)
+PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir))
+
 
 # --- Configuration Loading ---
 def load_configuration() -> Dict[str, Any]:
@@ -58,10 +65,6 @@ def load_configuration() -> Dict[str, Any]:
     Sets up logging based on the configuration.
     """
     # --- .env Loading ---
-    SCRIPT_REAL_PATH = os.path.realpath(__file__)
-    SCRIPT_DIR = os.path.dirname(SCRIPT_REAL_PATH)
-    PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir))
-
     dotenv_path_project_root = os.path.join(PROJECT_ROOT_DIR, '.env')
     dotenv_path_docker_dir = os.path.join(PROJECT_ROOT_DIR, 'docker', '.env')
 
@@ -139,7 +142,7 @@ DRY_RUN = config.get('dry_run', False)
 # Initialize the OpenAI client with your API key
 api_key_from_env = os.environ.get('OPENAI_API_KEY')
 if not api_key_from_env and not DRY_RUN:
-    logging.critical("CRITICAL: OPENAI_API_KEY not found. Set it or enable dry_run in config.")
+    logger.critical("CRITICAL: OPENAI_API_KEY not found. Set it or enable dry_run in config.")
     sys.exit(1)
 client = AsyncOpenAI(api_key=api_key_from_env) if not DRY_RUN else None
 
@@ -164,7 +167,6 @@ _translated_queue_name = config.get('translated_queue_folder', 'translated_queue
 TRANSLATION_QUEUE_FOLDER = os.path.join(TEMP_DIR, _translation_queue_name)
 TRANSLATED_QUEUE_FOLDER = os.path.join(TEMP_DIR, _translated_queue_name)
 PRESERVE_QUEUES_FOR_DEBUG = config.get('preserve_queues_for_debug', False)
-PROJECT_ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir))
 
 # ------------------------------------------------------------------------------
 # 1) Remove the LanguageCode Enum and any hard-coded dictionaries
@@ -554,6 +556,13 @@ async def _handle_retry(attempt: int, max_retries: int, base_delay: float, key: 
                     elif retry_after_header.endswith("ms"):
                         retry_after = float(retry_after_header[:-2]) / 1000  # Convert ms to seconds
             if retry_after is None:
+                # Try HTTP-date (RFC 7231)
+                try:
+                    dt = parsedate_to_datetime(retry_after_header)
+                    retry_after = max(0.0, (dt - _dt.datetime.now(dt.tzinfo)).total_seconds())
+                except Exception:
+                    retry_after = None
+            if retry_after is None:
                 retry_after = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 1)
             delay = retry_after
         except Exception as exc:
@@ -815,7 +824,11 @@ Provide the translation **of the Value only**, following the instructions above.
                     timeout=60.0,
                 )
 
-                translated_text = response.choices[0].message.content.strip()  # type: ignore[arg-type]
+                msg_content = response.choices[0].message.content
+                if not msg_content:
+                    logger.warning("Empty assistant content for key '%s'; keeping original text.", key)
+                    return index, text
+                translated_text = msg_content.strip()
 
                 # Restore placeholders in the translated text
                 translated_text = restore_placeholders(translated_text, placeholder_mapping)
@@ -942,20 +955,23 @@ async def holistic_review_async(
                     max_tokens=4096,  # Increase tokens to avoid truncation
                     timeout=120.0,
                 )
-                response_text = response.choices[0].message.content.strip()
+                msg_content = response.choices[0].message.content
+                if not msg_content or not msg_content.strip():
+                    logger.error("Holistic review returned empty content.")
+                    raise json.JSONDecodeError("empty response", "", 0)
+                response_text = msg_content.strip()
 
                 # The response should be a JSON string. Parse and validate it.
                 parsed_json = json.loads(response_text)
                 jsonschema.validate(instance=parsed_json, schema=LOCALIZATION_SCHEMA)
                 return parsed_json
 
-            except json.JSONDecodeError as json_exc:
-                logger.error(f"Holistic review failed: AI did not return valid JSON. Error: {json_exc}")
+            except json.JSONDecodeError:
+                logger.exception("Holistic review failed: AI did not return valid JSON.")
                 logger.debug(f"Invalid AI response (JSON Decode Error):\n---\n{response_text}\n---")
                 # Fall through to retry logic
-            except jsonschema.ValidationError as schema_exc:
-                logger.error(
-                    f"Holistic review failed: AI response did not match the required JSON schema. Error: {schema_exc.message}")
+            except jsonschema.ValidationError:
+                logger.exception("Holistic review failed: AI response did not match the required JSON schema.")
                 logger.debug(f"Invalid AI response (Schema Error):\n---\n{response_text}\n---")
                 # Fall through to retry logic
 
@@ -1114,9 +1130,12 @@ def validate_paths(input_folder: str, translation_queue: str, translated_queue: 
         if not os.path.exists(path):
             logger.error(f"{name} '{path}' does not exist.")
             raise FileNotFoundError(f"{name} '{path}' does not exist.")
-        if not os.access(path, os.R_OK | os.W_OK):
-            logger.error(f"{name} '{path}' is not accessible (read/write permissions needed).")
-            raise PermissionError(f"{name} '{path}' is not accessible (read/write permissions needed).")
+        required = os.R_OK | os.W_OK
+        if name == "Repository Root":
+            required = os.R_OK
+        if not os.access(path, required):
+            logger.error("%s '%s' is not accessible (required perms: %s).", name, path, "R+W" if required & os.W_OK else "R")
+            raise PermissionError(f"{name} '{path}' lacks required permissions.")
     logger.info("All critical paths are valid and accessible.")
 
 def get_changed_translation_files(input_folder_path: str, repo_root: str) -> List[str]:
@@ -1154,6 +1173,8 @@ def get_changed_translation_files(input_folder_path: str, repo_root: str) -> Lis
 
         changed_files = []
         for line in result.stdout.splitlines():
+            if len(line) < 4:
+                continue
             # Each line starts with two characters indicating status
             # e.g., ' M filename', '?? filename'
             status, filepath = line[:2], line[3:]
@@ -1176,7 +1197,7 @@ def get_changed_translation_files(input_folder_path: str, repo_root: str) -> Lis
         if filter_glob:
             # We need the `fnmatch` module to compare against the glob pattern.
             import fnmatch
-            filtered_list = [f for f in changed_files if fnmatch.fnmatch(os.path.basename(f), filter_glob)]
+            filtered_list = [f for f in changed_files if fnmatch.fnmatch(f, filter_glob)]
             logger.info(
                 f"Applied filter '{filter_glob}', {len(filtered_list)} out of {len(changed_files)} files will be translated.")
             return filtered_list
@@ -1413,9 +1434,8 @@ async def process_translation_queue(
                     logger.warning(f"Holistic review for chunk {i + 1} failed; keeping draft values for this chunk.")
                     for key in key_chunk:
                         final_corrected_translations[key] = draft_translations.get(key, "")
-        except Exception as e:
-            logger.exception(
-                f"An error occurred during asyncio.gather for holistic review of {translation_file}: {e}")
+        except Exception:
+            logger.exception("An error occurred during asyncio.gather for holistic review of %s", translation_file)
 
         # Always apply the results from the review stage, which includes fallbacks to draft for failed chunks.
         logger.info("Applying corrected translations (including any draft fallbacks).")
@@ -1548,15 +1568,15 @@ async def main():
         logger.info("Copied translated files back to the input folder.")
 
     # Optional: Clean up translation queue folders.
-    if DRY_RUN:
-        logger.info("Dry run enabled; skipping cleanup of translation queue folders.")
+    if DRY_RUN or PRESERVE_QUEUES_FOR_DEBUG:
+        logger.info("Skipping cleanup of translation queue folders (dry-run or preserve-for-debug enabled).")
     else:
         try:
             shutil.rmtree(TRANSLATION_QUEUE_FOLDER)
             shutil.rmtree(TRANSLATED_QUEUE_FOLDER)
             logger.info("Cleaned up translation queue folders.")
-        except Exception as clean_exc:
-            logger.error(f"Error cleaning up translation queue folders: {clean_exc}")
+        except Exception:
+            logger.exception("Error cleaning up translation queue folders")
 
 if __name__ == "__main__":
     # Ensure queue folders exist, potentially using paths derived from config or defaults
@@ -1564,5 +1584,5 @@ if __name__ == "__main__":
     os.makedirs(TRANSLATED_QUEUE_FOLDER, exist_ok=True)
     try:
         asyncio.run(main())
-    except Exception as main_exc:
-        logger.error(f"An unexpected error occurred during execution: {main_exc}")
+    except Exception:
+        logger.exception("An unexpected error occurred during execution")

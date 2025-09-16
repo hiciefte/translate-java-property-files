@@ -30,7 +30,7 @@ setup_ssh() {
         chmod 600 /home/appuser/.ssh/config
     else
         # Verify that the baked-in known_hosts file exists and is correctly configured.
-        if [ ! -f /etc/ssh/ssh_known_hosts ] || ! grep -q "github.com" /etc/ssh/ssh_known_hosts; then
+        if [ ! -r /etc/ssh/ssh_known_hosts ] || ! grep -q "github.com" /etc/ssh/ssh_known_hosts; then
             log "ERROR: The pinned SSH known_hosts file is missing or does not contain a key for github.com."
             log "To run in an insecure mode for local development, set the environment variable ALLOW_INSECURE_SSH=true."
             exit 1
@@ -67,7 +67,7 @@ if [ "$(id -u)" -eq 0 ]; then
     # Guarded, portable chown for the target repository directory
     CURRENT_OWNER=$(ls -ldn "$TARGET_REPO_DIR" | awk '{print $3":"$4}')
     if [ "$CURRENT_OWNER" != "$APPUSER_UID:$APPUSER_GID" ]; then
-        chown appuser:appuser "$TARGET_REPO_DIR"
+        chown -R appuser:appuser "$TARGET_REPO_DIR"
     fi
 
     # Harden log directory setup
@@ -182,7 +182,7 @@ else
     fi
     log "No repository found in $TARGET_REPO_DIR. Cloning from fork..."
     # Use parameter expansion with error message for required variables
-    FORK_REPO_URL="https://github.com/${FORK_REPO_NAME:?FORK_REPO_NAME must be set}.git"
+    FORK_REPO_URL="git@github.com:${FORK_REPO_NAME:?FORK_REPO_NAME must be set}.git"
     git clone "$FORK_REPO_URL" "$TARGET_REPO_DIR"
         cd "$TARGET_REPO_DIR"
 fi
