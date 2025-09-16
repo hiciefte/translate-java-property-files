@@ -34,6 +34,8 @@ cd /opt/translator-service
 
 ## Step 2: Add Secrets
 
+> **Important:** The `secrets/` directory and `docker/.env` file contain sensitive credentials. Ensure they are listed in your `.gitignore` file and are never committed to your repository.
+
 This is a security-critical step. You must place the deploy key, GPG key, and API tokens in the correct locations.
 
 1.  **SSH Deploy Key**:
@@ -59,6 +61,12 @@ This is a security-critical step. You must place the deploy key, GPG key, and AP
     OPENAI_API_KEY=sk-YourOpenAI_API_Key
     TX_TOKEN=YourTransifexToken
 
+    # === Git Author Identity ===
+    # This name and email will be used for the commit author and committer.
+    # The email MUST be a verified email on the GitHub account associated with the GPG key.
+    GIT_AUTHOR_NAME="Translation Bot (Takahiro Nagasawa)"
+    GIT_AUTHOR_EMAIL=takahiro.nagasawa@proton.me
+
     # === Git Repository Names ===
     # The 'owner/repo' name of your FORK.
     FORK_REPO_NAME=your-username/your-fork
@@ -67,9 +75,11 @@ This is a security-critical step. You must place the deploy key, GPG key, and AP
     ```
 
 4.  **Harden File Permissions**:
-    -   Restrict access to all secret files.
+    -   Restrict access to all secret files. Directories need execute permissions to be accessible, while files should be read-only for the owner.
     ```bash
-    chmod -R 600 secrets/
+    # Set correct permissions for the secrets directory and the files within it
+    find secrets -type d -exec chmod 700 {} +
+    find secrets -type f -exec chmod 600 {} +
     chmod 600 docker/.env
     ```
 
@@ -91,12 +101,14 @@ nano config.yaml
 
 ## Step 4: Build the Docker Image
 
-Navigate to the `docker` directory and run the build command. This will securely build a self-contained image with all dependencies, including your SSH and GPG keys.
+Navigate to the `docker` directory and run the build command. This will create a self-contained image with all dependencies.
+
+> **Note on Security:** The build process uses Docker BuildKit's secret mounting feature. This means your keys are securely accessed only during the build and are **never** stored in the final Docker image layers.
 
 ```bash
 # Ensure you are in the project root first
 cd /opt/translator-service
-docker compose -f docker/docker-compose.yml build
+docker compose --env-file docker/.env -f docker/docker-compose.yml build
 ```
 
 ## Step 5: Perform a Manual Test Run
@@ -106,7 +118,7 @@ Before setting up the cron job, it's crucial to test that everything is working 
 ```bash
 # This command will start the service, clone the repo, and run the translation script.
 # Monitor the output for any errors.
-docker compose -f docker/docker-compose.yml run --rm translator
+docker compose --env-file docker/.env -f docker/docker-compose.yml run --rm translator
 ```
 
 If the run succeeds, you should see a new pull request created in the upstream repository.
@@ -129,7 +141,8 @@ Once the manual run is successful, schedule the service to run automatically.
     COMPOSE_DOCKER_CLI_BUILD=1
 
     # Run the translator service daily at 3:00 AM server time.
-    0 3 * * * cd /opt/translator-service/ && /usr/bin/docker compose -f docker/docker-compose.yml run --rm translator >> /opt/translator-service/logs/cron_job.log 2>&1
+    # This command ensures the log directory exists and passes the environment file to Compose.
+    0 3 * * * cd /opt/translator-service/ && mkdir -p logs && /usr/bin/docker compose --env-file docker/.env -f docker/docker-compose.yml run --rm translator >> /opt/translator-service/logs/cron_job.log 2>&1
     ```
 3.  Save and close the file.
 

@@ -23,8 +23,6 @@
 exec 2>&1
 # --- End Stream Redirection ---
 
-#!/bin/bash
-
 set -euo pipefail
 
 # Ensure the PATH includes /usr/local/bin where the Transifex CLI is installed.
@@ -433,8 +431,10 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
         # Set the committer identity to match the author identity.
         # This is crucial for ensuring GitHub correctly verifies the GPG signature.
         log "Setting git committer identity for this commit"
-        git config user.name "Translation Bot (Takahiro Nagasawa)"
-        git config user.email "takahiro.nagasawa@proton.me"
+        # Use environment variables for the committer identity, falling back to a generic default.
+        # These variables should be set in the docker/.env file.
+        git config user.name "${GIT_AUTHOR_NAME:-Translation Bot}"
+        git config user.email "${GIT_AUTHOR_EMAIL:-translation-bot@users.noreply.github.com}"
         
         # Create a new branch
         log "Creating new branch: $BRANCH_NAME"
@@ -524,8 +524,7 @@ This PR is from branch \`$BRANCH_NAME\` on the \`$FORK_REPO_NAME\` fork and targ
                     --body "$PR_BODY" \
                     --repo "$UPSTREAM_REPO_NAME" \
                     --base "$TARGET_BRANCH_FOR_PR" \
-                    --head "$(git remote get-url origin \
-                       | sed -E 's#.*[:/](.+)/[^/]+(\.git)?$#\1#'):$BRANCH_NAME")
+                    --head "${fork_owner}:$BRANCH_NAME")
                 
                 PR_CREATE_EXIT_CODE=$?
 
