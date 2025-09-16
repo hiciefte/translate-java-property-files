@@ -16,37 +16,32 @@ log() {
 
 setup_ssh() {
     log "Configuring SSH directory for appuser..."
-    mkdir -p /home/appuser/.ssh
-    
-    # Check if the .ssh directory is writable (it might be mounted read-only on Docker for Mac)
-    if [ -w "/home/appuser/.ssh" ]; then
-        chmod 700 /home/appuser/.ssh
-        
-        # This is the refined fix from Phase 15 of the debug-docker-service.md documentation.
-        # It handles the host key verification failure when ~/.ssh is mounted read-only.
-        # It securely disables host key checking for github.com only.
-        local ssh_config_file="/home/appuser/.ssh/config"
-        if ! grep -q -E "^\s*Host github.com\s*$" "$ssh_config_file" 2>/dev/null; then
-            log "No existing SSH config for github.com found. Appending secure defaults."
-            # Use 'tee -a' to append, which is safer than '>>' in some contexts.
-            # Using a heredoc for clarity.
-            tee -a "$ssh_config_file" > /dev/null <<EOF
+    # This function is now focused on system-wide configuration that root can perform.
+    # We will write to /etc/ssh/ssh_known_hosts, which is readable by all users.
 
-Host github.com
-  StrictHostKeyChecking no
-  UserKnownHostsFile /dev/null
-EOF
-            log "Appended StrictHostKeyChecking=no for github.com."
+    if command -v ssh-keyscan >/dev/null 2>&1; then
+        log "Scanning and pinning GitHub's host key..."
+        
+        # Ensure the global ssh directory exists
+        mkdir -p /etc/ssh
+        chmod 755 /etc/ssh
+        
+        # Check if github.com is already in the system-wide known_hosts
+        if ! ssh-keygen -F github.com -f /etc/ssh/ssh_known_hosts >/dev/null 2>&1; then
+            # Use modern key types with timeout and hashed hostname
+            if ssh-keyscan -T 10 -H -t ed25519,ecdsa,rsa github.com >> /etc/ssh/ssh_known_hosts 2>/dev/null; then
+                log "GitHub host keys added successfully to /etc/ssh/ssh_known_hosts."
+            else
+                log "Warning: Failed to scan GitHub host keys. SSH operations may fail." "WARNING"
+            fi
         else
-            log "Existing SSH config for github.com found. No changes made."
+            log "GitHub host key already present in system-wide known_hosts."
         fi
         
-        # Set ownership of the .ssh directory and its contents
-        chown -R appuser:appuser /home/appuser/.ssh
-        log "SSH directory configured successfully."
+        # Ensure the known_hosts file has the correct permissions
+        chmod 644 /etc/ssh/ssh_known_hosts
     else
-        log "SSH directory is read-only (likely mounted from host). Skipping SSH configuration." "WARNING"
-        log "This is normal for local development with Docker for Mac." "INFO"
+        log "Warning: ssh-keyscan not available. SSH host key verification will be skipped." "WARNING"
     fi
 }
 
@@ -112,18 +107,26 @@ if [ "$(id -u)" -eq 0 ]; then
         if gosu appuser "$0" "$@" 2>/dev/null; then
             exit 0
         else
-            log "Warning: gosu failed to switch to appuser. This may be due to Docker for Mac restrictions." "WARNING"
-            log "Continuing as root for local development..." "WARNING"
-            # Continue execution as root instead of exiting
+            log "Warning: gosu failed to switch to appuser." "WARNING"
+            if [ "${ALLOW_RUN_AS_ROOT:-false}" = "true" ]; then
+              log "ALLOW_RUN_AS_ROOT=true; continuing as root."
+            else
+              log "Refusing to continue as root. Set ALLOW_RUN_AS_ROOT=true to override." "ERROR"
+              exit 1
+            fi
         fi
     elif command -v su-exec >/dev/null 2>&1; then
         log "Using su-exec to switch to appuser..."
         if su-exec appuser "$0" "$@" 2>/dev/null; then
             exit 0
         else
-            log "Warning: su-exec failed to switch to appuser. This may be due to Docker for Mac restrictions." "WARNING"
-            log "Continuing as root for local development..." "WARNING"
-            # Continue execution as root instead of exiting
+            log "Warning: su-exec failed to switch to appuser." "WARNING"
+            if [ "${ALLOW_RUN_AS_ROOT:-false}" = "true" ]; then
+              log "ALLOW_RUN_AS_ROOT=true; continuing as root."
+            else
+              log "Refusing to continue as root. Set ALLOW_RUN_AS_ROOT=true to override." "ERROR"
+              exit 1
+            fi
         fi
     else
         log "Error: neither 'gosu' nor 'su-exec' found in PATH." >&2
@@ -146,6 +149,11 @@ if [ -w /app/logs ]; then
 fi
 
 log "Starting entrypoint script as user: $(whoami)"
+
+# If running as root (e.g., ALLOW_RUN_AS_ROOT=true in local dev), allow git to operate on /target_repo
+if [ "$(id -u)" -eq 0 ]; then
+    git config --global --add safe.directory /target_repo || true
+fi
 
 TARGET_REPO_DIR="${TARGET_REPO_DIR:-/target_repo}"
 

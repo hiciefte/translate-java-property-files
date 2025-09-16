@@ -20,22 +20,16 @@ LOG_FILE="$LOG_DIR/deployment_log.log"
 # Ensure log directory exists
 mkdir -p "$LOG_DIR"
 
-# Function to log messages
+# A simple, robust logging function that prints to stdout.
+# Using printf for better portability and to avoid issues with special characters.
 log() {
     local message="$1"
     local level="${2:-INFO}" # Default to INFO
-    local color_code
-    case "$level" in
-        "INFO") color_code='\033[0;32m';; # Green
-        "WARNING") color_code='\033[1;33m';; # Yellow
-        "ERROR") color_code='\033[0;31m';; # Red
-        "DEBUG") color_code='\033[0;34m';; # Blue
-        *) color_code='\033[0m';; # No Color
-    esac
+    # Get a timestamp in ISO 8601 format.
     local timestamp
     timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-    # Log to stderr
-    >&2 echo -e "${color_code}[${timestamp}] [${level}] ${message}\033[0m"
+    # Print a clean, formatted log line to standard output.
+    printf "[%s] [%s] %s\n" "$timestamp" "$level" "$message"
 }
 
 # Run a command, prefix with '+', and tee its output to the log.
@@ -134,7 +128,8 @@ get_config_value() {
     # Use yq to safely read the value. The -e flag exits with non-zero status if the key is not found.
     # The -r flag outputs raw strings, preventing issues with "null" or extra quotes.
     # The '|| true' prevents the script from exiting if a key is not found (for optional keys).
-    yq -e -r ".$key" "$config_file" || true
+    # Redirect stderr to /dev/null to silence "no matches found" for optional keys.
+    yq -e -r ".$key" "$config_file" 2>/dev/null || true
 }
 
 TARGET_PROJECT_ROOT=$(get_config_value "target_project_root" "$CONFIG_FILE")
@@ -143,6 +138,7 @@ INPUT_FOLDER=$(get_config_value "input_folder" "$CONFIG_FILE")
 TRANSLATION_FILTER_GLOB=$(get_config_value "translation_file_filter_glob" "$CONFIG_FILE")
 # Read the optional flag to pull source files
 PULL_SOURCE_FILES=$(get_config_value "pull_source_files_from_transifex" "$CONFIG_FILE")
+DRY_RUN=$(get_config_value "dry_run" "$CONFIG_FILE")
 
 log "Target project root from config: \"$TARGET_PROJECT_ROOT\""
 log "Input folder from config: \"$INPUT_FOLDER\""
@@ -275,56 +271,79 @@ log "Proceeding with Transifex operations. Current HEAD on ${DEFAULT_BRANCH}:"
 git log -1 --pretty=%H
 
 # Step 2: Use Transifex CLI to pull the latest translations
-log "Checking for Transifex CLI"
-log "Current PATH: $PATH"
-log "Which tx: $(which tx || echo 'tx not found in path')"
-if command_exists tx; then
-    log "Pulling latest translations from Transifex"
-    log "Using Transifex token from environment"
-    
-    # Debug Transifex configuration
-    log "Checking Transifex configuration"
-    if [ -f "$TARGET_PROJECT_ROOT/.tx/config" ]; then
-        log ".tx/config exists in project directory"
-        log ".tx/config contents (without sensitive data):"
-        grep -Evi 'password|token|secret|api[_-]?key|auth(entication)?|credential(s)?' "$TARGET_PROJECT_ROOT/.tx/config" || true
+if [[ "${DRY_RUN:-false}" == "true" ]]; then
+    log "Dry run is enabled. Skipping Transifex pull." "WARNING"
+else
+    log "Checking for Transifex CLI"
+    log "Current PATH: $PATH"
+    log "Which tx: $(which tx || echo 'tx not found in path')"
+    if command_exists tx; then
+        log "Pulling latest translations from Transifex"
+        log "Using Transifex token from environment"
+        
+        # Debug Transifex configuration
+        log "Checking Transifex configuration"
+        if [ -f "$TARGET_PROJECT_ROOT/.tx/config" ]; then
+            log ".tx/config exists in project directory"
+            log ".tx/config contents (without sensitive data):"
+            grep -Evi 'password|token|secret|api[_-]?key|auth(entication)?|credential(s)?' "$TARGET_PROJECT_ROOT/.tx/config" || true
+        else
+            log "Warning: .tx/config not found in project directory"
+        fi
+        
+        # Pull translations with -t option.
+        # The --force (-f) flag ensures local files are overwritten with remote changes.
+        TX_PULL_CMD="tx pull -t -f --use-git-timestamps"
+        if [[ "$PULL_SOURCE_FILES" == "true" ]]; then
+            log "Configuration directs to pull source files as well. Modifying tx command."
+            TX_PULL_CMD="tx pull -s -t -f --use-git-timestamps"
+        fi
+
+        log "Using tx command: $TX_PULL_CMD"
+        log "Listing permissions for current directory ($(pwd)) before tx pull:"
+        log_cmd ls -la .
+        log "Listing permissions for input folder '${ABSOLUTE_INPUT_FOLDER}' before tx pull:"
+        log_cmd ls -la "${ABSOLUTE_INPUT_FOLDER}"
+        
+        # Start a background process to show that the script is still alive.
+        # This is useful because 'tx pull' can be silent for long periods.
+        while true; do
+            sleep 30
+            log "Still waiting for Transifex pull to complete..." "INFO"
+        done &
+        # Get the process ID of the background loop
+        KEEPALIVE_PID=$!
+
+        # When this script exits, kill the background keepalive process.
+        # This ensures it doesn't become a zombie process.
+        trap 'kill $KEEPALIVE_PID' EXIT
+        
+        # Execute and filter output, but preserve original tx exit code.
+        set +e
+        { $TX_PULL_CMD 2>&1 | grep -v -E 'Pulling file|Creating download job|File was not found locally'; }
+        TX_STATUS=${PIPESTATUS[0]}
+        set -e
+
+        # Stop the keepalive process now that tx pull is done.
+        kill $KEEPALIVE_PID
+        # Remove the trap so it doesn't try to kill a non-existent process on exit.
+        trap - EXIT
+
+        if [ $TX_STATUS -ne 0 ]; then
+            log "Transifex pull failed (exit $TX_STATUS). See previous logs for details." "ERROR"
+            exit $TX_STATUS
+        fi
+
+        # Verify that files have been updated
+        if ! git status --porcelain | grep -qE '\.(properties|po|mo)$'; then
+            log "Error: Transifex pull did not update any translation files (.properties/.po/.mo). This might indicate an issue with the Transifex CLI or the configuration." "ERROR"
+            exit 1
+        fi
+
     else
-        log "Warning: .tx/config not found in project directory"
-    fi
-    
-    # Pull translations with -t option.
-    # The --force (-f) flag ensures local files are overwritten with remote changes.
-    TX_PULL_CMD="tx pull -t -f --use-git-timestamps"
-    if [[ "$PULL_SOURCE_FILES" == "true" ]]; then
-        log "Configuration directs to pull source files as well. Modifying tx command."
-        TX_PULL_CMD="tx pull -s -t -f --use-git-timestamps"
-    fi
-
-    log "Using tx command: $TX_PULL_CMD"
-    log "Listing permissions for current directory ($(pwd)) before tx pull:"
-    log_cmd ls -la .
-    log "Listing permissions for input folder '${ABSOLUTE_INPUT_FOLDER}' before tx pull:"
-    log_cmd ls -la "${ABSOLUTE_INPUT_FOLDER}"
-    
-    # Execute and filter output, but preserve original tx exit code.
-    set +e
-    { $TX_PULL_CMD 2>&1 | grep -v -E 'Pulling file|Creating download job|File was not found locally'; }
-    TX_STATUS=${PIPESTATUS[0]}
-    set -e
-    if [ $TX_STATUS -ne 0 ]; then
-        log "Transifex pull failed (exit $TX_STATUS). See previous logs for details." "ERROR"
-        exit $TX_STATUS
-    fi
-
-    # Verify that files have been updated
-    if ! git status --porcelain | grep -qE '\.(properties|po|mo)$'; then
-        log "Error: Transifex pull did not update any translation files (.properties/.po/.mo). This might indicate an issue with the Transifex CLI or the configuration." "ERROR"
+        log "Error: Transifex CLI not found. Please install it manually."
         exit 1
     fi
-
-else
-    log "Error: Transifex CLI not found. Please install it manually."
-    exit 1
 fi
 
 # Navigate back to the application's root directory to run the python script.
@@ -345,7 +364,7 @@ if [ -n "$TRANSLATION_FILTER_GLOB" ] && [ "$TRANSLATION_FILTER_GLOB" != "null" ]
 fi
 # Export filter glob if set (used by Python translation script)
 [ -n "$TRANSLATION_FILTER_GLOB" ] && [ "$TRANSLATION_FILTER_GLOB" != "null" ] && export TRANSLATION_FILTER_GLOB
-python3 -m src.translate_localization_files || {
+python3 -u -m src.translate_localization_files || {
     log "Error: Failed to run translation script. Exiting."
     exit 1
 }
@@ -373,108 +392,114 @@ ls -la "$TARGET_PROJECT_ROOT/.git"
 TRANSLATION_CHANGES=$(git status --porcelain | grep -E "\.properties$|\.po$|\.mo$" || true)
 
 if [ -n "$TRANSLATION_CHANGES" ]; then
-    # There are translation changes to commit
-    BRANCH_NAME="${TRANSLATION_BRANCH_PREFIX}-$(date +%Y-%m-%d-%H%M%S)"
-    
-    # Create a new branch
-    log "Creating new branch: $BRANCH_NAME"
-    git checkout -b "$BRANCH_NAME"
-    
-    # Add translation files that have changed and stage deletions
-    log "Staging translation file changes (.properties, .po, .mo) and deletions"
-    find "$ABSOLUTE_INPUT_FOLDER" \( -name '*.properties' -o -name '*.po' -o -name '*.mo' \) -print0 | xargs -0 git add
-    # Stage deletions for removed translation files (avoid non-zero grep under pipefail)
-    git ls-files --deleted "$ABSOLUTE_INPUT_FOLDER" | awk '/\.(properties|po|mo)$/' | xargs -r git rm
-
-    # Commit changes, signing if a key is configured
-    if git config --get commit.gpgsign >/dev/null 2>&1 && git config --get user.signingkey >/dev/null 2>&1; then
-      log "Committing with GPG signing"
-      git commit -S -m "Automated translation update"
+    if [[ "${DRY_RUN:-false}" == "true" ]]; then
+        log "Dry run is enabled. Skipping commit and pull request creation." "WARNING"
+        log "The following changes would have been committed:" "INFO"
+        echo "$TRANSLATION_CHANGES"
     else
-      log "Committing without GPG signing"
-      git commit -m "Automated translation update"
-    fi
+        # There are translation changes to commit
+        BRANCH_NAME="${TRANSLATION_BRANCH_PREFIX}-$(date +%Y-%m-%d-%H%M%S)"
+        
+        # Create a new branch
+        log "Creating new branch: $BRANCH_NAME"
+        git checkout -b "$BRANCH_NAME"
+        
+        # Add translation files that have changed and stage deletions
+        log "Staging translation file changes (.properties, .po, .mo) and deletions"
+        find "$ABSOLUTE_INPUT_FOLDER" \( -name '*.properties' -o -name '*.po' -o -name '*.mo' \) -print0 | xargs -0 git add
+        # Stage deletions for removed translation files (avoid non-zero grep under pipefail)
+        git ls-files --deleted "$ABSOLUTE_INPUT_FOLDER" | awk '/\.(properties|po|mo)$/' | xargs -r git rm
 
-    # Push the branch to GitHub
-    PUSH_OK=0
-    if git remote | grep -qx 'origin'; then
-      log "Pushing changes to 'origin' remote"
-      # Before pushing, derive the owner from the 'origin' remote URL.
-      # This ensures the user in the PR head matches the push destination.
-      fork_owner=$(git remote get-url origin | sed -E 's#.*[:/](.+)/[^/]+(\.git)?$#\1#')
+        # Commit changes, signing if a key is configured
+        if git config --get commit.gpgsign >/dev/null 2>&1 && git config --get user.signingkey >/dev/null 2>&1; then
+          log "Committing with GPG signing"
+          git commit -S -m "Automated translation update"
+        else
+          log "Committing without GPG signing"
+          git commit -m "Automated translation update"
+        fi
 
-      if [ -z "$fork_owner" ]; then
-          log "Error: Could not determine the fork owner from the 'origin' remote URL. Cannot create PR." "ERROR"
-          exit 1
-      fi
-      log "Determined fork owner for PR head as: '$fork_owner'"
+        # Push the branch to GitHub
+        PUSH_OK=0
+        if git remote | grep -qx 'origin'; then
+          log "Pushing changes to 'origin' remote"
+          # Before pushing, derive the owner from the 'origin' remote URL.
+          # This ensures the user in the PR head matches the push destination.
+          fork_owner=$(git remote get-url origin | sed -E 's#.*[:/](.+)/[^/]+(\.git)?$#\1#')
 
-      # If FORK_REPO_NAME is set, validate it matches the remote.
-      if [ -n "${FORK_REPO_NAME:-}" ]; then
-          fork_repo_owner=$(echo "$FORK_REPO_NAME" | cut -d'/' -f1)
-          if [[ "$fork_owner" != "$fork_repo_owner" ]]; then
-              log "Error: The owner of the 'origin' remote ('$fork_owner') does not match the configured FORK_REPO_NAME owner ('$fork_repo_owner')." "ERROR"
-              log "Please align the 'origin' remote with the expected fork repository." "ERROR"
+          if [ -z "$fork_owner" ]; then
+              log "Error: Could not determine the fork owner from the 'origin' remote URL. Cannot create PR." "ERROR"
               exit 1
           fi
-      fi
+          log "Determined fork owner for PR head as: '$fork_owner'"
 
-      if git push origin "$BRANCH_NAME"; then
-          PUSH_OK=1
-      else
-          log "Failed to push branch '$BRANCH_NAME' to origin." "ERROR"
-      fi
-    else
-      log "'origin' remote not found; cannot push PR branch. Configure a fork remote named 'origin' or adjust the script." "ERROR"
-    fi
-    
-    # Step 5: Create a GitHub pull request (only if push succeeded)
-    if [ "${PUSH_OK:-0}" -ne 1 ]; then
-        log "Skipping PR creation because the branch was not pushed." "WARNING"
-    else
-    log "Creating GitHub pull request to $UPSTREAM_REPO_NAME"
-    PR_TITLE="Automated Translation Update - $(date +'%Y-%m-%d %H:%M:%S')"
-    PR_BODY="This pull request was automatically generated by the translation script and contains the latest translation updates from Transifex and OpenAI.
+          # If FORK_REPO_NAME is set, validate it matches the remote.
+          if [ -n "${FORK_REPO_NAME:-}" ]; then
+              fork_repo_owner=$(echo "$FORK_REPO_NAME" | cut -d'/' -f1)
+              if [[ "$fork_owner" != "$fork_repo_owner" ]]; then
+                  log "Error: The owner of the 'origin' remote ('$fork_owner') does not match the configured FORK_REPO_NAME owner ('$fork_repo_owner')." "ERROR"
+                  log "Please align the 'origin' remote with the expected fork repository." "ERROR"
+                  exit 1
+              fi
+          fi
+
+          if git push origin "$BRANCH_NAME"; then
+              PUSH_OK=1
+          else
+              log "Failed to push branch '$BRANCH_NAME' to origin." "ERROR"
+          fi
+        else
+          log "'origin' remote not found; cannot push PR branch. Configure a fork remote named 'origin' or adjust the script." "ERROR"
+        fi
+        
+        # Step 5: Create a GitHub pull request (only if push succeeded)
+        if [ "${PUSH_OK:-0}" -ne 1 ]; then
+            log "Skipping PR creation because the branch was not pushed." "WARNING"
+        else
+        log "Creating GitHub pull request to $UPSTREAM_REPO_NAME"
+        PR_TITLE="Automated Translation Update - $(date +'%Y-%m-%d %H:%M:%S')"
+        PR_BODY="This pull request was automatically generated by the translation script and contains the latest translation updates from Transifex and OpenAI.
 
 This PR is from branch \`$BRANCH_NAME\` on the \`$FORK_REPO_NAME\` fork and targets the \`$TARGET_BRANCH_FOR_PR\` branch on \`$UPSTREAM_REPO_NAME\`."
 
-    # Check for a skipped files report and prepend it to the PR body if it exists.
-    # The python script generates this file if any files fail validation.
-    SKIPPED_FILES_REPORT="/app/logs/skipped_files_report.log"
-    if [ -s "$SKIPPED_FILES_REPORT" ]; then
-        log "Found skipped files report. Prepending to PR description."
-        REPORT_CONTENT=$(cat "$SKIPPED_FILES_REPORT")
-        PR_BODY=$(printf "%s\n\n%s" "$REPORT_CONTENT" "$PR_BODY")
-    fi
-
-    # Check if gh cli is installed
-    if command_exists gh; then
-        # Check if GITHUB_TOKEN is set
-        if [ -z "$GITHUB_TOKEN" ]; then
-            log "Error: GITHUB_TOKEN is not set. Cannot create pull request."
-        else
-            # Create pull request using gh cli
-            log "Attempting to create PR: $FORK_REPO_NAME:$BRANCH_NAME -> $UPSTREAM_REPO_NAME:$TARGET_BRANCH_FOR_PR"
-            
-            PR_URL=$(gh pr create \
-                --title "$PR_TITLE" \
-                --body "$PR_BODY" \
-                --repo "$UPSTREAM_REPO_NAME" \
-                --base "$TARGET_BRANCH_FOR_PR" \
-                --head "$(git remote get-url origin \
-                   | sed -E 's#.*[:/](.+)/[^/]+(\.git)?$#\1#'):$BRANCH_NAME")
-            
-            PR_CREATE_EXIT_CODE=$?
-
-            if [ $PR_CREATE_EXIT_CODE -eq 0 ]; then
-                log "Successfully created pull request: $PR_URL"
-            else
-                log "Error: Failed to create pull request (Exit Code: $PR_CREATE_EXIT_CODE). Please check gh cli authentication, GITHUB_TOKEN permissions, and repository settings."
-            fi
+        # Check for a skipped files report and prepend it to the PR body if it exists.
+        # The python script generates this file if any files fail validation.
+        SKIPPED_FILES_REPORT="/app/logs/skipped_files_report.log"
+        if [ -s "$SKIPPED_FILES_REPORT" ]; then
+            log "Found skipped files report. Prepending to PR description."
+            REPORT_CONTENT=$(cat "$SKIPPED_FILES_REPORT")
+            PR_BODY=$(printf "%s\n\n%s" "$REPORT_CONTENT" "$PR_BODY")
         fi
-    else
-        log "GitHub CLI (gh) not found. Cannot create pull request." "ERROR"
-    fi
+
+        # Check if gh cli is installed
+        if command_exists gh; then
+            # Check if GITHUB_TOKEN is set
+            if [ -z "$GITHUB_TOKEN" ]; then
+                log "Error: GITHUB_TOKEN is not set. Cannot create pull request."
+            else
+                # Create pull request using gh cli
+                log "Attempting to create PR: $FORK_REPO_NAME:$BRANCH_NAME -> $UPSTREAM_REPO_NAME:$TARGET_BRANCH_FOR_PR"
+                
+                PR_URL=$(gh pr create \
+                    --title "$PR_TITLE" \
+                    --body "$PR_BODY" \
+                    --repo "$UPSTREAM_REPO_NAME" \
+                    --base "$TARGET_BRANCH_FOR_PR" \
+                    --head "$(git remote get-url origin \
+                       | sed -E 's#.*[:/](.+)/[^/]+(\.git)?$#\1#'):$BRANCH_NAME")
+                
+                PR_CREATE_EXIT_CODE=$?
+
+                if [ $PR_CREATE_EXIT_CODE -eq 0 ]; then
+                    log "Successfully created pull request: $PR_URL"
+                else
+                    log "Error: Failed to create pull request (Exit Code: $PR_CREATE_EXIT_CODE). Please check gh cli authentication, GITHUB_TOKEN permissions, and repository settings."
+                fi
+            fi
+        else
+            log "GitHub CLI (gh) not found. Cannot create pull request." "ERROR"
+        fi
+        fi
     fi
 else
     log "No translation changes to commit"

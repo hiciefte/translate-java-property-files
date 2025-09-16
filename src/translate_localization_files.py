@@ -105,15 +105,29 @@ log_dir_to_create = os.path.dirname(LOG_FILE_PATH)
 if log_dir_to_create:
     os.makedirs(log_dir_to_create, exist_ok=True)
 
-handlers = [logging.FileHandler(LOG_FILE_PATH)]
-if LOG_TO_CONSOLE:
-    handlers.append(logging.StreamHandler())
+# --- Robust Logging Configuration ---
+# Instead of basicConfig, we get the root logger, clear any existing handlers
+# (which might have been set by imported libraries), and set it up manually.
+# This ensures our configuration is always applied.
+root_logger = logging.getLogger()
+root_logger.setLevel(LOG_LEVEL)
 
-logging.basicConfig(
-    level=LOG_LEVEL,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=handlers
-)
+if root_logger.hasHandlers():
+    root_logger.handlers.clear()
+
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+# Add file handler
+file_handler = logging.FileHandler(LOG_FILE_PATH)
+file_handler.setFormatter(formatter)
+root_logger.addHandler(file_handler)
+
+# Add console handler if enabled
+if LOG_TO_CONSOLE:
+    stream_handler = logging.StreamHandler(sys.stdout) # Explicitly use stdout
+    stream_handler.setFormatter(formatter)
+    root_logger.addHandler(stream_handler)
+# --- End Logging Configuration ---
 
 # Now that logging is configured, we can log the .env status
 if os.path.exists(dotenv_path_project_root):
@@ -147,12 +161,15 @@ LOCALIZATION_SCHEMA = {
     "additionalProperties": False
 }
 
+# Dry run configuration (if True, files won't be moved/copied, etc.)
+DRY_RUN = config.get('dry_run', False)
+
 # Initialize the OpenAI client with your API key
 api_key_from_env = os.environ.get('OPENAI_API_KEY')
-if not api_key_from_env:
-    logging.critical("CRITICAL: OPENAI_API_KEY not found in environment variables. This is required to run the script. Exiting.")
+if not api_key_from_env and not DRY_RUN:
+    logging.critical("CRITICAL: OPENAI_API_KEY not found. Set it or enable dry_run in config.")
     sys.exit(1)
-client = AsyncOpenAI(api_key=api_key_from_env)
+client = AsyncOpenAI(api_key=api_key_from_env) if not DRY_RUN else None
 
 # Configuration Parameters (now using the 'config' dictionary loaded above)
 # Defaults are provided in .get() for robustness if config file or keys are missing.
@@ -174,9 +191,6 @@ _translated_queue_name = config.get('translated_queue_folder', 'translated_queue
 
 TRANSLATION_QUEUE_FOLDER = os.path.join(TEMP_DIR, _translation_queue_name)
 TRANSLATED_QUEUE_FOLDER = os.path.join(TEMP_DIR, _translated_queue_name)
-
-# Dry run configuration (if True, files won't be moved/copied, etc.)
-DRY_RUN = config.get('dry_run', False)
 
 # ------------------------------------------------------------------------------
 # 1) Remove the LanguageCode Enum and any hard-coded dictionaries
@@ -1370,7 +1384,12 @@ async def process_translation_queue(
 
         # Run tasks concurrently with progress indication
         results = []
-        for coro in tqdm.as_completed(tasks, desc=f"Translating {translation_file}", unit="translation"):
+        for coro in tqdm(
+            asyncio.as_completed(tasks),
+            desc=f"Translating {translation_file}",
+            unit="translation",
+            file=sys.stdout  # Explicitly direct output to stdout
+        ):
             index, result = await coro
             results.append((index, result))
 
@@ -1440,7 +1459,7 @@ async def process_translation_queue(
                     final_corrected_translations[key] = draft_translations.get(key, "")
 
 
-        if final_corrected_translations:
+        if final_corrected_translations is not None:
             logging.info("Holistic review successful. Applying all corrected translations.")
             logging.debug(f"--- ALL CORRECTED JSON FROM REVIEW ---\n{json.dumps(final_corrected_translations, indent=2)}")
 

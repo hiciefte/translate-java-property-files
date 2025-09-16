@@ -9,16 +9,19 @@ services:
     # By default, run the main orchestration script. Can be overridden for debugging.
     command: ["/app/update-translations.sh"]
     volumes:
-      # Mount the Docker-specific config to the default config path in the app
+      # Mount the target repository into the container.
+      # The '${VOLUME_NAME:-target-repo-data}' allows for multiple, isolated instances
+      # by using a named volume that can be overridden by an environment variable.
+      - ${VOLUME_NAME:-target-repo-data}:/target_repo
+      # Mount the host's SSH directory to allow Git operations.
+      # This is mounted read-only for security. The entrypoint script will handle
+      # host key verification by writing to a different, container-local location.
+      - ${HOME}/.ssh:/home/appuser/.ssh:ro
+      # Mount configuration and glossary files.
       - ./config.docker.yaml:/app/config.yaml:ro
-      # Mount the glossary file (located in project root)
       - ../glossary.json:/app/glossary.json:ro
-      # Mount SSH keys from host user's home (read-only for appuser)
-      - ${HOME}/.ssh:/home/appuser/.ssh
       # Mount logs directory (in project root) for persistence
       - ../logs:/app/logs
-      # Mount a named volume for the target repository to persist it across restarts
-      - ${VOLUME_NAME:-target-repo-data}:/target_repo
     # The container will start as root, and the entrypoint script will drop privileges to 'appuser'.
     # This allows the entrypoint to fix volume permissions before the main application runs.
     env_file:
