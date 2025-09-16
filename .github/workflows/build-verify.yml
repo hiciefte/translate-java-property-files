@@ -92,7 +92,7 @@ jobs:
           severity: 'CRITICAL,HIGH'
           # Use a .trivyignore file to manage a persistent list of ignored CVEs.
           # This provides a clear, version-controlled record of accepted risks.
-          ignore-file: '.trivyignore'
+          trivyignores: '.trivyignore'
 
       - name: Upload Trivy scan results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
