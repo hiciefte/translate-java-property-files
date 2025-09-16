@@ -67,6 +67,8 @@ jobs:
           push: false # Do not push the image
           tags: translator-app:ci-${{ github.sha }}
           load: true # Load the image into the local Docker daemon for scanning
+          secrets: |
+            "deploy_key=${{ secrets.DEPLOY_KEY || '' }}"
           build-args: |
             SKIP_GPG_IMPORT=true
             GPG_KEY_FINGERPRINT_FOR_TRUST=DUMMY_FINGERPRINT_FOR_CI

@@ -430,6 +430,12 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
         # There are translation changes to commit
         BRANCH_NAME="${TRANSLATION_BRANCH_PREFIX}-$(date +%Y-%m-%d-%H%M%S)"
         
+        # Set the committer identity to match the author identity.
+        # This is crucial for ensuring GitHub correctly verifies the GPG signature.
+        log "Setting git committer identity for this commit"
+        git config user.name "Translation Bot (Takahiro Nagasawa)"
+        git config user.email "takahiro.nagasawa@proton.me"
+        
         # Create a new branch
         log "Creating new branch: $BRANCH_NAME"
         git checkout -b "$BRANCH_NAME"
