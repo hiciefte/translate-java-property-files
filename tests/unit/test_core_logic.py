@@ -3,7 +3,6 @@ import unittest
 from unittest.mock import patch, MagicMock
 import tempfile
 import textwrap
-import pytest
 
 # Set a dummy API key before importing the main script.
 # This prevents the OpenAI client from failing in a test environment
