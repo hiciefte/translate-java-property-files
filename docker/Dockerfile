@@ -110,6 +110,21 @@ RUN if [ "$SKIP_GPG_IMPORT" = "true" ]; then \
     # Clean up temporary file in all cases
     rm -f /tmp/bot_secret_key.asc
 
+# Make the .ssh directory and set its permissions.
+RUN mkdir -p /home/appuser/.ssh && \
+    chmod 700 /home/appuser/.ssh
+
+# Mount the secret key file and copy it into the .ssh directory.
+# This method ensures the key is not stored in the image layers.
+# Then, set the correct permissions for the key and create an SSH config.
+RUN --mount=type=secret,id=deploy_key,target=/tmp/deploy_key \
+    cp /tmp/deploy_key /home/appuser/.ssh/deploy_key && \
+    chmod 600 /home/appuser/.ssh/deploy_key && \
+    chown -R appuser:appuser /home/appuser/.ssh && \
+    echo -e "Host github.com\n\tIdentityFile /home/appuser/.ssh/deploy_key\n\tIdentitiesOnly yes" > /home/appuser/.ssh/config && \
+    chown appuser:appuser /home/appuser/.ssh/config && \
+    chmod 600 /home/appuser/.ssh/config
+
 WORKDIR /app
 
 # Copy source and install python dependencies
@@ -126,18 +141,6 @@ ENTRYPOINT ["/app/docker/docker-entrypoint.sh"]
 # Bake the pinned SSH host keys into the image for enhanced security
 COPY docker/ssh_known_hosts /etc/ssh/ssh_known_hosts
 RUN chmod 644 /etc/ssh/ssh_known_hosts
-
-# --- Bake Deploy Key into Image ---
-# Use a build secret to securely copy the deploy key into the image.
-# This method avoids leaving the key in the image layers and is the most secure approach.
-RUN --mount=type=secret,id=deploy_key,target=/tmp/deploy_key \
-    mkdir -p /home/appuser/.ssh && \
-    cp /tmp/deploy_key /home/appuser/.ssh/deploy_key && \
-    echo "Host github.com\n\tHostName github.com\n\tUser git\n\tIdentityFile /home/appuser/.ssh/deploy_key\n\tIdentitiesOnly yes" > /home/appuser/.ssh/config && \
-    chown -R appuser:appuser /home/appuser/.ssh && \
-    chmod 700 /home/appuser/.ssh && \
-    chmod 600 /home/appuser/.ssh/config /home/appuser/.ssh/deploy_key
-# --- End Deploy Key ---
 
 # Default command is now the main python script (can be overridden in docker-compose.yml)
 CMD ["python3", "-m", "src.translate_localization_files"] 

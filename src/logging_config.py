@@ -65,7 +65,7 @@ def setup_logger(log_level_str: str, log_file_path: str, log_to_console: bool) -
     if log_dir:
         os.makedirs(log_dir, exist_ok=True)
     # Add a handler to write log messages to a file
-    file_handler = logging.FileHandler(log_file_path, encoding='utf-8')
+    file_handler = logging.FileHandler(log_file_path, encoding='utf-8', delay=True)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
     # --- End File Handler ---

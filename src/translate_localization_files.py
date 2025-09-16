@@ -1401,36 +1401,32 @@ async def process_translation_queue(
         )
 
         try:
-            for corrected_chunk, key_chunk in zip(review_results, key_chunks):
+            for i, (corrected_chunk, key_chunk) in enumerate(zip(review_results, key_chunks)):
                 if corrected_chunk is not None:
-                    final_corrected_translations.update(corrected_chunk)
+                    if corrected_chunk:
+                        final_corrected_translations.update(corrected_chunk)
+                    else:
+                        logger.info("Holistic review returned no corrections for this chunk; keeping draft values.")
+                        for key in key_chunk:
+                            final_corrected_translations[key] = draft_translations.get(key, "")
                 else:
-                    logger.warning("Holistic review for a chunk of keys failed or returned no corrections.")
-                    # Even if the review fails for a chunk, we should still include the initial translations
-                    # for those keys in the final output. We can do this by "correcting" them to their draft state.
+                    logger.warning(f"Holistic review for chunk {i + 1} failed; keeping draft values for this chunk.")
                     for key in key_chunk:
                         final_corrected_translations[key] = draft_translations.get(key, "")
         except Exception as e:
             logger.exception(
                 f"An error occurred during asyncio.gather for holistic review of {translation_file}: {e}")
 
-        # If the review returns any corrections, integrate them
-        if final_corrected_translations:
-            logger.info(
-                f"Holistic review provided {len(final_corrected_translations)} corrections. Integrating them.")
-            # Integrate corrections into the draft_lines
-            for line in draft_lines:
-                if line['type'] == 'entry':
-                    key = line.get('key')
-                    if key in final_corrected_translations:
-                        new_value = final_corrected_translations[key]
-                        logger.debug(f"Review changed key '{key}': FROM '{line['value']}' TO '{new_value}'")
-                        line['value'] = new_value
-        elif final_corrected_translations is not None:
-            logger.info("Holistic review successful. No corrections were needed.")
-        else:  # final_corrected_translations is None
-            logger.error(
-                f"Holistic review for '{translation_file}' failed. Using initial translations without review.")
+        # Always apply the results from the review stage, which includes fallbacks to draft for failed chunks.
+        logger.info("Applying corrected translations (including any draft fallbacks).")
+        logger.debug(f"--- ALL CORRECTED JSON FROM REVIEW ---\n{json.dumps(final_corrected_translations, indent=2)}")
+        for line in draft_lines:
+            if line['type'] == 'entry':
+                key = line.get('key')
+                if key in final_corrected_translations:
+                    new_value = final_corrected_translations[key]
+                    logger.debug(f"Review changed key '{key}': FROM '{line['value']}' TO '{new_value}'")
+                    line['value'] = new_value
 
         # Reassemble the final file content
         updated_lines = draft_lines

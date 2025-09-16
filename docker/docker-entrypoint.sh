@@ -21,7 +21,7 @@ setup_ssh() {
     # On the server, this provides strong protection against man-in-the-middle attacks.
     # For local development or in environments where the host key might change, this check can be bypassed.
     if [ "${ALLOW_INSECURE_SSH:-false}" = "true" ]; then
-        log "WARNING: ALLOW_INSECURE_SSH is true. Host key verification will be disabled."
+        log "WARNING: ALLOW_INSECURE_SSH is true. Host key verification will use ssh-keyscan at runtime."
         # This configuration is written to the user's local SSH config, not the system-wide one.
         mkdir -p /home/appuser/.ssh
         echo -e "Host github.com\n\tStrictHostKeyChecking no\n\tUserKnownHostsFile=/dev/null" > /home/appuser/.ssh/config
@@ -38,6 +38,15 @@ setup_ssh() {
         log "SSH is configured for strict host key checking using the baked-in known_hosts file."
         # System-wide SSH config will enforce this automatically if no user config overrides it.
     fi
+}
+
+ensure_logs_dir() {
+  local mode="${LOG_DIR_MODE:-0755}"
+  mkdir -p /app/logs
+  if find /app/logs -mindepth 1 -maxdepth 1 \( ! -uid "$APPUSER_UID" -o ! -gid "$APPUSER_GID" \) -print -quit | read -r; then
+    chown -R appuser:appuser /app/logs || log "Warning: unable to chown /app/logs; continuing"
+  fi
+  chmod "$mode" /app/logs || log "Warning: Could not set permissions on /app/logs. Continuing..."
 }
 
 # --- Root-Level Execution ---
@@ -70,25 +79,12 @@ if [ "$(id -u)" -eq 0 ]; then
         log "Warning: invalid LOG_DIR_MODE '$LOG_DIR_MODE' provided; defaulting to 0755"
         LOG_DIR_MODE="0755"
     fi
-    mkdir -p /app/logs
-    if find /app/logs -mindepth 1 -maxdepth 1 \( ! -uid "$APPUSER_UID" -o ! -gid "$APPUSER_GID" \) -print -quit | read -r; then
-      chown -R appuser:appuser /app/logs || log "Warning: unable to chown /app/logs; continuing"
-    fi
-    chmod "$LOG_DIR_MODE" /app/logs
+    ensure_logs_dir
 
     # Root-specific setup continues...
     log "Setting up appuser-specific environment..."
 
     setup_ssh
-
-    # Ensure log directory exists and is owned by appuser
-    # This is critical if logs are written from within the container by the appuser
-    if [ -d "/app/logs" ]; then
-        if find /app/logs -mindepth 1 -maxdepth 1 \( ! -uid "$APPUSER_UID" -o ! -gid "$APPUSER_GID" \) -print -quit | read -r; then
-            chown -R appuser:appuser /app/logs || log "Warning: unable to chown /app/logs; continuing"
-        fi
-        chmod "$LOG_DIR_MODE" /app/logs || log "Warning: Could not set permissions on /app/logs. Continuing..."
-    fi
 
     log "Permissions fixed. Re-executing as appuser..."
     
@@ -99,8 +95,8 @@ if [ "$(id -u)" -eq 0 ]; then
     
     if command -v gosu >/dev/null 2>&1; then
         log "Using gosu to switch to appuser..."
-        if gosu appuser "$0" "$@" 2>/dev/null; then
-            exit 0
+        if exec gosu appuser "$0" "$@" 2>/dev/null; then
+            :
         else
             log "Warning: gosu failed to switch to appuser." "WARNING"
             if [ "${ALLOW_RUN_AS_ROOT:-false}" = "true" ]; then
@@ -112,8 +108,8 @@ if [ "$(id -u)" -eq 0 ]; then
         fi
     elif command -v su-exec >/dev/null 2>&1; then
         log "Using su-exec to switch to appuser..."
-        if su-exec appuser "$0" "$@" 2>/dev/null; then
-            exit 0
+        if exec su-exec appuser "$0" "$@" 2>/dev/null; then
+            :
         else
             log "Warning: su-exec failed to switch to appuser." "WARNING"
             if [ "${ALLOW_RUN_AS_ROOT:-false}" = "true" ]; then

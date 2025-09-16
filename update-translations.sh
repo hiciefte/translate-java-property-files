@@ -53,8 +53,8 @@ log() {
     # Get a timestamp in ISO 8601 format.
     local timestamp
     timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-    # Print a clean, formatted log line to standard output.
-    printf "[%s] [%s] %s\n" "$timestamp" "$level" "$message"
+    # Print and persist.
+    printf "[%s] [%s] %s\n" "$timestamp" "$level" "$message" | tee -a "$LOG_FILE"
 }
 
 # Run a command, prefix with '+', and tee its output to the log.
@@ -307,11 +307,8 @@ else
         log "Using Transifex token from environment"
         
         # Debug Transifex configuration
-        log "Checking Transifex configuration"
         if [ -f "$TARGET_PROJECT_ROOT/.tx/config" ]; then
-            log ".tx/config exists in project directory"
-            log ".tx/config contents (without sensitive data):"
-            grep -Evi 'password|token|secret|api[_-]?key|auth(entication)?|credential(s)?' "$TARGET_PROJECT_ROOT/.tx/config" || true
+            log ".tx/config detected in project directory"
         else
             log "Warning: .tx/config not found in project directory"
         fi
@@ -436,8 +433,11 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
         # Add translation files that have changed and stage deletions
         log "Staging translation file changes (.properties, .po, .mo) and deletions"
         find "$ABSOLUTE_INPUT_FOLDER" \( -name '*.properties' -o -name '*.po' -o -name '*.mo' \) -print0 | xargs -0 git add
-        # Stage deletions for removed translation files (avoid non-zero grep under pipefail)
-        git ls-files --deleted "$ABSOLUTE_INPUT_FOLDER" | awk '/\.(properties|po|mo)$/' | xargs -r git rm
+        # Stage deletions for removed translation files (use repo-relative pathspec)
+        REL_INPUT_FOLDER="${ABSOLUTE_INPUT_FOLDER#"$TARGET_PROJECT_ROOT/"}"
+        git ls-files --deleted -- "$REL_INPUT_FOLDER" \
+          | awk '/\.(properties|po|mo)$/' \
+          | xargs -r git rm
 
         # Commit changes, signing if a key is configured
         if git config --get commit.gpgsign >/dev/null 2>&1 && git config --get user.signingkey >/dev/null 2>&1; then
