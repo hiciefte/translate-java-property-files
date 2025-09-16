@@ -1,3 +1,28 @@
+#!/usr/bin/env bash
+#
+# This script is the main entry point for updating translations.
+# It's designed to be run in a containerized environment (like Docker) but can also be run locally
+# if the necessary dependencies (Python, Git, GitHub CLI) are installed.
+#
+# It performs the following steps:
+# 1. Sets up the environment, including SSH and Git configurations.
+# 2. Clones or updates the target repository where translation files are stored.
+# 3. Executes the Python translation script (`translate_localization_files.py`).
+# 4. Commits any changes to the translation files.
+# 5. Creates a pull request on GitHub with the new translations.
+#
+# The script is designed to be robust, with error handling and cleanup mechanisms.
+# It uses `set -e` to exit immediately if a command fails, `set -u` to treat unset
+# variables as errors, and `set -o pipefail` to ensure that a pipeline's exit code
+# is the exit code of the last command to exit with a non-zero status.
+
+# --- Stream Redirection ---
+# Redirect stderr to stdout to ensure all output (including from Python's stderr)
+# is captured in the Docker logs. The Python script's TqdmLoggingHandler is
+# designed to prevent logging from interfering with progress bars, making this safe.
+exec 2>&1
+# --- End Stream Redirection ---
+
 #!/bin/bash
 
 set -euo pipefail
@@ -316,7 +341,8 @@ else
 
         # When this script exits, kill the background keepalive process.
         # This ensures it doesn't become a zombie process.
-        trap 'kill $KEEPALIVE_PID' EXIT
+        # The kill is made non-fatal to prevent script exit if the PID is already gone.
+        trap 'kill "$KEEPALIVE_PID" 2>/dev/null || true' EXIT
         
         # Execute and filter output, but preserve original tx exit code.
         set +e
@@ -325,7 +351,10 @@ else
         set -e
 
         # Stop the keepalive process now that tx pull is done.
-        kill $KEEPALIVE_PID
+        # Make the kill non-fatal in case the process has already exited.
+        if [ -n "${KEEPALIVE_PID:-}" ]; then
+            kill "$KEEPALIVE_PID" 2>/dev/null || true
+        fi
         # Remove the trap so it doesn't try to kill a non-existent process on exit.
         trap - EXIT
 

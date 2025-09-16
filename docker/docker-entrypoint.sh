@@ -15,33 +15,28 @@ log() {
 }
 
 setup_ssh() {
-    log "Configuring SSH directory for appuser..."
-    # This function is now focused on system-wide configuration that root can perform.
-    # We will write to /etc/ssh/ssh_known_hosts, which is readable by all users.
+    log "Configuring SSH..."
 
-    if command -v ssh-keyscan >/dev/null 2>&1; then
-        log "Scanning and pinning GitHub's host key..."
-        
-        # Ensure the global ssh directory exists
-        mkdir -p /etc/ssh
-        chmod 755 /etc/ssh
-        
-        # Check if github.com is already in the system-wide known_hosts
-        if ! ssh-keygen -F github.com -f /etc/ssh/ssh_known_hosts >/dev/null 2>&1; then
-            # Use modern key types with timeout and hashed hostname
-            if ssh-keyscan -T 10 -H -t ed25519,ecdsa,rsa github.com >> /etc/ssh/ssh_known_hosts 2>/dev/null; then
-                log "GitHub host keys added successfully to /etc/ssh/ssh_known_hosts."
-            else
-                log "Warning: Failed to scan GitHub host keys. SSH operations may fail." "WARNING"
-            fi
-        else
-            log "GitHub host key already present in system-wide known_hosts."
-        fi
-        
-        # Ensure the known_hosts file has the correct permissions
-        chmod 644 /etc/ssh/ssh_known_hosts
+    # By default, SSH is configured to fail if the host key does not match the baked-in known_hosts.
+    # On the server, this provides strong protection against man-in-the-middle attacks.
+    # For local development or in environments where the host key might change, this check can be bypassed.
+    if [ "${ALLOW_INSECURE_SSH:-false}" = "true" ]; then
+        log "WARNING: ALLOW_INSECURE_SSH is true. Host key verification will be disabled."
+        # This configuration is written to the user's local SSH config, not the system-wide one.
+        mkdir -p /home/appuser/.ssh
+        echo -e "Host github.com\n\tStrictHostKeyChecking no\n\tUserKnownHostsFile=/dev/null" > /home/appuser/.ssh/config
+        chown -R appuser:appuser /home/appuser/.ssh
+        chmod 700 /home/appuser/.ssh
+        chmod 600 /home/appuser/.ssh/config
     else
-        log "Warning: ssh-keyscan not available. SSH host key verification will be skipped." "WARNING"
+        # Verify that the baked-in known_hosts file exists and is correctly configured.
+        if [ ! -f /etc/ssh/ssh_known_hosts ] || ! grep -q "github.com" /etc/ssh/ssh_known_hosts; then
+            log "ERROR: The pinned SSH known_hosts file is missing or does not contain a key for github.com."
+            log "To run in an insecure mode for local development, set the environment variable ALLOW_INSECURE_SSH=true."
+            exit 1
+        fi
+        log "SSH is configured for strict host key checking using the baked-in known_hosts file."
+        # System-wide SSH config will enforce this automatically if no user config overrides it.
     fi
 }
 

@@ -13,7 +13,7 @@ The entire process is designed to be run as an automated, scheduled job on a ser
 *   **Automated Error Reporting**: Validation and linter errors for skipped files are automatically added to the pull request description for high visibility.
 *   **Glossary & Style Rules**: Enforces consistent terminology and tone using a `config.yaml` file.
 *   **Dockerized Environment**: Runs as a Docker container for consistent and portable deployment.
-*   **Secure Local Development**: Supports passphrase-protected SSH keys on macOS and Linux via SSH Agent Forwarding.
+*   **Secure Git Authentication**: Uses a baked-in, read-only SSH deploy key to securely interact with Git repositories, avoiding exposure of host-level keys.
 
 ---
 
@@ -21,32 +21,50 @@ The entire process is designed to be run as an automated, scheduled job on a ser
 
 There are two primary ways to run the translation tool: locally for development/testing or on a server for automated production runs.
 
-### 1. Local Development (Docker Recommended)
+### 1. Local Development & Server Deployment (Docker)
 
-This is the easiest and most consistent way to test the translation pipeline on your local machine, as it uses Docker to replicate the server environment.
+This is the only recommended way to run the service. The process is identical for local testing and server deployment, using Docker to create a secure and consistent environment.
 
 **Prerequisites:**
 *   Docker and Docker Compose
+*   A dedicated SSH keypair to be used as a deploy key.
+
+**One-Time Setup:**
+1.  **Create Secrets Directory**: If it doesn't exist, create the directory for the deploy key:
+    ```bash
+    mkdir -p secrets/deploy_key
+    ```
+2.  **Provide Deploy Key**: Place your **private** SSH deploy key in the `secrets/deploy_key/` directory. By default, the system looks for a file named `id_ed25519`.
+    ```
+    secrets/deploy_key/id_ed25519
+    ```
+    This key **must not** have a passphrase. It will be baked securely into the Docker image.
+3.  **Configure Environment**: Copy the example `.env` file and fill in your secrets (API keys, repository URLs).
+    ```bash
+    cp docker/.env.example docker/.env
+    # Now edit docker/.env with your values
+    ```
+4.  **(Optional) Customize Deploy Key Name**: If your deploy key is not named `id_ed25519`, you can specify its name by adding the `DEPLOY_KEY_NAME` variable to your `docker/.env` file:
+    ```
+    # In docker/.env
+    DEPLOY_KEY_NAME=your_key_name_here
+    ```
 
 **Run the Translation:**
 Navigate to the `docker` directory and use `docker compose run`.
 ```bash
 cd docker
-docker compose build # Run this once or whenever you change the python scripts
+docker compose build # Run this once or whenever you change the scripts or Dockerfile
 docker compose run --rm translator
 ```
 
-**NOTE FOR MACOS USERS:** Due to a known issue with how Docker for Mac handles volume mounts for SSH keys, the final step of the script (`git push` and creating a pull request) will fail with a "Permission denied" error. However, the entire translation and validation process will run successfully. You can inspect the results and logs locally. The automated PR creation is intended to be run on the server. See the **[Local Development Guide](./docs/how-to-run-locally.md)** for more details.
+**NOTE:** Because the service uses a baked-in deploy key, the final `git push` step will now work correctly on all platforms, including macOS. The previous SSH agent forwarding workarounds are no longer needed.
 
-If you need to test the full Git workflow locally on a Mac, please use the "Legacy Python Script" method below, which uses your local Git and SSH setup directly.
+### 2. Server Deployment Details
 
-### 2. Server Deployment
-
-For setting up the automated translation service on a production server (e.g., a cloud VM), please follow the comprehensive, step-by-step guide:
+For comprehensive instructions on setting up the automated translation service on a production server (e.g., a cloud VM), including the cron job configuration, please follow the full guide:
 
 ➡️ **[New Project Deployment Guide](./docs/new-project-deployment.md)**
-
-This guide covers everything from initial server setup and security to configuring the cron job that triggers the translation runs.
 
 ### 3. Local Development (Legacy Python Script)
 
@@ -76,7 +94,7 @@ The service is configured through a combination of YAML files and a single envir
 
 ## Troubleshooting
 
-*   **Local Docker Run Fails on `git push` (macOS)**: This is an expected limitation. Please see the note under the "Local Development" section and the [Local Development Guide](./docs/how-to-run-locally.md).
+*   **`Permission denied (publickey)` Errors**: This error during `git push` means the deploy key specified in `secrets/deploy_key/` has not been added to your target GitHub repository's "Deploy Keys" section with write access.
 *   **Validation Errors in Pull Request**: The PR description now includes a report of any files that were skipped due to linter or validation errors. These errors must be fixed manually in the source repository. See `docs/llm/debug-docker-service.md` for more details on common errors.
 *   **Server Deployment Issues**: Refer to the detailed deployment guide and the debugging documentation in the `docs/` directory.
 

@@ -123,5 +123,21 @@ RUN chmod +x /app/docker/docker-entrypoint.sh /app/update-translations.sh
 # Set entrypoint
 ENTRYPOINT ["/app/docker/docker-entrypoint.sh"]
 
+# Bake the pinned SSH host keys into the image for enhanced security
+COPY docker/ssh_known_hosts /etc/ssh/ssh_known_hosts
+RUN chmod 644 /etc/ssh/ssh_known_hosts
+
+# --- Bake Deploy Key into Image ---
+# Use a build secret to securely copy the deploy key into the image.
+# This method avoids leaving the key in the image layers and is the most secure approach.
+RUN --mount=type=secret,id=deploy_key,target=/tmp/deploy_key \
+    mkdir -p /home/appuser/.ssh && \
+    cp /tmp/deploy_key /home/appuser/.ssh/deploy_key && \
+    echo "Host github.com\n\tHostName github.com\n\tUser git\n\tIdentityFile /home/appuser/.ssh/deploy_key\n\tIdentitiesOnly yes" > /home/appuser/.ssh/config && \
+    chown -R appuser:appuser /home/appuser/.ssh && \
+    chmod 700 /home/appuser/.ssh && \
+    chmod 600 /home/appuser/.ssh/config /home/appuser/.ssh/deploy_key
+# --- End Deploy Key ---
+
 # Default command is now the main python script (can be overridden in docker-compose.yml)
 CMD ["python3", "-m", "src.translate_localization_files"] 

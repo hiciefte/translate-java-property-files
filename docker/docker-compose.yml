@@ -5,6 +5,13 @@ services:
     build:
       context: .. # Build context is the project root
       dockerfile: docker/Dockerfile # Path to Dockerfile from project root
+      args:
+        # Pass the deploy key name as a build argument.
+        # This can be set in the .env file or the shell environment.
+        - DEPLOY_KEY_NAME=${DEPLOY_KEY_NAME:-id_ed25519}
+      secrets:
+        # Make the deploy_key secret available to the build process
+        - deploy_key
     # The entrypoint is defined in the Dockerfile.
     # By default, run the main orchestration script. Can be overridden for debugging.
     command: ["/app/update-translations.sh"]
@@ -13,10 +20,6 @@ services:
       # The '${VOLUME_NAME:-target-repo-data}' allows for multiple, isolated instances
       # by using a named volume that can be overridden by an environment variable.
       - ${VOLUME_NAME:-target-repo-data}:/target_repo
-      # Mount the host's SSH directory to allow Git operations.
-      # This is mounted read-only for security. The entrypoint script will handle
-      # host key verification by writing to a different, container-local location.
-      - ${HOME}/.ssh:/home/appuser/.ssh:ro
       # Mount configuration and glossary files.
       - ./config.docker.yaml:/app/config.yaml:ro
       - ../glossary.json:/app/glossary.json:ro
@@ -38,4 +41,10 @@ services:
 # The ${VOLUME_NAME} environment variable in the service's volumes section
 # can still point to a differently named volume if needed.
 volumes:
-  target-repo-data: 
+  target-repo-data:
+
+# Define the secret for the SSH deploy key.
+# The filename can be controlled via the DEPLOY_KEY_NAME environment variable.
+secrets:
+  deploy_key:
+    file: ../secrets/deploy_key/${DEPLOY_KEY_NAME:-id_ed25519} 
