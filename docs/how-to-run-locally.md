@@ -1,30 +1,27 @@
 # How to Run the Translation Service Locally
 
-There are two ways to run the service on your local machine for testing or development. The Docker method is strongly recommended as it perfectly replicates the production environment and handles all dependencies automatically.
+This guide explains how to run the full translation pipeline on your local machine for testing or development.
 
-## 1. Local Development with Docker (Recommended)
+The only recommended method is to use Docker, as it perfectly replicates the production server environment and handles all dependencies automatically.
 
-This method runs the entire `update-translations.sh` orchestration script inside a Docker container. It's the most reliable way to test the full pipeline, including pulling from Transifex, creating commits, and pushing to GitHub.
+## Local Development with Docker
 
-It uses **SSH Agent Forwarding** to securely use your local, passphrase-protected SSH keys to push to your fork without exposing them to the container.
+This method runs the entire `update-translations.sh` orchestration script inside a Docker container. It's the most reliable way to test the full pipeline, from pulling from Transifex to creating commits and pushing to GitHub.
 
-### One-Time Setup
+### Setup and Execution
 
-1.  **Create Docker Override File**: For local development, create a file at `docker/docker-compose.override.yml` with the following content. This file enables the SSH agent forwarding.
-    ```yaml
-    services:
-      translator:
-        volumes:
-          # Forward the SSH agent socket from the host to the container.
-          - ${SSH_AUTH_SOCK}:/ssh-agent
-        environment:
-          # Tell the SSH client inside the container where to find the agent socket.
-          - SSH_AUTH_SOCK=/ssh-agent
-    ```
-    *(This file is safely ignored by Git via the `.gitignore` file.)*
+It is a prerequisite that you have a `secrets/deploy_key/id_ed25519` file with a GitHub deploy key that has write access to the target repository. Please refer to the main `README.md` for detailed instructions on setting this up.
 
-2.  **Add Your SSH Key to the Agent**: Before your first run, you must add your SSH key to your host machine's SSH agent.
+The process for running the service locally is **identical** to the server deployment. It uses a baked-in SSH deploy key for all Git operations, which works consistently across all platforms (including macOS).
 
-    **On macOS:**
-    This command also stores your key's passphrase in the macOS Keychain so you don't have to enter it again.
+Note: Enable Docker BuildKit for builds using secrets:
+```bash
+export DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1
 ```
+
+Once the prerequisites are met, you can build and run the service with a single command from the project root:
+```bash
+docker compose run --rm translator
+```
+
+There is no longer a need for a separate `docker-compose.override.yml` file or for using `ssh-agent`.

@@ -14,6 +14,41 @@ log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] [Entrypoint] $*"
 }
 
+setup_ssh() {
+    log "Configuring SSH..."
+
+    # By default, SSH is configured to fail if the host key does not match the baked-in known_hosts.
+    # On the server, this provides strong protection against man-in-the-middle attacks.
+    # For local development or in environments where the host key might change, this check can be bypassed.
+    if [ "${ALLOW_INSECURE_SSH:-false}" = "true" ]; then
+        log "WARNING: ALLOW_INSECURE_SSH is true. Host key verification will use ssh-keyscan at runtime."
+        # This configuration is written to the user's local SSH config, not the system-wide one.
+        mkdir -p /home/appuser/.ssh
+        echo -e "Host github.com\n\tStrictHostKeyChecking no\n\tUserKnownHostsFile=/dev/null" > /home/appuser/.ssh/config
+        chown -R appuser:appuser /home/appuser/.ssh
+        chmod 700 /home/appuser/.ssh
+        chmod 600 /home/appuser/.ssh/config
+    else
+        # Verify that the baked-in known_hosts file exists and is correctly configured.
+        if [ ! -r /etc/ssh/ssh_known_hosts ] || ! grep -q "github.com" /etc/ssh/ssh_known_hosts; then
+            log "ERROR: The pinned SSH known_hosts file is missing or does not contain a key for github.com."
+            log "To run in an insecure mode for local development, set the environment variable ALLOW_INSECURE_SSH=true."
+            exit 1
+        fi
+        log "SSH is configured for strict host key checking using the baked-in known_hosts file."
+        # System-wide SSH config will enforce this automatically if no user config overrides it.
+    fi
+}
+
+ensure_logs_dir() {
+  local mode="${LOG_DIR_MODE:-0755}"
+  mkdir -p /app/logs
+  if find /app/logs -mindepth 1 -maxdepth 1 \( ! -uid "$APPUSER_UID" -o ! -gid "$APPUSER_GID" \) -print -quit | read -r; then
+    chown -R appuser:appuser /app/logs || log "Warning: unable to chown /app/logs; continuing"
+  fi
+  chmod "$mode" /app/logs || log "Warning: Could not set permissions on /app/logs. Continuing..."
+}
+
 # --- Root-Level Execution ---
 # This block runs only if the container is started as root (UID 0).
 if [ "$(id -u)" -eq 0 ]; then
@@ -32,7 +67,7 @@ if [ "$(id -u)" -eq 0 ]; then
     # Guarded, portable chown for the target repository directory
     CURRENT_OWNER=$(ls -ldn "$TARGET_REPO_DIR" | awk '{print $3":"$4}')
     if [ "$CURRENT_OWNER" != "$APPUSER_UID:$APPUSER_GID" ]; then
-        chown appuser:appuser "$TARGET_REPO_DIR"
+        chown -R appuser:appuser "$TARGET_REPO_DIR"
     fi
 
     # Harden log directory setup
@@ -44,61 +79,12 @@ if [ "$(id -u)" -eq 0 ]; then
         log "Warning: invalid LOG_DIR_MODE '$LOG_DIR_MODE' provided; defaulting to 0755"
         LOG_DIR_MODE="0755"
     fi
-    mkdir -p /app/logs
-    if find /app/logs -mindepth 1 -maxdepth 1 \( ! -uid "$APPUSER_UID" -o ! -gid "$APPUSER_GID" \) -print -quit | read -r; then
-      chown -R appuser:appuser /app/logs || log "Warning: unable to chown /app/logs; continuing"
-    fi
-    chmod "$LOG_DIR_MODE" /app/logs
+    ensure_logs_dir
 
     # Root-specific setup continues...
     log "Setting up appuser-specific environment..."
 
-    # Set up .ssh directory for appuser to allow SSH operations
-    log "Configuring SSH directory for appuser..."
-    mkdir -p /home/appuser/.ssh
-    
-    # Check if the .ssh directory is writable (it might be mounted read-only on Docker for Mac)
-    if [ -w "/home/appuser/.ssh" ]; then
-        chmod 700 /home/appuser/.ssh
-        
-        # Pre-emptively accept GitHub's host key to avoid interactive prompts
-        if command -v ssh-keyscan >/dev/null 2>&1; then
-            log "Scanning and adding GitHub's host key..."
-            
-            # Check if github.com is already in known_hosts to avoid duplicates
-            if ! ssh-keygen -F github.com -f /home/appuser/.ssh/known_hosts >/dev/null 2>&1; then
-                # Use modern key types with timeout and hashed hostname
-                if ssh-keyscan -T 10 -H -t ed25519,ecdsa,rsa github.com >/tmp/github_keys 2>/dev/null; then
-                    cat /tmp/github_keys >> /home/appuser/.ssh/known_hosts
-                    rm -f /tmp/github_keys
-                    log "GitHub host keys added successfully."
-                else
-                    log "Warning: Failed to scan GitHub host keys. SSH operations may require manual host verification." "WARNING"
-                    rm -f /tmp/github_keys
-                fi
-            else
-                log "GitHub host key already present in known_hosts."
-            fi
-        else
-            log "Warning: ssh-keyscan not available. SSH operations may require manual host verification." "WARNING"
-        fi
-        
-        # Set ownership of the .ssh directory and its contents
-        chown -R appuser:appuser /home/appuser/.ssh
-        log "SSH directory configured successfully."
-    else
-        log "SSH directory is read-only (likely mounted from host). Skipping SSH configuration." "WARNING"
-        log "This is normal for local development with Docker for Mac." "INFO"
-    fi
-
-        # Ensure log directory exists and is owned by appuser
-        # This is critical if logs are written from within the container by the appuser
-        if [ -d "/app/logs" ]; then
-            if find /app/logs -mindepth 1 -maxdepth 1 \( ! -uid "$APPUSER_UID" -o ! -gid "$APPUSER_GID" \) -print -quit | read -r; then
-                chown -R appuser:appuser /app/logs || log "Warning: unable to chown /app/logs; continuing"
-            fi
-            chmod "$LOG_DIR_MODE" /app/logs || log "Warning: Could not set permissions on /app/logs. Continuing..."
-        fi
+    setup_ssh
 
     log "Permissions fixed. Re-executing as appuser..."
     
@@ -109,21 +95,29 @@ if [ "$(id -u)" -eq 0 ]; then
     
     if command -v gosu >/dev/null 2>&1; then
         log "Using gosu to switch to appuser..."
-        if gosu appuser "$0" "$@" 2>/dev/null; then
-            exit 0
+        if exec gosu appuser "$0" "$@" 2>/dev/null; then
+            :
         else
-            log "Warning: gosu failed to switch to appuser. This may be due to Docker for Mac restrictions." "WARNING"
-            log "Continuing as root for local development..." "WARNING"
-            # Continue execution as root instead of exiting
+            log "Warning: gosu failed to switch to appuser." "WARNING"
+            if [ "${ALLOW_RUN_AS_ROOT:-false}" = "true" ]; then
+              log "ALLOW_RUN_AS_ROOT=true; continuing as root."
+            else
+              log "Refusing to continue as root. Set ALLOW_RUN_AS_ROOT=true to override." "ERROR"
+              exit 1
+            fi
         fi
     elif command -v su-exec >/dev/null 2>&1; then
         log "Using su-exec to switch to appuser..."
-        if su-exec appuser "$0" "$@" 2>/dev/null; then
-            exit 0
+        if exec su-exec appuser "$0" "$@" 2>/dev/null; then
+            :
         else
-            log "Warning: su-exec failed to switch to appuser. This may be due to Docker for Mac restrictions." "WARNING"
-            log "Continuing as root for local development..." "WARNING"
-            # Continue execution as root instead of exiting
+            log "Warning: su-exec failed to switch to appuser." "WARNING"
+            if [ "${ALLOW_RUN_AS_ROOT:-false}" = "true" ]; then
+              log "ALLOW_RUN_AS_ROOT=true; continuing as root."
+            else
+              log "Refusing to continue as root. Set ALLOW_RUN_AS_ROOT=true to override." "ERROR"
+              exit 1
+            fi
         fi
     else
         log "Error: neither 'gosu' nor 'su-exec' found in PATH." >&2
@@ -146,6 +140,11 @@ if [ -w /app/logs ]; then
 fi
 
 log "Starting entrypoint script as user: $(whoami)"
+
+# If running as root (e.g., ALLOW_RUN_AS_ROOT=true in local dev), allow git to operate on /target_repo
+if [ "$(id -u)" -eq 0 ]; then
+    git config --global --add safe.directory /target_repo || true
+fi
 
 TARGET_REPO_DIR="${TARGET_REPO_DIR:-/target_repo}"
 
@@ -183,7 +182,7 @@ else
     fi
     log "No repository found in $TARGET_REPO_DIR. Cloning from fork..."
     # Use parameter expansion with error message for required variables
-    FORK_REPO_URL="https://github.com/${FORK_REPO_NAME:?FORK_REPO_NAME must be set}.git"
+    FORK_REPO_URL="git@github.com:${FORK_REPO_NAME:?FORK_REPO_NAME must be set}.git"
     git clone "$FORK_REPO_URL" "$TARGET_REPO_DIR"
         cd "$TARGET_REPO_DIR"
 fi

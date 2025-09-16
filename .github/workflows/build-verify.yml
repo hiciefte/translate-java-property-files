@@ -6,9 +6,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  verify:
-    name: Lint, Scan, and Build
+  build-and-verify:
     runs-on: ubuntu-latest
+    permissions:
+      security-events: write
 
     steps:
       - name: Checkout repository
@@ -30,20 +31,22 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: Scan Python dependencies for vulnerabilities
-        run: |
-          pip install pip-audit
-          pip-audit -r requirements.txt
-          pip-audit -r requirements-dev.txt
-
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
-      - name: Run unit tests with pytest
+      - name: Install dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
+
+      - name: Run linters, scanners, and tests
+        run: |
+          pip-audit -r requirements.txt
+          pip-audit -r requirements-dev.txt
+          ruff check .
           pytest
 
       - name: Set up Docker Buildx
@@ -56,46 +59,49 @@ jobs:
           mkdir -p secrets/gpg_bot_key
           touch secrets/gpg_bot_key/bot_public_key.asc
           touch secrets/gpg_bot_key/bot_secret_key.asc
+          # The build process requires a .env file to be present, but the values are not
+          # used in the CI environment. We create a dummy file to satisfy this requirement.
           echo "DUMMY_KEY=123" > docker/.env
 
-      - name: Build Docker image
-        id: docker_build
+      # QEMU not required unless building multi-arch
+      # - name: Set up QEMU
+      #   uses: docker/setup-qemu-action@v3
+
+      - name: Build Docker Image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: docker/Dockerfile
-          push: false # Do not push the image
+          file: ./docker/Dockerfile
+          load: true
           tags: translator-app:ci-${{ github.sha }}
-          load: true # Load the image into the local Docker daemon for scanning
           build-args: |
             SKIP_GPG_IMPORT=true
             GPG_KEY_FINGERPRINT_FOR_TRUST=DUMMY_FINGERPRINT_FOR_CI
+          secrets: |
+            ${{ secrets.DEPLOY_KEY != '' && format('deploy_key={0}', secrets.DEPLOY_KEY) || '' }}
 
-      - name: Cache Trivy vulnerability database
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/trivy
-          key: ${{ runner.os }}-trivy-${{ github.run_id }}
-          restore-keys: |
-            ${{ runner.os }}-trivy-
+      - name: Display Docker Image Info
+        run: docker images
 
-      - name: Scan built image with Trivy
-        # Scans the final image for OS and library vulnerabilities.
-        # We use a .trivyignore file to suppress specific CVEs, such as those
-        # present in the vendor-supplied Transifex CLI binary, which are
-        # outside of our control to fix. This is a pragmatic approach to
-        # reduce noise from unactionable alerts.
+      - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@0.31.0
         with:
           image-ref: 'translator-app:ci-${{ github.sha }}'
+          # Temporarily switch to 'table' format to identify the new CVEs causing the failure.
           format: 'table'
+          # output: 'trivy-results.sarif'
           # Fail the build if any critical or high severity vulnerabilities are found.
           exit-code: '1'
-          # Only report on vulnerabilities that have a known fix.
+          # Ignore vulnerabilities that are not yet fixed by the base image maintainers, or that
+          # are deemed not applicable to our use case.
           ignore-unfixed: true
-          # Scan for both OS and programming language library vulnerabilities.
           vuln-type: 'os,library'
-          # The severity levels to scan for.
           severity: 'CRITICAL,HIGH'
-          # Use the .trivyignore file to suppress specific vulnerability alerts.
-          trivyignores: .trivyignore 
+          # Use a .trivyignore file to manage a persistent list of ignored CVEs.
+          # This provides a clear, version-controlled record of accepted risks.
+          trivyignores: '.trivyignore'
+
+      # - name: Upload Trivy scan results to GitHub Security tab
+      #   uses: github/codeql-action/upload-sarif@v3
+      #   with:
+      #     sarif_file: 'trivy-results.sarif' 

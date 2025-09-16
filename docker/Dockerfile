@@ -110,6 +110,21 @@ RUN if [ "$SKIP_GPG_IMPORT" = "true" ]; then \
     # Clean up temporary file in all cases
     rm -f /tmp/bot_secret_key.asc
 
+# Make the .ssh directory and set its permissions.
+RUN mkdir -p /home/appuser/.ssh && \
+    chmod 700 /home/appuser/.ssh
+
+# Mount the secret key file and copy it into the .ssh directory.
+# This method ensures the key is not stored in the image layers.
+# Then, set the correct permissions for the key and create an SSH config.
+RUN --mount=type=secret,id=deploy_key,target=/tmp/deploy_key \
+    cp /tmp/deploy_key /home/appuser/.ssh/deploy_key && \
+    chmod 600 /home/appuser/.ssh/deploy_key && \
+    chown -R appuser:appuser /home/appuser/.ssh && \
+    echo -e "Host github.com\n\tIdentityFile /home/appuser/.ssh/deploy_key\n\tIdentitiesOnly yes" > /home/appuser/.ssh/config && \
+    chown appuser:appuser /home/appuser/.ssh/config && \
+    chmod 600 /home/appuser/.ssh/config
+
 WORKDIR /app
 
 # Copy source and install python dependencies
@@ -122,6 +137,10 @@ RUN chmod +x /app/docker/docker-entrypoint.sh /app/update-translations.sh
 
 # Set entrypoint
 ENTRYPOINT ["/app/docker/docker-entrypoint.sh"]
+
+# Bake the pinned SSH host keys into the image for enhanced security
+COPY docker/ssh_known_hosts /etc/ssh/ssh_known_hosts
+RUN chmod 644 /etc/ssh/ssh_known_hosts
 
 # Default command is now the main python script (can be overridden in docker-compose.yml)
 CMD ["python3", "-m", "src.translate_localization_files"] 

@@ -1,18 +1,45 @@
-venv/
+# Python
 __pycache__/
 *.pyc
-*.iml
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+dist/
+build/
+*.egg-info
+
+# IDE settings
 .idea/
+*.iml
+.vscode/
+
+# User-specific files
 .DS_Store
-logs/**
-!logs/.gitkeep
-# Ignore all secret files, but keep the directory structure placeholder.
-secrets/**
-!secrets/.gitkeep
-# Ignore environment files. The .env file in the docker directory is for server deployment secrets.
-# The root .env is for local non-docker testing. Neither should be in git.
-/.env
-docker/.env
+
+# Logs
+# Ignore contents of logs, but not the directory itself, so .gitkeep can be tracked.
+/logs/*
+!/logs/.gitkeep
+
+# Secrets
+# This directory contains sensitive information like API keys and should never be committed.
+# Ignore contents of secrets, but not the directory itself, so .gitkeep can be tracked.
+/secrets/*
+!/secrets/.gitkeep
+
+# Environment files.
+# Catches .env, .env.local, .env.*, etc.
+/.env*
+!/.env.example
+docker/.env*
+!docker/.env.example
+
+# Docker Compose override files
 docker/docker-compose.override.yml
-# Ignore local config file, but track the example.
-/config.yaml
+docker/docker-compose.override.yaml
+docker/docker-compose.override.*.yml
+docker/docker-compose.override.*.yaml
