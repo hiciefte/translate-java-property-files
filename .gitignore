@@ -1,24 +1,41 @@
-venv/
+# Python
 __pycache__/
 *.pyc
-*.iml
+.venv/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info
+
+# IDE settings
 .idea/
+*.iml
+.vscode/
+
 # User-specific files
 .DS_Store
 
 # Logs
-/logs/
+# Ignore contents of logs, but not the directory itself, so .gitkeep can be tracked.
+/logs/*
 !/logs/.gitkeep
 
 # Secrets
 # This directory contains sensitive information like API keys and should never be committed.
-/secrets/
+# Ignore contents of secrets, but not the directory itself, so .gitkeep can be tracked.
+/secrets/*
 !/secrets/.gitkeep
 
-# Environment files. The .env file in the docker directory is for server deployment secrets.
-# It should be ignored to prevent accidental commits of sensitive data.
-/.env
-docker/.env
+# Environment files.
+# Catches .env, .env.local, .env.*, etc.
+/.env*
+docker/.env*
+
+# Docker Compose override files
 docker/docker-compose.override.yml
-# Ignore local config file, but track the example.
-/config.yaml
+docker/docker-compose.override.yaml
+docker/docker-compose.override.*.yml
+docker/docker-compose.override.*.yaml

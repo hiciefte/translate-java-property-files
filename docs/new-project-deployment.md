@@ -102,7 +102,7 @@ nano config.yaml
 
 ## Step 4: Build the Docker Image
 
-Navigate to the `docker` directory and run the build command. This will create a self-contained image with all dependencies.
+From the project root, run the build command. This will create a self-contained image with all dependencies.
 
 > **Note on Security:** The build process uses Docker BuildKit's secret mounting feature. This means your keys are securely accessed only during the build and are **never** stored in the final Docker image layers.
 

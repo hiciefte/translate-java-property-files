@@ -148,11 +148,14 @@ get_config_value() {
         log "Error: 'yq' is required but not found in PATH."
         exit 1
     fi
-    # Use yq to safely read the value. The -e flag exits with non-zero status if the key is not found.
-    # The -r flag outputs raw strings, preventing issues with "null" or extra quotes.
-    # The '|| true' prevents the script from exiting if a key is not found (for optional keys).
-    # Redirect stderr to /dev/null to silence "no matches found" for optional keys.
-    yq -e -r ".$key" "$config_file" 2>/dev/null || true
+    # Use yq to safely read the value. `// "__MISSING__"` provides a default for missing keys.
+    # The case statement normalizes null/"__MISSING__" to an empty string for downstream checks.
+    val=$(yq -r ".$key // \"__MISSING__\"" "$config_file" 2>/dev/null || true)
+    case "$val" in
+        "__MISSING__"|"null") echo "";;
+        true|false) echo "$val";;
+        *) echo "$val";;
+    esac
 }
 
 TARGET_PROJECT_ROOT=$(get_config_value "target_project_root" "$CONFIG_FILE")
@@ -226,10 +229,13 @@ else
     mapfile -t configured_sources < <(awk -F'=' '/^[[:space:]]*source_file[[:space:]]*=/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2}' "$TX_CONFIG_FILE")
 
     # Get the actual English source files present on disk.
-    # We assume source files are .properties files that do NOT follow the language code pattern (_xx or _xx_XX).
-    # This correctly identifies files like 'app.properties' while excluding 'app_de.properties'.
-    # globstar not needed; using find
-    mapfile -t actual_sources_full_path < <(find "$ABSOLUTE_INPUT_FOLDER" -type f -name '*.properties' -not -name '*_*.properties')
+    # This correctly identifies files like 'app.properties' while excluding translated files like 'app_de.properties'.
+    # A regex is used to specifically exclude files ending in the locale pattern `_ll` or `_ll_CC`.
+    mapfile -t actual_sources_full_path < <(
+      find "$ABSOLUTE_INPUT_FOLDER" -type f -name '*.properties' \
+        -regextype posix-extended \
+        -not -regex '.*_[a-z]{2}(_[A-Z]{2})?\.properties$'
+    )
 
     declare -A configured_relative_paths
     for src in "${configured_sources[@]}"; do
@@ -442,9 +448,11 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
         
         # Add translation files that have changed and stage deletions
         log "Staging translation file changes (.properties, .po, .mo) and deletions"
-        find "$ABSOLUTE_INPUT_FOLDER" \( -name '*.properties' -o -name '*.po' -o -name '*.mo' \) -print0 | xargs -0 git add
-        # Stage deletions for removed translation files (use repo-relative pathspec)
+        # Use a pathspec to add all relevant files in the input folder.
+        # This is simpler and less prone to errors with special characters than find + xargs.
         REL_INPUT_FOLDER="${ABSOLUTE_INPUT_FOLDER#"$TARGET_PROJECT_ROOT/"}"
+        git add -- "$REL_INPUT_FOLDER"/*.properties "$REL_INPUT_FOLDER"/*.po "$REL_INPUT_FOLDER"/*.mo 2>/dev/null || true
+        # Stage deletions for removed translation files (use repo-relative pathspec)
         git ls-files -z --deleted -- "$REL_INPUT_FOLDER" \
           | grep -zE '\.(properties|po|mo)$' \
           | xargs -0 -r git rm
