@@ -1197,7 +1197,13 @@ def get_changed_translation_files(input_folder_path: str, repo_root: str) -> Lis
         if filter_glob:
             # We need the `fnmatch` module to compare against the glob pattern.
             import fnmatch
-            filtered_list = [f for f in changed_files if fnmatch.fnmatch(f, filter_glob)]
+            # If the glob contains a path separator, match against the full relative path.
+            # Otherwise, match against the basename to preserve the original behavior.
+            if '/' in filter_glob:
+                filtered_list = [f for f in changed_files if fnmatch.fnmatch(f, filter_glob)]
+            else:
+                filtered_list = [f for f in changed_files if fnmatch.fnmatch(os.path.basename(f), filter_glob)]
+
             logger.info(
                 f"Applied filter '{filter_glob}', {len(filtered_list)} out of {len(changed_files)} files will be translated.")
             return filtered_list
