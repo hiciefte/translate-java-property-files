@@ -14,6 +14,42 @@ log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] [Entrypoint] $*"
 }
 
+setup_ssh() {
+    log "Configuring SSH directory for appuser..."
+    mkdir -p /home/appuser/.ssh
+    
+    # Check if the .ssh directory is writable (it might be mounted read-only on Docker for Mac)
+    if [ -w "/home/appuser/.ssh" ]; then
+        chmod 700 /home/appuser/.ssh
+        
+        # This is the refined fix from Phase 15 of the debug-docker-service.md documentation.
+        # It handles the host key verification failure when ~/.ssh is mounted read-only.
+        # It securely disables host key checking for github.com only.
+        local ssh_config_file="/home/appuser/.ssh/config"
+        if ! grep -q -E "^\s*Host github.com\s*$" "$ssh_config_file" 2>/dev/null; then
+            log "No existing SSH config for github.com found. Appending secure defaults."
+            # Use 'tee -a' to append, which is safer than '>>' in some contexts.
+            # Using a heredoc for clarity.
+            tee -a "$ssh_config_file" > /dev/null <<EOF
+
+Host github.com
+  StrictHostKeyChecking no
+  UserKnownHostsFile /dev/null
+EOF
+            log "Appended StrictHostKeyChecking=no for github.com."
+        else
+            log "Existing SSH config for github.com found. No changes made."
+        fi
+        
+        # Set ownership of the .ssh directory and its contents
+        chown -R appuser:appuser /home/appuser/.ssh
+        log "SSH directory configured successfully."
+    else
+        log "SSH directory is read-only (likely mounted from host). Skipping SSH configuration." "WARNING"
+        log "This is normal for local development with Docker for Mac." "INFO"
+    fi
+}
+
 # --- Root-Level Execution ---
 # This block runs only if the container is started as root (UID 0).
 if [ "$(id -u)" -eq 0 ]; then
@@ -53,52 +89,16 @@ if [ "$(id -u)" -eq 0 ]; then
     # Root-specific setup continues...
     log "Setting up appuser-specific environment..."
 
-    # Set up .ssh directory for appuser to allow SSH operations
-    log "Configuring SSH directory for appuser..."
-    mkdir -p /home/appuser/.ssh
-    
-    # Check if the .ssh directory is writable (it might be mounted read-only on Docker for Mac)
-    if [ -w "/home/appuser/.ssh" ]; then
-        chmod 700 /home/appuser/.ssh
-        
-        # Pre-emptively accept GitHub's host key to avoid interactive prompts
-        if command -v ssh-keyscan >/dev/null 2>&1; then
-            log "Scanning and adding GitHub's host key..."
-            
-            # Check if github.com is already in known_hosts to avoid duplicates
-            if ! ssh-keygen -F github.com -f /home/appuser/.ssh/known_hosts >/dev/null 2>&1; then
-                # Use modern key types with timeout and hashed hostname
-                if ssh-keyscan -T 10 -H -t ed25519,ecdsa,rsa github.com >/tmp/github_keys 2>/dev/null; then
-                    cat /tmp/github_keys >> /home/appuser/.ssh/known_hosts
-                    rm -f /tmp/github_keys
-                    log "GitHub host keys added successfully."
-                else
-                    log "Warning: Failed to scan GitHub host keys. SSH operations may require manual host verification." "WARNING"
-                    rm -f /tmp/github_keys
-                fi
-            else
-                log "GitHub host key already present in known_hosts."
-            fi
-        else
-            log "Warning: ssh-keyscan not available. SSH operations may require manual host verification." "WARNING"
-        fi
-        
-        # Set ownership of the .ssh directory and its contents
-        chown -R appuser:appuser /home/appuser/.ssh
-        log "SSH directory configured successfully."
-    else
-        log "SSH directory is read-only (likely mounted from host). Skipping SSH configuration." "WARNING"
-        log "This is normal for local development with Docker for Mac." "INFO"
-    fi
+    setup_ssh
 
-        # Ensure log directory exists and is owned by appuser
-        # This is critical if logs are written from within the container by the appuser
-        if [ -d "/app/logs" ]; then
-            if find /app/logs -mindepth 1 -maxdepth 1 \( ! -uid "$APPUSER_UID" -o ! -gid "$APPUSER_GID" \) -print -quit | read -r; then
-                chown -R appuser:appuser /app/logs || log "Warning: unable to chown /app/logs; continuing"
-            fi
-            chmod "$LOG_DIR_MODE" /app/logs || log "Warning: Could not set permissions on /app/logs. Continuing..."
+    # Ensure log directory exists and is owned by appuser
+    # This is critical if logs are written from within the container by the appuser
+    if [ -d "/app/logs" ]; then
+        if find /app/logs -mindepth 1 -maxdepth 1 \( ! -uid "$APPUSER_UID" -o ! -gid "$APPUSER_GID" \) -print -quit | read -r; then
+            chown -R appuser:appuser /app/logs || log "Warning: unable to chown /app/logs; continuing"
         fi
+        chmod "$LOG_DIR_MODE" /app/logs || log "Warning: Could not set permissions on /app/logs. Continuing..."
+    fi
 
     log "Permissions fixed. Re-executing as appuser..."
     

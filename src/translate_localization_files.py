@@ -739,6 +739,10 @@ async def translate_text_async(
     Returns:
         Tuple[int, str]: The index and the translated text.
     """
+    if DRY_RUN:
+        logging.info(f"[Dry Run] Skipping actual translation for key '{key}'. Returning original text.")
+        return index, text
+
     async with semaphore, rate_limiter:
         # 3) Use language_name_to_code instead of an Enum
         language_code = language_name_to_code(target_language)
@@ -933,6 +937,11 @@ async def holistic_review_async(
     Returns:
         Optional[Dict[str, str]]: A dictionary of corrected key-value pairs, or None if review fails.
     """
+    if DRY_RUN:
+        logging.info("[Dry Run] Skipping holistic review API call.")
+        # Return an empty dictionary to simulate a successful review that made no changes.
+        return {}
+
     async with semaphore, rate_limiter:
         review_system_prompt = _build_holistic_review_system_prompt(
             target_language=target_language,
