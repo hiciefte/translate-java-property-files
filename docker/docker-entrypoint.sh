@@ -219,6 +219,11 @@ else
         fi
     fi
 
+    # Fix ownership of the .env file if it exists, so the python script can read it.
+    if [ -f "/app/docker/.env" ]; then
+        chown "${APPUSER_UID}:${APPUSER_GID}" "/app/docker/.env"
+    fi
+
     # When running as root (ALLOW_RUN_AS_ROOT=true), silence Git ownership warnings for /target_repo.
     if [ "${ALLOW_RUN_AS_ROOT:-false}" = "true" ]; then
       git config --global --add safe.directory /target_repo || true
