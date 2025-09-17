@@ -7,9 +7,12 @@
 # --- Strict Mode ---
 set -euo pipefail
 
-# Resolve appuser's UID/GID once; allow override via env for edge images.
-APPUSER_UID="${APPUSER_UID:-$(id -u appuser 2>/dev/null || echo 9999)}"
-APPUSER_GID="${APPUSER_GID:-$(id -g appuser 2>/dev/null || echo 9999)}"
+if ! id -u appuser >/dev/null 2>&1; then
+  log "User 'appuser' does not exist in the image. Create it or set ALLOW_RUN_AS_ROOT=true (not recommended)." "ERROR"
+  exit 1
+fi
+APPUSER_UID="${APPUSER_UID:-$(id -u appuser)}"
+APPUSER_GID="${APPUSER_GID:-$(id -g appuser)}"
 
 # --- Log Function ---
 # Defined at the top to be available for all parts of the script.
@@ -28,7 +31,7 @@ setup_ssh() {
 
     if [ "${ALLOW_INSECURE_SSH:-false}" = "true" ]; then
         log "WARNING: ALLOW_INSECURE_SSH is true. Host key verification is disabled." "WARNING"
-        echo -e "Host github.com\n\tStrictHostKeyChecking no\n\tUserKnownHostsFile=/dev/null" > /home/appuser/.ssh/config
+        echo -e "Host github.com\n\tBatchMode yes\n\tStrictHostKeyChecking no\n\tUserKnownHostsFile=/dev/null" > /home/appuser/.ssh/config
     else
         if [ ! -r /etc/ssh/ssh_known_hosts ] || ! grep -q "github.com" /etc/ssh/ssh_known_hosts; then
             log "ERROR: The pinned SSH known_hosts file is missing or invalid." "ERROR"
@@ -67,6 +70,12 @@ ensure_logs_dir() {
 # 1. If run as root, it fixes permissions and then re-executes itself as appuser.
 # 2. If run as non-root (appuser), it performs the git operations and runs the main command.
 
+for bin in git ssh gosu; do
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    log "Required binary '$bin' not found in PATH." "ERROR"; exit 1
+  fi
+done
+
 if [ "$(id -u)" -ne 0 ]; then
     # --- appuser Execution Block ---
     log "Starting entrypoint script as user: $(whoami)"
@@ -74,6 +83,7 @@ if [ "$(id -u)" -ne 0 ]; then
     # Ensure logs and SSH are configured correctly before proceeding.
     ensure_logs_dir
     setup_ssh
+    export GIT_TERMINAL_PROMPT=0
 
     TARGET_REPO_DIR="${TARGET_REPO_DIR:-/target_repo}"
 
@@ -88,11 +98,11 @@ if [ "$(id -u)" -ne 0 ]; then
 
     if [ -n "$GPG_SIGNING_KEY" ]; then
         git config --global user.signingkey "$GPG_SIGNING_KEY"
-            git config --global commit.gpgsign true
+        git config --global commit.gpgsign true 
         log "Git user configured with GPG signing key."
-        else
+    else
         git config --global --unset-all user.signingkey >/dev/null 2>&1 || true
-            git config --global commit.gpgsign false
+        git config --global commit.gpgsign false 
         log "Git user configured without a GPG signing key; commit signing disabled."
     fi
 
@@ -186,12 +196,15 @@ else
 
     # Fix permissions on the target repository if it's a mounted volume
     if [ -d "/target_repo" ]; then
-        chown -R "${APPUSER_UID}:${APPUSER_GID}" "/target_repo"
+        # Only fix entries with mismatched ownership; don't follow symlinks.
+        find /target_repo \( ! -uid "$APPUSER_UID" -o ! -gid "$APPUSER_GID" \) -exec chown -h "${APPUSER_UID}:${APPUSER_GID}" {} +
     fi
 
     # Avoid git safety warnings when root later re-executes a git command as appuser
     # on a directory that root has just owned.
-    git config --global --add safe.directory /target_repo || true
+    if [ "${ALLOW_RUN_AS_ROOT:-false}" = "true" ]; then
+      git config --global --add safe.directory /target_repo || true
+    fi
 
     # Set up SSH. This is done as root to ensure correct ownership of created files.
     setup_ssh
@@ -211,6 +224,7 @@ else
         if [ "${ALLOW_RUN_AS_ROOT:-false}" = "true" ]; then
             log "ALLOW_RUN_AS_ROOT=true; continuing as root." "WARNING"
             # Fall through to execute the command as root
+            exec "$@"
         else
             log "Refusing to continue as root. Set ALLOW_RUN_AS_ROOT=true to override." "ERROR"
             exit 1
