@@ -7,13 +7,6 @@
 # --- Strict Mode ---
 set -euo pipefail
 
-if ! id -u appuser >/dev/null 2>&1; then
-  log "User 'appuser' does not exist in the image. Create it or set ALLOW_RUN_AS_ROOT=true (not recommended)." "ERROR"
-  exit 1
-fi
-APPUSER_UID="${APPUSER_UID:-$(id -u appuser)}"
-APPUSER_GID="${APPUSER_GID:-$(id -g appuser)}"
-
 # --- Log Function ---
 # Defined at the top to be available for all parts of the script.
 log() {
@@ -22,16 +15,24 @@ log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] [Entrypoint] [$level] $message"
 }
 
+if ! id -u appuser >/dev/null 2>&1; then
+  log "User 'appuser' does not exist in the image. Create it or set ALLOW_RUN_AS_ROOT=true (not recommended)." "ERROR"
+  exit 1
+fi
+APPUSER_UID="${APPUSER_UID:-$(id -u appuser)}"
+APPUSER_GID="${APPUSER_GID:-$(id -g appuser)}"
+
 # --- Unified Helper Functions ---
 
 # Set up SSH host keys for secure git operations.
 setup_ssh() {
+    local user_home="${APPUSER_HOME:-/home/appuser}"
     log "Configuring SSH..."
-    mkdir -p /home/appuser/.ssh
+    mkdir -p "${user_home}/.ssh"
 
     if [ "${ALLOW_INSECURE_SSH:-false}" = "true" ]; then
         log "WARNING: ALLOW_INSECURE_SSH is true. Host key verification is disabled." "WARNING"
-        echo -e "Host github.com\n\tBatchMode yes\n\tStrictHostKeyChecking no\n\tUserKnownHostsFile=/dev/null" > /home/appuser/.ssh/config
+        echo -e "Host github.com\n\tBatchMode yes\n\tStrictHostKeyChecking no\n\tUserKnownHostsFile=/dev/null" > "${user_home}/.ssh/config"
     else
         if [ ! -r /etc/ssh/ssh_known_hosts ] || ! grep -q "github.com" /etc/ssh/ssh_known_hosts; then
             log "ERROR: The pinned SSH known_hosts file is missing or invalid." "ERROR"
@@ -43,12 +44,12 @@ setup_ssh() {
 
     # Ensure correct ownership and permissions, but only chown if running as root.
     if [ "$(id -u)" -eq 0 ]; then
-        chown -R "${APPUSER_UID}:${APPUSER_GID}" /home/appuser/.ssh || log "Warning: unable to chown /home/appuser/.ssh" "WARNING"
+        chown -R "${APPUSER_UID}:${APPUSER_GID}" "${user_home}/.ssh" || log "Warning: unable to chown ${user_home}/.ssh" "WARNING"
     fi
     # These chmod operations are safe for appuser to run on its own files.
-    chmod 700 /home/appuser/.ssh
-    chmod 600 /home/appuser/.ssh/config 2>/dev/null || true # Might not exist in secure mode
-    chmod 600 /home/appuser/.ssh/known_hosts 2>/dev/null || true # Might not exist in insecure mode
+    chmod 700 "${user_home}/.ssh"
+    chmod 600 "${user_home}/.ssh/config" 2>/dev/null || true # Might not exist in secure mode
+    chmod 600 "${user_home}/.ssh/known_hosts" 2>/dev/null || true # Might not exist in insecure mode
 }
 
 # Helper function to ensure log directory exists and has correct permissions.
@@ -197,11 +198,10 @@ else
     # Fix permissions on the target repository if it's a mounted volume
     if [ -d "/target_repo" ]; then
         # Only fix entries with mismatched ownership; don't follow symlinks.
-        find /target_repo \( ! -uid "$APPUSER_UID" -o ! -gid "$APPUSER_GID" \) -exec chown -h "${APPUSER_UID}:${APPUSER_GID}" {} +
+        find /target_repo -maxdepth 1 \( ! -uid "$APPUSER_UID" -o ! -gid "$APPUSER_GID" \) -exec chown -h "${APPUSER_UID}:${APPUSER_GID}" {} +
     fi
 
-    # Avoid git safety warnings when root later re-executes a git command as appuser
-    # on a directory that root has just owned.
+    # When running as root (ALLOW_RUN_AS_ROOT=true), silence Git ownership warnings for /target_repo.
     if [ "${ALLOW_RUN_AS_ROOT:-false}" = "true" ]; then
       git config --global --add safe.directory /target_repo || true
     fi
@@ -223,7 +223,10 @@ else
         log "Warning: gosu failed to switch to appuser." "WARNING"
         if [ "${ALLOW_RUN_AS_ROOT:-false}" = "true" ]; then
             log "ALLOW_RUN_AS_ROOT=true; continuing as root." "WARNING"
-            # Fall through to execute the command as root
+            if [ "$#" -eq 0 ]; then
+              log "Error: no command provided to exec. Set CMD in Dockerfile or command in docker-compose.yml." "ERROR" >&2
+              exit 1
+            fi
             exec "$@"
         else
             log "Refusing to continue as root. Set ALLOW_RUN_AS_ROOT=true to override." "ERROR"
