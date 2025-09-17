@@ -16,11 +16,19 @@ log() {
 }
 
 if ! id -u appuser >/dev/null 2>&1; then
-  log "User 'appuser' does not exist in the image. Create it or set ALLOW_RUN_AS_ROOT=true (not recommended)." "ERROR"
-  exit 1
+  if [ "${ALLOW_RUN_AS_ROOT:-false}" = "true" ]; then
+    log "User 'appuser' not found. Falling back to root since ALLOW_RUN_AS_ROOT is true." "WARNING"
+    # Use root's UID/GID as a safe default when appuser is missing and root is allowed.
+    APPUSER_UID="${APPUSER_UID:-0}"
+    APPUSER_GID="${APPUSER_GID:-0}"
+  else
+    log "User 'appuser' does not exist in the image. Set ALLOW_RUN_AS_ROOT=true to fall back to root (not recommended)." "ERROR"
+    exit 1
+  fi
+else
+  APPUSER_UID="${APPUSER_UID:-$(id -u appuser)}"
+  APPUSER_GID="${APPUSER_GID:-$(id -g appuser)}"
 fi
-APPUSER_UID="${APPUSER_UID:-$(id -u appuser)}"
-APPUSER_GID="${APPUSER_GID:-$(id -g appuser)}"
 
 # --- Unified Helper Functions ---
 
@@ -34,12 +42,13 @@ setup_ssh() {
         log "WARNING: ALLOW_INSECURE_SSH is true. Host key verification is disabled." "WARNING"
         echo -e "Host github.com\n\tBatchMode yes\n\tStrictHostKeyChecking no\n\tUserKnownHostsFile=/dev/null" > "${user_home}/.ssh/config"
     else
-        if [ ! -r /etc/ssh/ssh_known_hosts ] || ! grep -q "github.com" /etc/ssh/ssh_known_hosts; then
+        KNOWN_HOSTS_PATH="${PINNED_KNOWN_HOSTS_PATH:-/etc/ssh/ssh_known_hosts}"
+        if [ ! -r "$KNOWN_HOSTS_PATH" ] || ! grep -q "github.com" "$KNOWN_HOSTS_PATH"; then
             log "ERROR: The pinned SSH known_hosts file is missing or invalid." "ERROR"
             log "To run in an insecure mode for development, set ALLOW_INSECURE_SSH=true." "ERROR"
             exit 1
         fi
-        log "SSH is configured for strict host key checking using the baked-in known_hosts file."
+        log "SSH is configured for strict host key checking using pinned known_hosts at $KNOWN_HOSTS_PATH."
     fi
 
     # Ensure correct ownership and permissions, but only chown if running as root.
@@ -92,7 +101,12 @@ if [ "$(id -u)" -ne 0 ]; then
     log "Configuring git user..."
     GIT_USER_NAME=$(git config --global --get user.name || echo "bisq-bot")
     GIT_USER_EMAIL=$(git config --global --get user.email || echo "bisq-bot@users.noreply.github.com")
-    GPG_SIGNING_KEY=$(gpg --list-secret-keys --with-colons 2>/dev/null | grep '^sec' | cut -d: -f5 | head -n1 || true)
+    if command -v gpg >/dev/null 2>&1; then
+      GPG_SIGNING_KEY="$(gpg --list-secret-keys --with-colons 2>/dev/null | awk -F: '/^sec/ {print $5; exit}')"
+    else
+      GPG_SIGNING_KEY=""
+      log "gpg not found; commit signing will be disabled." "WARNING"
+    fi
 
     git config --global user.name "$GIT_USER_NAME"
     git config --global user.email "$GIT_USER_EMAIL"
@@ -198,7 +212,11 @@ else
     # Fix permissions on the target repository if it's a mounted volume
     if [ -d "/target_repo" ]; then
         # Only fix entries with mismatched ownership; don't follow symlinks.
-        find /target_repo -maxdepth 1 \( ! -uid "$APPUSER_UID" -o ! -gid "$APPUSER_GID" \) -exec chown -h "${APPUSER_UID}:${APPUSER_GID}" {} +
+        if [ "${CHOWN_TARGET_REPO_RECURSIVE:-false}" = "true" ]; then
+          chown -R "${APPUSER_UID}:${APPUSER_GID}" /target_repo
+        else
+          find /target_repo -maxdepth 1 \( ! -uid "$APPUSER_UID" -o ! -gid "$APPUSER_GID" \) -exec chown -h "${APPUSER_UID}:${APPUSER_GID}" {} +
+        fi
     fi
 
     # When running as root (ALLOW_RUN_AS_ROOT=true), silence Git ownership warnings for /target_repo.
