@@ -226,7 +226,13 @@ else
     # This gives us the configured source files with their full paths relative to the repo root.
     # Example: i18n/src/main/resources/BtcAddresses.properties
     # A robust grep/sed pipeline is used to extract the value, avoiding fragile awk field splitting.
-    mapfile -t configured_sources < <(grep '^[[:space:]]*source_file' "$TX_CONFIG_FILE" | sed -E 's/^[[:space:]]*source_file[[:space:]]*=[[:space:]]*//' | sed 's/[[:space:]]*$//')
+    # - Anchor key, require '=', trim whitespace, strip optional surrounding quotes.
+    mapfile -t configured_sources < <(
+      grep -E '^[[:space:]]*source_file[[:space:]]*=' "$TX_CONFIG_FILE" \
+        | sed -E 's/^[[:space:]]*source_file[[:space:]]*=[[:space:]]*//' \
+        | sed -E 's/^[[:space:]]*"(.*)"[[:space:]]*$/\1/' \
+        | sed 's/[[:space:]]*$//'
+    )
 
     # If no source files are configured in Transifex, we can't perform this check.
     # Log a warning and skip this verification step.
@@ -244,7 +250,9 @@ else
 
         declare -A configured_relative_paths
         for src in "${configured_sources[@]}"; do
-            configured_relative_paths["$src"]=1
+            # Normalize leading ./ in config paths
+            src_norm="${src#./}"
+            configured_relative_paths["$src_norm"]=1
         done
 
         unconfigured_files_found=false
@@ -264,7 +272,11 @@ else
             log "Aborting due to unconfigured source files. Please update the Transifex config at '$TX_CONFIG_FILE' and push the changes." "ERROR"
             exit 1
         fi
-        log "All source files are correctly configured in Transifex." "INFO"
+        if [ "${#actual_sources_full_path[@]}" -gt 0 ]; then
+          log "All source files are correctly configured in Transifex." "INFO"
+        else
+          log "No source files found on disk under '$ABSOLUTE_INPUT_FOLDER'; skipping success message." "DEBUG"
+        fi
     fi
 fi
 

@@ -43,6 +43,8 @@ services:
 volumes:
   target-repo-data:
     name: ${VOLUME_NAME:-target-repo-data}
+    # Uncomment if volume is managed outside this compose project
+    # external: true
 
 # Define the secret for the SSH deploy key.
 # The filename can be controlled via the DEPLOY_KEY_NAME environment variable.
