@@ -7,6 +7,10 @@
 # --- Strict Mode ---
 set -euo pipefail
 
+# Resolve appuser's UID/GID once; allow override via env for edge images.
+APPUSER_UID="${APPUSER_UID:-$(id -u appuser 2>/dev/null || echo 9999)}"
+APPUSER_GID="${APPUSER_GID:-$(id -g appuser 2>/dev/null || echo 9999)}"
+
 # --- Log Function ---
 # Defined at the top to be available for all parts of the script.
 log() {
@@ -15,64 +19,61 @@ log() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] [Entrypoint] [$level] $message"
 }
 
+# --- Unified Helper Functions ---
+
+# Set up SSH host keys for secure git operations.
 setup_ssh() {
     log "Configuring SSH..."
+    mkdir -p /home/appuser/.ssh
 
-    # By default, SSH is configured to fail if the host key does not match the baked-in known_hosts.
-    # On the server, this provides strong protection against man-in-the-middle attacks.
-    # For local development or in environments where the host key might change, this check can be bypassed.
     if [ "${ALLOW_INSECURE_SSH:-false}" = "true" ]; then
-        log "WARNING: ALLOW_INSECURE_SSH is true. Host key verification will use ssh-keyscan at runtime."
-        # This configuration is written to the user's local SSH config, not the system-wide one.
-        mkdir -p /home/appuser/.ssh
+        log "WARNING: ALLOW_INSECURE_SSH is true. Host key verification is disabled." "WARNING"
         echo -e "Host github.com\n\tStrictHostKeyChecking no\n\tUserKnownHostsFile=/dev/null" > /home/appuser/.ssh/config
-        chown -R appuser:appuser /home/appuser/.ssh
-        chmod 700 /home/appuser/.ssh
-        chmod 600 /home/appuser/.ssh/config
     else
-        # Verify that the baked-in known_hosts file exists and is correctly configured.
         if [ ! -r /etc/ssh/ssh_known_hosts ] || ! grep -q "github.com" /etc/ssh/ssh_known_hosts; then
-            log "ERROR: The pinned SSH known_hosts file is missing or does not contain a key for github.com."
-            log "To run in an insecure mode for local development, set the environment variable ALLOW_INSECURE_SSH=true."
+            log "ERROR: The pinned SSH known_hosts file is missing or invalid." "ERROR"
+            log "To run in an insecure mode for development, set ALLOW_INSECURE_SSH=true." "ERROR"
             exit 1
         fi
         log "SSH is configured for strict host key checking using the baked-in known_hosts file."
-        # System-wide SSH config will enforce this automatically if no user config overrides it.
     fi
+
+    # Ensure correct ownership and permissions, but only chown if running as root.
+    if [ "$(id -u)" -eq 0 ]; then
+        chown -R "${APPUSER_UID}:${APPUSER_GID}" /home/appuser/.ssh || log "Warning: unable to chown /home/appuser/.ssh" "WARNING"
+    fi
+    # These chmod operations are safe for appuser to run on its own files.
+    chmod 700 /home/appuser/.ssh
+    chmod 600 /home/appuser/.ssh/config 2>/dev/null || true # Might not exist in secure mode
+    chmod 600 /home/appuser/.ssh/known_hosts 2>/dev/null || true # Might not exist in insecure mode
 }
 
+# Helper function to ensure log directory exists and has correct permissions.
 ensure_logs_dir() {
   local mode="${LOG_DIR_MODE:-0755}"
   mkdir -p /app/logs
-  if find /app/logs -mindepth 1 -maxdepth 1 \( ! -uid "$APPUSER_UID" -o ! -gid "$APPUSER_GID" \) -print -quit | read -r; then
-    chown -R appuser:appuser /app/logs || log "Warning: unable to chown /app/logs; continuing"
+  # Check if ownership is incorrect.
+  if find /app/logs -mindepth 0 -maxdepth 0 \( ! -uid "$APPUSER_UID" -o ! -gid "$APPUSER_GID" \) -print -quit | read -r; then
+    # Only attempt to chown if running as root.
+    if [ "$(id -u)" -eq 0 ]; then
+      chown -R "${APPUSER_UID}:${APPUSER_GID}" /app/logs || log "Warning: unable to chown /app/logs; continuing" "WARNING"
+    fi
   fi
-  chmod "$mode" /app/logs || log "Warning: Could not set permissions on /app/logs. Continuing..."
+  chmod "$mode" /app/logs || log "Warning: Could not set permissions on /app/logs. Continuing..." "WARNING"
 }
 
-# --- Root-Level Execution ---
-# This block runs only if the container is started as root (UID 0).
+# --- Main Execution Logic ---
+# The script acts as a gate:
+# 1. If run as root, it fixes permissions and then re-executes itself as appuser.
+# 2. If run as non-root (appuser), it performs the git operations and runs the main command.
+
 if [ "$(id -u)" -ne 0 ]; then
     # --- appuser Execution Block ---
     log "Starting entrypoint script as user: $(whoami)"
 
-    # Create the log directory if it doesn't exist, and ensure permissions are correct.
-    # This is safe to run as appuser as it only creates/modifies if it has permissions.
-    if [ -d /app/logs ] || mkdir -p /app/logs; then
-        if [ -w /app/logs ]; then
-            LOG_DIR_MODE="${LOG_DIR_MODE:-0755}"
-            if ! [[ "$LOG_DIR_MODE" =~ ^(0?[0-7]{3,4}|[ugoa]*[-+=][rwxXstugo,]+)$ ]]; then
-                log "Warning: invalid LOG_DIR_MODE '$LOG_DIR_MODE' provided; defaulting to 0755" "WARNING"
-                LOG_DIR_MODE="0755"
-            fi
-            chmod "$LOG_DIR_MODE" /app/logs || log "Warning: Could not set permissions on /app/logs. Continuing..." "WARNING"
-        fi
-    fi
-
-    # If running as root (e.g., ALLOW_RUN_AS_ROOT=true in local dev), allow git to operate on /target_repo
-    if [ "$(id -u)" -eq 0 ]; then
-        git config --global --add safe.directory /target_repo || true
-    fi
+    # Ensure logs and SSH are configured correctly before proceeding.
+    ensure_logs_dir
+    setup_ssh
 
     TARGET_REPO_DIR="${TARGET_REPO_DIR:-/target_repo}"
 
@@ -178,49 +179,30 @@ else
 
     # Ensure the home directory for appuser exists and has correct ownership.
     mkdir -p /home/appuser
-    chown appuser:appuser /home/appuser
+    chown "${APPUSER_UID}:${APPUSER_GID}" /home/appuser
 
-    # Helper function to ensure log directory exists and has correct permissions.
-    # This is critical for mounted volumes that might be owned by root on the host.
-    ensure_logs_dir() {
-      local mode="${LOG_DIR_MODE:-0755}"
-      mkdir -p /app/logs
-      # Only chown if the directory is not already owned by appuser.
-      if find /app/logs -mindepth 0 -maxdepth 0 \( ! -uid 9999 -o ! -gid 9999 \) -print -quit | read -r; then
-        chown -R appuser:appuser /app/logs || log "Warning: unable to chown /app/logs; continuing" "WARNING"
-      fi
-      chmod "$mode" /app/logs || log "Warning: Could not set permissions on /app/logs. Continuing..." "WARNING"
-    }
+    # Ensure log directory exists and has correct permissions.
     ensure_logs_dir
 
     # Fix permissions on the target repository if it's a mounted volume
     if [ -d "/target_repo" ]; then
-        chown -R appuser:appuser "/target_repo"
+        chown -R "${APPUSER_UID}:${APPUSER_GID}" "/target_repo"
     fi
 
-    # Set up SSH host keys for secure git operations.
-    setup_ssh() {
-        if [ "${ALLOW_INSECURE_SSH:-false}" = "true" ]; then
-            log "WARNING: ALLOW_INSECURE_SSH is true. Host key verification will use ssh-keyscan at runtime." "WARNING"
-            mkdir -p /home/appuser/.ssh
-            ssh-keyscan -T 10 -H -t ed25519,ecdsa,rsa github.com >> /home/appuser/.ssh/known_hosts
-            chown -R appuser:appuser /home/appuser/.ssh
-        else
-            if [ ! -r /etc/ssh/ssh_known_hosts ]; then
-                log "Error: /etc/ssh/ssh_known_hosts not found. Cannot perform secure git operations." "ERROR"
-                exit 1
-            fi
-            log "SSH is configured for strict host key checking using the baked-in known_hosts file."
-        fi
-    }
+    # Avoid git safety warnings when root later re-executes a git command as appuser
+    # on a directory that root has just owned.
+    git config --global --add safe.directory /target_repo || true
+
+    # Set up SSH. This is done as root to ensure correct ownership of created files.
     setup_ssh
 
     # Attempt to switch to the appuser.
     # If this fails (e.g., on Docker for Mac), check the ALLOW_RUN_AS_ROOT flag.
     log "Permissions fixed. Re-executing as appuser..."
-    log "Debug: Checking appuser details..."
-    id appuser
-    ls -la /home/appuser
+
+    # Set HOME and USER explicitly for gosu to ensure a clean environment for git and other tools.
+    export HOME=/home/appuser
+    export USER=appuser
 
     # Use gosu to drop privileges and re-execute this same script as the appuser.
     # The script will then enter the `if [ "$(id -u)" -ne 0 ]` block.
