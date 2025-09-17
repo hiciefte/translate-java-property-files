@@ -219,6 +219,18 @@ else
         fi
     fi
 
+    # Fix ownership of the .env file if it exists; do not follow symlinks and don't fail hard.
+    if [ -e "/app/docker/.env" ]; then
+        if [ -L "/app/docker/.env" ]; then
+            log "Refusing to chown symlink /app/docker/.env; not following." "WARNING"
+        else
+            chown -h "${APPUSER_UID}:${APPUSER_GID}" "/app/docker/.env" \
+              || log "Warning: unable to chown /app/docker/.env; continuing" "WARNING"
+            chmod 640 "/app/docker/.env" \
+              || log "Warning: unable to chmod /app/docker/.env; continuing" "WARNING"
+        fi
+    fi
+
     # When running as root (ALLOW_RUN_AS_ROOT=true), silence Git ownership warnings for /target_repo.
     if [ "${ALLOW_RUN_AS_ROOT:-false}" = "true" ]; then
       git config --global --add safe.directory /target_repo || true
