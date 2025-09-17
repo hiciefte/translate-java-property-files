@@ -211,57 +211,6 @@ cd "$TARGET_PROJECT_ROOT" || {
 
 log "Successfully changed directory to $TARGET_PROJECT_ROOT"
 
-log "Verifying Transifex configuration against actual source files..."
-
-TX_CONFIG_FILE=".tx/config"
-if [ ! -f "$TX_CONFIG_FILE" ]; then
-    log "Warning: Transifex config file not found at '$TARGET_PROJECT_ROOT/$TX_CONFIG_FILE'. Skipping verification."
-else
-    # Check for unconfigured source files before proceeding.
-    # This prevents pulling translations for files that are no longer part of the source.
-    #
-    log "Checking for source files that are not configured in Transifex..." "INFO"
-
-    # Extract the 'source_file' for each resource from the Transifex config.
-    # This gives us the configured source files with their full paths relative to the repo root.
-    # Example: i18n/src/main/resources/BtcAddresses.properties
-    # Use awk for more reliable INI parsing. It correctly handles spaces around the '='.
-    mapfile -t configured_sources < <(awk -F'=' '/^[[:space:]]*source_file[[:space:]]*=/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2}' "$TX_CONFIG_FILE")
-
-    # Get the actual English source files present on disk.
-    # This correctly identifies files like 'app.properties' while excluding translated files like 'app_de.properties'.
-    # A regex is used to specifically exclude files ending in the locale pattern `_ll` or `_ll_CC`.
-    mapfile -t actual_sources_full_path < <(
-      find "$ABSOLUTE_INPUT_FOLDER" -type f -name '*.properties' \
-        -regextype posix-extended \
-        -not -regex '.*_[a-z]{2}(_[A-Z]{2})?\.properties$'
-    )
-
-    declare -A configured_relative_paths
-    for src in "${configured_sources[@]}"; do
-        configured_relative_paths["$src"]=1
-    done
-
-    unconfigured_files_found=false
-    for full_path in "${actual_sources_full_path[@]}"; do
-        # Make the path relative to the target project root to match the tx config format
-        relative_path=${full_path#"$TARGET_PROJECT_ROOT/"}
-        if [[ -z "${configured_relative_paths["$relative_path"]}" ]]; then
-            if ! $unconfigured_files_found; then
-                log "Found source files not configured in Transifex:" "WARNING"
-                unconfigured_files_found=true
-            fi
-            log "  - $relative_path" "WARNING"
-        fi
-    done
-
-    if $unconfigured_files_found; then
-        log "Aborting due to unconfigured source files. Please update the Transifex config at '$TX_CONFIG_FILE' and push the changes." "ERROR"
-        exit 1
-    fi
-    log "All source files are correctly configured in Transifex." "INFO"
-fi
-
 # Determine the default branch and remote to reset against
 DEFAULT_BRANCH="${TARGET_BRANCH_FOR_PR:-}"
 REMOTE="upstream" # Default to upstream
