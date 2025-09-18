@@ -58,8 +58,10 @@ This is an **AI-powered Java Properties translation service** that automates tra
 - `src/properties_parser.py` - Parses/reassembles Java .properties files
 - `src/translation_validator.py` - Validates placeholder consistency, encoding
 - `src/logging_config.py` - Centralized logging setup
+- `src/app_config.py` - Application configuration loading and management
 
 **Configuration System:**
+- `src/app_config.py` - Configuration loading module with `AppConfig` dataclass
 - `config.yaml` / `docker/config.docker.yaml` - Application settings
 - `glossary.json` - Translation consistency rules (brand terms + required translations)
 - `docker/.env` - Secrets (API keys, repository URLs)
@@ -142,13 +144,24 @@ Input Folder → Archive → translation_queue/ → AI Processing → translated
 - Consider token limits when modifying prompts (`count_tokens()` utility)
 
 **When changing configuration:**
+- Configuration is centralized in `src/app_config.py` with `AppConfig` dataclass
 - Both local (`config.yaml`) and Docker (`docker/config.docker.yaml`) configs exist
 - Docker paths use `/target_repo` and `/app/` prefixes
 - Secrets go in `docker/.env` not committed to repository
+- Use `load_app_config()` function to get typed configuration object
 
 **For new language support:**
-- Add to `LANGUAGE_CODES` and `LANGUAGE_NAME_TO_CODE` mappings
+- Add to `supported_locales` list in config YAML files
 - Add glossary entries in `glossary.json`
 - Test with sample properties files
+
+**Configuration Architecture:**
+- `AppConfig` dataclass provides typed access to all configuration values
+- Environment variables can override config file values (e.g., `REVIEW_MODEL_NAME`)
+- Configuration loading handles .env files, YAML parsing, and OpenAI client creation
+- Logger setup is integrated into configuration loading process
+
+**General project rules:**
 - Use a TDD approach for fixing bugs and implementing new features
 - Make sure to run all python commands in the venv virtual environment
+- Always sign all commits
