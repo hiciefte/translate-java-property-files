@@ -3,6 +3,17 @@
 # Entrypoint script for the Translate Java Property Files service.
 # This script handles initial setup, privilege dropping, and Git repository management.
 #
+# Configuration Environment Variables for Repository Resilience:
+# - REPO_CLEANUP_STRATEGY: auto (default), force, skip
+#   * auto/force: Clean local changes before checkout
+#   * skip: Attempt checkout with existing changes (may fail)
+# - REPO_STASH_CHANGES: true (default), false
+#   * true: Stash local changes before cleanup
+#   * false: Directly perform hard reset without stashing
+# - REPO_PRESERVE_STASH: true (default), false
+#   * true: Keep stash entries for manual recovery
+#   * false: Drop stash after successful checkout
+#
 
 # --- Strict Mode ---
 set -euo pipefail
@@ -180,9 +191,122 @@ if [ "$(id -u)" -ne 0 ]; then
     fi
     log "Using default branch: ${DEFAULT_BRANCH}"
 
+    # Pre-flight repository health check
+    check_repository_health() {
+      local repo_dir="$1"
+
+      if [ ! -d "$repo_dir/.git" ]; then
+        log "Repository health check: No .git directory found, this appears to be a fresh clone"
+        return 0
+      fi
+
+      log "Repository health check: Examining current state..."
+
+      # Check for uncommitted changes
+      local has_changes=false
+      if ! git diff --quiet 2>/dev/null; then
+        log "Repository health check: Modified files detected"
+        has_changes=true
+      fi
+
+      if ! git diff --cached --quiet 2>/dev/null; then
+        log "Repository health check: Staged changes detected"
+        has_changes=true
+      fi
+
+      # Check for untracked files that might interfere
+      local untracked_count
+      untracked_count=$(git ls-files --others --exclude-standard | wc -l)
+      if [ "$untracked_count" -gt 0 ]; then
+        log "Repository health check: $untracked_count untracked files found"
+      fi
+
+      # Check current branch
+      local current_branch
+      current_branch=$(git branch --show-current 2>/dev/null || echo "detached")
+      log "Repository health check: Currently on branch/state: $current_branch"
+
+      # Report overall health
+      if [ "$has_changes" = true ]; then
+        log "Repository health check: Repository has uncommitted changes - cleanup will be performed" "WARNING"
+        return 1
+      else
+        log "Repository health check: Repository is clean"
+        return 0
+      fi
+    }
+
+    # Perform health check
+    check_repository_health "$(pwd)"
+    repo_health_status=$?
+
+    # Configuration options for cleanup strategy
+    REPO_CLEANUP_STRATEGY="${REPO_CLEANUP_STRATEGY:-auto}"  # auto, force, skip
+    REPO_STASH_CHANGES="${REPO_STASH_CHANGES:-true}"       # true, false
+    REPO_PRESERVE_STASH="${REPO_PRESERVE_STASH:-true}"     # true, false
+
     log "Checking out '${DEFAULT_BRANCH}' and resetting to match '${REMOTE}/${DEFAULT_BRANCH}'..."
     if git rev-parse --verify --quiet "refs/remotes/${REMOTE}/${DEFAULT_BRANCH}" >/dev/null; then
-      git checkout -B "$DEFAULT_BRANCH" "${REMOTE}/${DEFAULT_BRANCH}"
+      # Check for local changes that might interfere with checkout
+      if ! git diff --quiet || ! git diff --cached --quiet; then
+        if [ "$REPO_CLEANUP_STRATEGY" = "skip" ]; then
+          log "Local changes detected but REPO_CLEANUP_STRATEGY=skip. Attempting checkout as-is..." "WARNING"
+        elif [ "$REPO_CLEANUP_STRATEGY" = "force" ] || [ "$REPO_CLEANUP_STRATEGY" = "auto" ]; then
+          log "Local changes detected in repository. Performing cleanup for resilient recovery..." "WARNING"
+
+          # Log what changes we're about to discard for debugging
+          if git diff --quiet; then
+            log "Staged changes found:"
+            git diff --cached --name-only | head -10 | while read -r file; do
+              log "  - $file (staged)"
+            done
+          else
+            log "Modified files found:"
+            git diff --name-only | head -10 | while read -r file; do
+              log "  - $file (modified)"
+            done
+          fi
+
+          # Save current state for potential recovery (but don't fail if stash fails)
+          if [ "$REPO_STASH_CHANGES" = "true" ]; then
+            STASH_MSG="Auto-stash before translation pipeline reset - $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+            if git stash push -u -m "$STASH_MSG" 2>/dev/null; then
+              log "Local changes stashed as: $STASH_MSG"
+              if [ "$REPO_PRESERVE_STASH" = "false" ]; then
+                log "REPO_PRESERVE_STASH=false, stash will be dropped after successful checkout"
+              fi
+            else
+              log "Could not stash changes, proceeding with hard reset" "WARNING"
+            fi
+          else
+            log "REPO_STASH_CHANGES=false, proceeding directly to hard reset" "WARNING"
+          fi
+
+          # Force reset to clean state
+          git reset --hard HEAD 2>/dev/null || true
+          git clean -fd 2>/dev/null || true
+        fi
+      fi
+
+      # Now attempt the checkout - should succeed after cleanup
+      if ! git checkout -B "$DEFAULT_BRANCH" "${REMOTE}/${DEFAULT_BRANCH}"; then
+        log "Error: Failed to checkout '${DEFAULT_BRANCH}' even after cleanup. Repository may be in inconsistent state." "ERROR" >&2
+        log "Manual intervention may be required. Check git status in /target_repo" "ERROR" >&2
+        exit 1
+      fi
+
+      log "Successfully reset repository to clean state: ${REMOTE}/${DEFAULT_BRANCH}"
+
+      # Clean up stash if requested
+      if [ "$REPO_PRESERVE_STASH" = "false" ] && [ "$REPO_STASH_CHANGES" = "true" ]; then
+        if git stash list | grep -q "Auto-stash before translation pipeline reset"; then
+          if git stash drop "stash@{0}" 2>/dev/null; then
+            log "Temporary stash dropped as requested"
+          else
+            log "Could not drop stash, leaving for manual cleanup" "WARNING"
+          fi
+        fi
+      fi
     else
       log "Error: remote branch '${REMOTE}/${DEFAULT_BRANCH}' not found." "ERROR" >&2
       exit 1

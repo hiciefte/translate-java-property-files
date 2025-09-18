@@ -43,3 +43,7 @@ docker/docker-compose.override.yml
 docker/docker-compose.override.yaml
 docker/docker-compose.override.*.yml
 docker/docker-compose.override.*.yaml
+/docs/llm/
+/config.yaml
+/docker/config.docker.mobile.yaml
+/config-mobile.yaml
