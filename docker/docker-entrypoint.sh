@@ -215,10 +215,10 @@ if [ "$(id -u)" -ne 0 ]; then
       fi
 
       # Check for untracked files that might interfere
-      local untracked_count
-      untracked_count=$(git ls-files --others --exclude-standard | wc -l)
-      if [ "$untracked_count" -gt 0 ]; then
-        log "Repository health check: $untracked_count untracked files found"
+      if git ls-files --others --exclude-standard | head -1 | grep -q .; then
+        log "Repository health check: Untracked files found"
+      else
+        log "Repository health check: No untracked files"
       fi
 
       # Check current branch
@@ -237,8 +237,11 @@ if [ "$(id -u)" -ne 0 ]; then
     }
 
     # Perform health check
-    check_repository_health "$(pwd)"
-    repo_health_status=$?
+    if check_repository_health "$(pwd)"; then
+        repo_health_status=0
+    else
+        repo_health_status=1
+    fi
 
     # Configuration options for cleanup strategy
     REPO_CLEANUP_STRATEGY="${REPO_CLEANUP_STRATEGY:-auto}"  # auto, force, skip
@@ -248,23 +251,18 @@ if [ "$(id -u)" -ne 0 ]; then
     log "Checking out '${DEFAULT_BRANCH}' and resetting to match '${REMOTE}/${DEFAULT_BRANCH}'..."
     if git rev-parse --verify --quiet "refs/remotes/${REMOTE}/${DEFAULT_BRANCH}" >/dev/null; then
       # Check for local changes that might interfere with checkout
-      if ! git diff --quiet || ! git diff --cached --quiet; then
+      if ! timeout 30 git diff --quiet 2>/dev/null || ! timeout 30 git diff --cached --quiet 2>/dev/null; then
         if [ "$REPO_CLEANUP_STRATEGY" = "skip" ]; then
           log "Local changes detected but REPO_CLEANUP_STRATEGY=skip. Attempting checkout as-is..." "WARNING"
         elif [ "$REPO_CLEANUP_STRATEGY" = "force" ] || [ "$REPO_CLEANUP_STRATEGY" = "auto" ]; then
           log "Local changes detected in repository. Performing cleanup for resilient recovery..." "WARNING"
 
           # Log what changes we're about to discard for debugging
-          if git diff --quiet; then
-            log "Staged changes found:"
-            git diff --cached --name-only | head -10 | while read -r file; do
-              log "  - $file (staged)"
-            done
-          else
-            log "Modified files found:"
-            git diff --name-only | head -10 | while read -r file; do
-              log "  - $file (modified)"
-            done
+          if ! git diff --quiet; then
+            log "Modified files found (count: $(git diff --name-only | wc -l))"
+          fi
+          if ! git diff --cached --quiet; then
+            log "Staged changes found (count: $(git diff --cached --name-only | wc -l))"
           fi
 
           # Save current state for potential recovery (but don't fail if stash fails)
