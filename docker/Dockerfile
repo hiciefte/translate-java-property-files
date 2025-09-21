@@ -4,6 +4,7 @@ FROM ubuntu:24.04
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG SKIP_GPG_IMPORT=false
+ARG SKIP_DEPLOY_KEY=false
 
 ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
@@ -122,14 +123,23 @@ RUN mkdir -p /home/appuser/.ssh && \
 
 # Mount the secret key file and copy it into the .ssh directory.
 # This method ensures the key is not stored in the image layers.
-# Then, set the correct permissions for the key and create an SSH config.
-RUN --mount=type=secret,id=deploy_key,target=/tmp/deploy_key \
-    cp /tmp/deploy_key /home/appuser/.ssh/deploy_key && \
-    chmod 600 /home/appuser/.ssh/deploy_key && \
-    chown -R appuser:appuser /home/appuser/.ssh && \
-    echo -e "Host github.com\n\tIdentityFile /home/appuser/.ssh/deploy_key\n\tIdentitiesOnly yes" > /home/appuser/.ssh/config && \
-    chown appuser:appuser /home/appuser/.ssh/config && \
-    chmod 600 /home/appuser/.ssh/config
+# This step is skipped in CI builds by checking the SKIP_DEPLOY_KEY build argument.
+RUN --mount=type=secret,id=deploy_key,target=/tmp/deploy_key,required=false \
+    if [ "$SKIP_DEPLOY_KEY" = "true" ]; then \
+      echo "Skipping deploy key setup for CI build."; \
+    else \
+      echo "Setting up deploy key for production build..." && \
+      if [ -f /tmp/deploy_key ]; then \
+        cp /tmp/deploy_key /home/appuser/.ssh/deploy_key && \
+        chmod 600 /home/appuser/.ssh/deploy_key && \
+        chown -R appuser:appuser /home/appuser/.ssh && \
+        echo -e "Host github.com\n\tIdentityFile /home/appuser/.ssh/deploy_key\n\tIdentitiesOnly yes" > /home/appuser/.ssh/config && \
+        chown appuser:appuser /home/appuser/.ssh/config && \
+        chmod 600 /home/appuser/.ssh/config; \
+      else \
+        echo "Warning: Deploy key not found, skipping SSH setup."; \
+      fi; \
+    fi
 
 WORKDIR /app
 
