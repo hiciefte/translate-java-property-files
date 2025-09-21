@@ -63,10 +63,11 @@ class TestLoadAppConfig:
 
         with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config))):
             with patch("os.path.exists", return_value=True):
-                with patch("src.logging_config.setup_logger") as mock_logger:
-                    mock_logger.return_value = MagicMock()
-                    with patch.dict(os.environ, {}, clear=True):
-                        config = load_app_config()
+                with patch("os.access", return_value=True):
+                    with patch("src.logging_config.setup_logger") as mock_logger:
+                        mock_logger.return_value = MagicMock()
+                        with patch.dict(os.environ, {}, clear=True):
+                            config = load_app_config()
 
         assert config.target_project_root == "/custom/target"
         assert config.input_folder == "/custom/input"
@@ -95,17 +96,18 @@ class TestLoadAppConfig:
 
     def test_load_config_with_environment_overrides(self):
         """Test that environment variables override config file values."""
-        mock_config = {"model_name": "gpt-4"}
+        mock_config = {"model_name": "gpt-4", "dry_run": True}
 
         with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config))):
             with patch("os.path.exists", return_value=True):
-                with patch("src.logging_config.setup_logger") as mock_logger:
-                    mock_logger.return_value = MagicMock()
-                    with patch.dict(os.environ, {
-                        "REVIEW_MODEL_NAME": "gpt-4o",
-                        "HOLISTIC_REVIEW_CHUNK_SIZE": "100"
-                    }):
-                        config = load_app_config()
+                with patch("os.access", return_value=True):
+                    with patch("src.logging_config.setup_logger") as mock_logger:
+                        mock_logger.return_value = MagicMock()
+                        with patch.dict(os.environ, {
+                            "REVIEW_MODEL_NAME": "gpt-4o",
+                            "HOLISTIC_REVIEW_CHUNK_SIZE": "100"
+                        }):
+                            config = load_app_config()
 
         assert config.model_name == "gpt-4"  # From config file
         assert config.review_model_name == "gpt-4o"  # From environment
@@ -134,15 +136,16 @@ class TestLoadAppConfig:
 
         with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config))):
             with patch("os.path.exists", return_value=True):
-                with patch("src.logging_config.setup_logger") as mock_logger:
-                    mock_logger.return_value = MagicMock()
-                    with patch("src.app_config.AsyncOpenAI") as mock_openai:
-                        mock_client = MagicMock()
-                        mock_openai.return_value = mock_client
-                        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-                            config = load_app_config()
+                with patch("os.access", return_value=True):
+                    with patch("src.logging_config.setup_logger") as mock_logger:
+                        mock_logger.return_value = MagicMock()
+                        with patch("src.app_config.AsyncOpenAI") as mock_openai:
+                            mock_client = MagicMock()
+                            mock_openai.return_value = mock_client
+                            with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test-key"}):
+                                config = load_app_config()
 
-        mock_openai.assert_called_once_with(api_key="test-key")
+        mock_openai.assert_called_once_with(api_key="sk-test-key")
         assert config.openai_client == mock_client
 
     def test_openai_client_none_in_dry_run(self):
@@ -184,10 +187,11 @@ class TestLoadAppConfig:
 
         with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config))):
             with patch("os.path.exists", return_value=True):
-                with patch("src.logging_config.setup_logger") as mock_logger:
-                    mock_logger.return_value = MagicMock()
-                    with patch.dict(os.environ, {}, clear=True):
-                        config = load_app_config()
+                with patch("os.access", return_value=True):
+                    with patch("src.logging_config.setup_logger") as mock_logger:
+                        mock_logger.return_value = MagicMock()
+                        with patch.dict(os.environ, {}, clear=True):
+                            config = load_app_config()
 
         assert "de" in config.precomputed_style_rules_text
         assert "German" in config.precomputed_style_rules_text["de"]
