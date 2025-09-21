@@ -1,9 +1,6 @@
 """Unit tests for the app_config module."""
-import json
 import os
-import tempfile
 from unittest.mock import patch, mock_open, MagicMock
-from typing import Dict, Any
 
 import pytest
 import yaml
@@ -126,7 +123,7 @@ class TestLoadAppConfig:
                     with patch("src.logging_config.setup_logger") as mock_logger:
                         mock_logger.return_value = MagicMock()
                         with patch.dict(os.environ, {}, clear=True):
-                            config = load_app_config()
+                            load_app_config()
 
                 # Should have called load_dotenv
                 mock_load_dotenv.assert_called_once()
@@ -199,13 +196,14 @@ class TestLoadAppConfig:
 
     def test_custom_config_file_path(self):
         """Test using custom config file path via environment variable."""
-        mock_config = {"model_name": "custom-model"}
+        mock_config = {"model_name": "custom-model", "dry_run": True}
 
         with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config))):
             with patch("os.path.exists", return_value=True):
-                with patch("src.logging_config.setup_logger") as mock_logger:
-                    mock_logger.return_value = MagicMock()
-                    with patch.dict(os.environ, {"TRANSLATOR_CONFIG_FILE": "/custom/config.yaml"}):
-                        config = load_app_config()
+                with patch("os.access", return_value=True):
+                    with patch("src.logging_config.setup_logger") as mock_logger:
+                        mock_logger.return_value = MagicMock()
+                        with patch.dict(os.environ, {"TRANSLATOR_CONFIG_FILE": "/custom/config.yaml"}):
+                            config = load_app_config()
 
         assert config.model_name == "custom-model"

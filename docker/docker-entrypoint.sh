@@ -265,19 +265,34 @@ if [ "$(id -u)" -ne 0 ]; then
             log "Staged changes found (count: $(git diff --cached --name-only | wc -l))"
           fi
 
-          # Save current state for potential recovery (but don't fail if stash fails)
+          # Save current state for potential recovery with enhanced error handling
           if [ "$REPO_STASH_CHANGES" = "true" ]; then
             STASH_MSG="Auto-stash before translation pipeline reset - $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
-            if git stash push -u -m "$STASH_MSG" 2>/dev/null; then
-              log "Local changes stashed as: $STASH_MSG"
-              if [ "$REPO_PRESERVE_STASH" = "false" ]; then
-                log "REPO_PRESERVE_STASH=false, stash will be dropped after successful checkout"
-              fi
+            log "Attempting to stash local changes for recovery..."
+
+            # Check if there are actually changes to stash
+            if git diff --quiet && git diff --cached --quiet; then
+              log "No changes to stash after all, proceeding with cleanup"
             else
-              log "Could not stash changes, proceeding with hard reset" "WARNING"
+              # Attempt stash with explicit error capture
+              if stash_output=$(git stash push -u -m "$STASH_MSG" 2>&1); then
+                log "Local changes stashed successfully: $STASH_MSG"
+                # Verify stash was created
+                if git stash list | grep -q "Auto-stash before translation pipeline reset"; then
+                  log "Stash verified in stash list"
+                  if [ "$REPO_PRESERVE_STASH" = "false" ]; then
+                    log "REPO_PRESERVE_STASH=false, stash will be dropped after successful checkout"
+                  fi
+                else
+                  log "Warning: Stash command succeeded but stash not found in list" "WARNING"
+                fi
+              else
+                log "Stash failed with output: $stash_output" "WARNING"
+                log "Proceeding with hard reset (changes will be lost)" "WARNING"
+              fi
             fi
           else
-            log "REPO_STASH_CHANGES=false, proceeding directly to hard reset" "WARNING"
+            log "REPO_STASH_CHANGES=false, proceeding directly to hard reset (changes will be lost)" "WARNING"
           fi
 
           # Force reset to clean state
@@ -295,14 +310,24 @@ if [ "$(id -u)" -ne 0 ]; then
 
       log "Successfully reset repository to clean state: ${REMOTE}/${DEFAULT_BRANCH}"
 
-      # Clean up stash if requested
+      # Clean up stash if requested with better error handling
       if [ "$REPO_PRESERVE_STASH" = "false" ] && [ "$REPO_STASH_CHANGES" = "true" ]; then
-        if git stash list | grep -q "Auto-stash before translation pipeline reset"; then
-          if git stash drop "stash@{0}" 2>/dev/null; then
-            log "Temporary stash dropped as requested"
+        log "Checking for temporary stash cleanup..."
+        if stash_entry=$(git stash list | grep "Auto-stash before translation pipeline reset" | head -1); then
+          stash_id=$(echo "$stash_entry" | cut -d: -f1)
+          log "Found temporary stash: $stash_id"
+          if git stash drop "$stash_id" 2>/dev/null; then
+            log "Temporary stash '$stash_id' dropped successfully"
           else
-            log "Could not drop stash, leaving for manual cleanup" "WARNING"
+            log "Could not drop stash '$stash_id', leaving for manual cleanup" "WARNING"
+            log "To manually clean up, run: git stash drop $stash_id" "INFO"
           fi
+        else
+          log "No temporary stash found to clean up"
+        fi
+      elif [ "$REPO_PRESERVE_STASH" = "true" ] && [ "$REPO_STASH_CHANGES" = "true" ]; then
+        if git stash list | grep -q "Auto-stash before translation pipeline reset"; then
+          log "Stash preserved for manual recovery. Use 'git stash list' and 'git stash pop' to recover changes if needed."
         fi
       fi
     else

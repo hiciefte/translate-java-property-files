@@ -1,5 +1,4 @@
 """Application configuration module for the translation service."""
-import json
 import logging
 import os
 import sys
@@ -68,21 +67,51 @@ def _load_dotenv_files(project_root: str) -> None:
 
 
 def _load_yaml_config(project_root: str) -> Dict[str, Any]:
-    """Load YAML configuration file."""
+    """Load YAML configuration file with enhanced error handling and path resolution."""
     # If TRANSLATOR_CONFIG_FILE is set (potentially from .env), use it; otherwise, default to 'config.yaml'.
     default_config_path = os.path.join(project_root, 'config.yaml')
     config_file = os.environ.get('TRANSLATOR_CONFIG_FILE', default_config_path)
 
+    # Ensure we have an absolute path for better error reporting
+    if not os.path.isabs(config_file):
+        config_file = os.path.abspath(config_file)
+
     config = {}
     try:
+        # Check if file exists and is readable
+        if not os.path.exists(config_file):
+            print(f"Warning: Configuration file '{config_file}' not found. Using default configuration.",
+                  file=sys.stderr)
+            print(f"Tip: Create a config.yaml file in '{project_root}' or set TRANSLATOR_CONFIG_FILE environment variable.",
+                  file=sys.stderr)
+            return config
+
+        if not os.access(config_file, os.R_OK):
+            print(f"Error: Configuration file '{config_file}' exists but is not readable. Check file permissions.",
+                  file=sys.stderr)
+            return config
+
         with open(config_file, 'r', encoding='utf-8') as config_file_stream:
             loaded_config = yaml.safe_load(config_file_stream)
-            if loaded_config:
+            if loaded_config is None:
+                print(f"Warning: Configuration file '{config_file}' is empty. Using default configuration.",
+                      file=sys.stderr)
+            elif isinstance(loaded_config, dict):
                 config = loaded_config
-    except (FileNotFoundError, yaml.YAMLError, OSError) as e:
-        # Use print here as logger is not set up yet.
-        print(f"Warning: Could not load or parse config file '{config_file}'. Using defaults. Error: {e}",
-              file=sys.stderr)
+                print(f"Successfully loaded configuration from: {config_file}", file=sys.stderr)
+            else:
+                print(f"Error: Configuration file '{config_file}' must contain a YAML dictionary. Using defaults.",
+                      file=sys.stderr)
+
+    except yaml.YAMLError as e:
+        print(f"Error: Invalid YAML in configuration file '{config_file}': {e}", file=sys.stderr)
+        print("Please check your YAML syntax. Using default configuration.", file=sys.stderr)
+    except (OSError, IOError) as e:
+        print(f"Error: Could not read configuration file '{config_file}': {e}", file=sys.stderr)
+        print("Using default configuration.", file=sys.stderr)
+    except Exception as e:
+        print(f"Unexpected error loading configuration file '{config_file}': {e}", file=sys.stderr)
+        print("Using default configuration.", file=sys.stderr)
 
     return config
 
@@ -144,16 +173,30 @@ def _precompute_style_rules(style_rules: Dict[str, List[str]], language_codes: D
 
 
 def _create_openai_client(dry_run: bool, logger: logging.Logger) -> Optional[AsyncOpenAI]:
-    """Create OpenAI client if not in dry run mode."""
+    """Create OpenAI client if not in dry run mode with enhanced error handling."""
     if dry_run:
+        logger.info("Running in dry-run mode, OpenAI client will not be initialized")
         return None
 
     api_key_from_env = os.environ.get('OPENAI_API_KEY')
     if not api_key_from_env:
-        logger.critical("CRITICAL: OPENAI_API_KEY not found. Set it or enable dry_run in config.")
+        logger.critical("CRITICAL: OPENAI_API_KEY environment variable not found.")
+        logger.critical("Please set OPENAI_API_KEY or enable dry_run mode in configuration.")
+        logger.critical("For dry-run mode, set 'dry_run: true' in your config file.")
         sys.exit(1)
 
-    return AsyncOpenAI(api_key=api_key_from_env)
+    # Validate API key format
+    if not api_key_from_env.startswith('sk-'):
+        logger.warning("Warning: OPENAI_API_KEY does not start with 'sk-'. This may be invalid.")
+
+    try:
+        client = AsyncOpenAI(api_key=api_key_from_env)
+        logger.info("OpenAI client initialized successfully")
+        return client
+    except Exception as e:
+        logger.critical("Failed to initialize OpenAI client: %s", str(e))
+        logger.critical("Please check your OPENAI_API_KEY and network connectivity.")
+        sys.exit(1)
 
 
 def load_app_config() -> AppConfig:
