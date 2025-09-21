@@ -121,11 +121,12 @@ class TestLoadAppConfig:
             with patch("os.path.exists") as mock_exists:
                 # Mock .env file exists in project root
                 mock_exists.side_effect = lambda path: path.endswith("/.env") or path.endswith("config.yaml")
-                with patch("src.app_config.load_dotenv") as mock_load_dotenv:
-                    with patch("src.logging_config.setup_logger") as mock_logger:
-                        mock_logger.return_value = MagicMock()
-                        with patch.dict(os.environ, {}, clear=True):
-                            load_app_config()
+                with patch("os.access", return_value=True):
+                    with patch("src.app_config.load_dotenv") as mock_load_dotenv:
+                        with patch("src.logging_config.setup_logger") as mock_logger:
+                            mock_logger.return_value = MagicMock()
+                            with patch.dict(os.environ, {}, clear=True):
+                                load_app_config()
 
                 # Should have called load_dotenv
                 mock_load_dotenv.assert_called_once()
@@ -154,10 +155,11 @@ class TestLoadAppConfig:
 
         with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config))):
             with patch("os.path.exists", return_value=True):
-                with patch("src.logging_config.setup_logger") as mock_logger:
-                    mock_logger.return_value = MagicMock()
-                    with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
-                        config = load_app_config()
+                with patch("os.access", return_value=True):
+                    with patch("src.logging_config.setup_logger") as mock_logger:
+                        mock_logger.return_value = MagicMock()
+                        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
+                            config = load_app_config()
 
         assert config.openai_client is None
 
