@@ -11,7 +11,7 @@ import sys
 import tempfile
 import uuid
 from email.utils import parsedate_to_datetime
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional
 
 # --- Python Version Check ---
 # This script requires Python 3.11 or newer for features like modern asyncio.
@@ -23,9 +23,7 @@ if sys.version_info < (3, 11):
 
 import jsonschema
 import tiktoken
-import yaml
 from aiolimiter import AsyncLimiter
-from dotenv import load_dotenv
 from openai import (
     APIConnectionError,
     APIStatusError,
@@ -33,14 +31,13 @@ from openai import (
     APITimeoutError,
     OpenAIError
 )
-from openai import AsyncOpenAI
 from openai.types.chat import (
     ChatCompletionSystemMessageParam,
     ChatCompletionUserMessageParam
 )
 from tqdm.asyncio import tqdm
 
-from src.logging_config import setup_logger
+from src.app_config import load_app_config
 from src.properties_parser import parse_properties_file, reassemble_file
 from src.translation_validator import (
     check_placeholder_parity,
@@ -49,82 +46,11 @@ from src.translation_validator import (
 )
 
 # --- Constants and Globals ---
+# Load application configuration
+config = load_app_config()
+
 # Create a dedicated logger for this script to avoid conflicts with the root logger.
 logger = logging.getLogger("translation_script")
-
-# Define PROJECT_ROOT_DIR once at the top level so it can be used by configuration loading.
-SCRIPT_REAL_PATH = os.path.realpath(__file__)
-SCRIPT_DIR = os.path.dirname(SCRIPT_REAL_PATH)
-PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir))
-
-
-# --- Configuration Loading ---
-def load_configuration() -> Dict[str, Any]:
-    """
-    Loads the configuration from a YAML file.
-    Sets up logging based on the configuration.
-    """
-    # --- .env Loading ---
-    dotenv_path_project_root = os.path.join(PROJECT_ROOT_DIR, '.env')
-    dotenv_path_docker_dir = os.path.join(PROJECT_ROOT_DIR, 'docker', '.env')
-
-    if os.path.exists(dotenv_path_project_root):
-        load_dotenv(dotenv_path_project_root)
-    elif os.path.exists(dotenv_path_docker_dir):
-        load_dotenv(dotenv_path_docker_dir)
-    # --- End .env Loading ---
-
-    # If TRANSLATOR_CONFIG_FILE is set (potentially from .env), use it; otherwise, default to 'config.yaml'.
-    _default_config_path = os.path.join(PROJECT_ROOT_DIR, 'config.yaml')
-    CONFIG_FILE = os.environ.get('TRANSLATOR_CONFIG_FILE', _default_config_path)
-
-    config = {}
-    try:
-        with open(CONFIG_FILE, 'r', encoding='utf-8') as config_file_stream:
-            loaded_config = yaml.safe_load(config_file_stream)
-            if loaded_config:
-                config = loaded_config
-    except (FileNotFoundError, yaml.YAMLError, OSError) as e:
-        # Use print here as logger is not set up yet.
-        print(f"Warning: Could not load or parse config file '{CONFIG_FILE}'. Using defaults. Error: {e}",
-              file=sys.stderr)
-
-    # --- Setup Logger ---
-    # We can now use our refactored setup function.
-    global logger
-    log_config = config.get('logging', {})
-    log_level_str = log_config.get('log_level', 'INFO').upper()
-    log_file_path = log_config.get('log_file_path', 'logs/translation_log.log')
-    log_to_console = log_config.get('log_to_console', True)
-    logger = setup_logger(log_level_str, log_file_path, log_to_console)
-    # --- End Logger Setup ---
-
-    # Now that logging is configured, we can log the .env status
-    if os.path.exists(dotenv_path_project_root):
-        logger.info("Loaded environment variables from: %s", dotenv_path_project_root)
-    elif os.path.exists(dotenv_path_docker_dir):
-        logger.info("Loaded environment variables from: %s", dotenv_path_docker_dir)
-    else:
-        logger.info(
-            "No .env file found in project root ('%s') or in docker/ ('%s'). Relying on system environment variables if any.",
-            dotenv_path_project_root,
-            dotenv_path_docker_dir
-        )
-    return config
-
-
-# --- Load Config and Set Globals ---
-config = load_configuration()
-
-# A chunk size for the number of keys to be sent in a single
-# holistic review API call. This is a safeguard against "request too large"
-# token limit errors from the OpenAI API.
-# It can be configured in config.yaml and overridden by an environment variable.
-_default_chunk_size = config.get('holistic_review_chunk_size', 75)
-HOLISTIC_REVIEW_CHUNK_SIZE = int(os.environ.get(
-    "HOLISTIC_REVIEW_CHUNK_SIZE",
-    _default_chunk_size
-))
 
 # Define the expected JSON schema for the AI's response in the holistic review.
 # This ensures that the AI returns a dictionary where every value is a string.
@@ -136,75 +62,26 @@ LOCALIZATION_SCHEMA = {
     "additionalProperties": False
 }
 
-# Dry run configuration (if True, files won't be moved/copied, etc.)
-DRY_RUN = config.get('dry_run', False)
-
-# Initialize the OpenAI client with your API key
-api_key_from_env = os.environ.get('OPENAI_API_KEY')
-if not api_key_from_env and not DRY_RUN:
-    logger.critical("CRITICAL: OPENAI_API_KEY not found. Set it or enable dry_run in config.")
-    sys.exit(1)
-client = AsyncOpenAI(api_key=api_key_from_env) if not DRY_RUN else None
-
-# Configuration Parameters (now using the 'config' dictionary loaded above)
-# Defaults are provided in .get() for robustness if config file or keys are missing.
-REPO_ROOT = config.get('target_project_root', '/path/to/default/repo/root')
-INPUT_FOLDER = config.get('input_folder', '/path/to/default/input_folder')
-GLOSSARY_FILE_PATH = config.get('glossary_file_path', 'glossary.json')
-MODEL_NAME = config.get('model_name', 'gpt-4')
-REVIEW_MODEL_NAME = os.environ.get('REVIEW_MODEL_NAME', config.get('review_model_name', MODEL_NAME))
-
-# Decide maximum tokens based on model name or custom logic
-MAX_MODEL_TOKENS = 4000  # You can modify this if needed
-
-# Define the translation queue folders
-# Use the system's temporary directory for transient data
-TEMP_DIR = tempfile.gettempdir()  # This will be /tmp inside the container
-
-_translation_queue_name = config.get('translation_queue_folder', 'translation_queue')
-_translated_queue_name = config.get('translated_queue_folder', 'translated_queue')
-
-TRANSLATION_QUEUE_FOLDER = os.path.join(TEMP_DIR, _translation_queue_name)
-TRANSLATED_QUEUE_FOLDER = os.path.join(TEMP_DIR, _translated_queue_name)
-PRESERVE_QUEUES_FOR_DEBUG = config.get('preserve_queues_for_debug', False)
-
-# ------------------------------------------------------------------------------
-# 1) Remove the LanguageCode Enum and any hard-coded dictionaries
-#    Instead, load the supported locales from config.yaml
-# ------------------------------------------------------------------------------
-locales_list = config.get('supported_locales', [])
-LANGUAGE_CODES: Dict[str, str] = {}
-NAME_TO_CODE: Dict[str, str] = {}
-
-# 2) Build dictionaries from the "supported_locales" list in config.yaml
-for locale in locales_list:
-    code = locale.get('code')
-    name = locale.get('name')
-    if code and name:
-        LANGUAGE_CODES[code] = name
-        NAME_TO_CODE[name.lower()] = code
-
-# Concurrency configuration
-MAX_CONCURRENT_API_CALLS = config.get('max_concurrent_api_calls', 1)
-
-# (Optional) Load language-specific style rules
-STYLE_RULES = config.get('style_rules', {})
-
-# Pre-compute formatted style rules text for each language to avoid redundant processing.
-# This dictionary will map a language code (e.g., 'de') to a formatted string.
-PRECOMPUTED_STYLE_RULES_TEXT: Dict[str, str] = {}
-for code, rules in STYLE_RULES.items():
-    if rules:
-        language_name = LANGUAGE_CODES.get(code, code)
-        rules_list = "\n".join([f"- {rule}" for rule in rules])
-        PRECOMPUTED_STYLE_RULES_TEXT[
-            code] = f"**Language-Specific Quality Checklist ({language_name})**:\n{rules_list}"
-    else:
-        PRECOMPUTED_STYLE_RULES_TEXT[code] = ""
-
-# (Optional) Load brand/technical glossary
-BRAND_GLOSSARY = config.get('brand_technical_glossary', ['MuSig', 'Bisq', 'Lightning', 'I2P', 'Tor'])
-
+# Extract configuration values for convenience
+PROJECT_ROOT_DIR = config.project_root
+REPO_ROOT = config.target_project_root
+INPUT_FOLDER = config.input_folder
+GLOSSARY_FILE_PATH = config.glossary_file_path
+MODEL_NAME = config.model_name
+REVIEW_MODEL_NAME = config.review_model_name
+MAX_MODEL_TOKENS = config.max_model_tokens
+DRY_RUN = config.dry_run
+HOLISTIC_REVIEW_CHUNK_SIZE = config.holistic_review_chunk_size
+MAX_CONCURRENT_API_CALLS = config.max_concurrent_api_calls
+LANGUAGE_CODES = config.language_codes
+NAME_TO_CODE = config.name_to_code
+STYLE_RULES = config.style_rules
+PRECOMPUTED_STYLE_RULES_TEXT = config.precomputed_style_rules_text
+BRAND_GLOSSARY = config.brand_glossary
+TRANSLATION_QUEUE_FOLDER = config.translation_queue_folder
+TRANSLATED_QUEUE_FOLDER = config.translated_queue_folder
+PRESERVE_QUEUES_FOR_DEBUG = config.preserve_queues_for_debug
+client = config.openai_client
 
 # --- End Config and Globals ---
 
@@ -732,6 +609,10 @@ async def translate_text_async(
         logger.info(f"[Dry Run] Skipping actual translation for key '{key}'. Returning original text.")
         return index, text
 
+    if client is None:
+        logger.error("OpenAI client is None. Cannot proceed with translation.")
+        return index, text
+
     async with semaphore, rate_limiter:
         # 3) Use language_name_to_code instead of an Enum
         language_code = language_name_to_code(target_language)
@@ -931,6 +812,10 @@ async def holistic_review_async(
     if DRY_RUN:
         logger.info("[Dry Run] Skipping holistic review API call.")
         # Return an empty dictionary to simulate a successful review that made no changes.
+        return {}
+
+    if client is None:
+        logger.error("OpenAI client is None. Cannot proceed with holistic review.")
         return {}
 
     async with semaphore, rate_limiter:

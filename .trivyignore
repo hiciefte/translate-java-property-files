@@ -63,3 +63,12 @@ CVE-2025-22868
 # Added: 2025-09-04
 # Revisit by: 2025-10-15
 CVE-2025-47907
+
+# CVE-2025-47906: Go os/exec.LookPath PATH environment variable handling vulnerability.
+# Affects: yq (v1.22.4), tx (v1.16.15), gosu (v1.18.2) - all Go binaries
+# Rationale: Low risk in our containerized environment with controlled PATH and no user input to LookPath.
+# The affected binaries are system utilities used in controlled contexts, not user-facing components.
+# Recent CVE (Sep 2025) - waiting for vendor updates to Go stdlib used in these binaries.
+# Added: 2025-09-21
+# Revisit by: 2025-11-15
+CVE-2025-47906

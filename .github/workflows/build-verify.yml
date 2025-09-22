@@ -76,9 +76,8 @@ jobs:
           tags: translator-app:ci-${{ github.sha }}
           build-args: |
             SKIP_GPG_IMPORT=true
+            SKIP_DEPLOY_KEY=true
             GPG_KEY_FINGERPRINT_FOR_TRUST=DUMMY_FINGERPRINT_FOR_CI
-          secrets: |
-            ${{ secrets.DEPLOY_KEY != '' && format('deploy_key={0}', secrets.DEPLOY_KEY) || '' }}
 
       - name: Display Docker Image Info
         run: docker images

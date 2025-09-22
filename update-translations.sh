@@ -65,6 +65,17 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Send a heartbeat ping to the health check URL if it is configured
+send_heartbeat_if_configured() {
+    if [ -n "${HEALTHCHECK_URL:-}" ]; then
+        log "Sending heartbeat to health check URL..."
+        # Use curl with options to fail silently and handle connection timeouts
+        curl -fsS --retry 3 --max-time 10 "$HEALTHCHECK_URL" > /dev/null || log "Warning: Health check ping failed."
+    else
+        log "No HEALTHCHECK_URL configured, skipping heartbeat ping." "DEBUG"
+    fi
+}
+
 # Helper function to check for blocking PRs and exit if found.
 # It also pings a health check URL on a successful skip.
 # Arguments:
@@ -72,7 +83,8 @@ command_exists() {
 check_and_exit_if_blocked() {
     log "BLOCKING CONDITION DETECTED: $1" "ERROR"
     log "Aborting translation run. Please resolve the blocking issue." "ERROR"
-    # Optional: Add a health check ping for failure here
+    # Send heartbeat ping before exiting to indicate successful (expected) skip
+    send_heartbeat_if_configured
     exit 0 # Exit cleanly to prevent cron from flagging it as a failure
 }
 
@@ -524,11 +536,7 @@ git submodule update --recursive
 # No virtual environment to deactivate
 
 # Send a heartbeat ping to the health check URL if it is configured
-if [ -n "${HEALTHCHECK_URL:-}" ]; then
-    log "Sending successful heartbeat to health check URL..."
-    # Use curl with options to fail silently and handle connection timeouts
-    curl -fsS --retry 3 --max-time 10 "$HEALTHCHECK_URL" > /dev/null || log "Warning: Health check ping failed."
-fi
+send_heartbeat_if_configured
 
 log "Translation update script finished successfully."
 exit 0
