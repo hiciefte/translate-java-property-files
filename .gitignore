@@ -47,3 +47,5 @@ docker/docker-compose.override.*.yaml
 /config.yaml
 /docker/config.docker.mobile.yaml
 /config-mobile.yaml
+/docs/requirements/
+/CLAUDE.md

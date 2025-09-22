@@ -609,6 +609,10 @@ async def translate_text_async(
         logger.info(f"[Dry Run] Skipping actual translation for key '{key}'. Returning original text.")
         return index, text
 
+    if client is None:
+        logger.error("OpenAI client is None. Cannot proceed with translation.")
+        return index, text
+
     async with semaphore, rate_limiter:
         # 3) Use language_name_to_code instead of an Enum
         language_code = language_name_to_code(target_language)
@@ -808,6 +812,10 @@ async def holistic_review_async(
     if DRY_RUN:
         logger.info("[Dry Run] Skipping holistic review API call.")
         # Return an empty dictionary to simulate a successful review that made no changes.
+        return {}
+
+    if client is None:
+        logger.error("OpenAI client is None. Cannot proceed with holistic review.")
         return {}
 
     async with semaphore, rate_limiter:

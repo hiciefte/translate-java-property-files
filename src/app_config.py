@@ -255,7 +255,7 @@ def load_app_config() -> AppConfig:
         glossary_file_path=config.get('glossary_file_path', 'glossary.json'),
         model_name=model_name,
         review_model_name=review_model_name,
-        max_model_tokens=4000,  # This could be made configurable in the future
+        max_model_tokens=config.get('max_model_tokens', 4000),
         dry_run=dry_run,
         holistic_review_chunk_size=holistic_review_chunk_size,
         max_concurrent_api_calls=config.get('max_concurrent_api_calls', 1),
