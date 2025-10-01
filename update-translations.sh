@@ -326,14 +326,15 @@ else
         fi
 
         # Check if files have been updated
-        if ! git status --porcelain | grep -qE '\.(properties|po|mo)$'; then
+        # Match translation files even when staged for deletion (D prefix) or renames (-> suffix)
+        if ! git status --porcelain | grep -qE '\.(properties|po|mo)([[:space:]]|$|->)'; then
             log "Transifex pull completed successfully, but no translation files were modified. This is normal when there are no new translation keys." "INFO"
             log "No further processing needed. Exiting gracefully."
             send_heartbeat_if_configured
             exit 0
         fi
 
-        log "Transifex pull successfully updated translation files. Proceeding with AI translation..."
+        log "Transifex pull successfully updated translation files. Starting AI translation processing..." "INFO"
 
     else
         log "Error: Transifex CLI not found. Please install it manually."
