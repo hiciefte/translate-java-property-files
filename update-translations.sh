@@ -325,11 +325,16 @@ else
             exit $TX_STATUS
         fi
 
-        # Verify that files have been updated
-        if ! git status --porcelain | grep -qE '\.(properties|po|mo)$'; then
-            log "Error: Transifex pull did not update any translation files (.properties/.po/.mo). This might indicate an issue with the Transifex CLI or the configuration." "ERROR"
-            exit 1
+        # Check if files have been updated
+        # Match translation files even when staged for deletion (D prefix) or renames (-> suffix)
+        if ! git status --porcelain | grep -qE '\.(properties|po|mo)([[:space:]]|$|->)'; then
+            log "Transifex pull completed successfully, but no translation files were modified. This is normal when there are no new translation keys." "INFO"
+            log "No further processing needed. Exiting gracefully."
+            send_heartbeat_if_configured
+            exit 0
         fi
+
+        log "Transifex pull successfully updated translation files. Starting AI translation processing..." "INFO"
 
     else
         log "Error: Transifex CLI not found. Please install it manually."
