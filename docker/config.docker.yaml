@@ -39,9 +39,9 @@ supported_locales:
     name: "Swedish"
   - code: "af_ZA"
     name: "Afrikaans"
-  - code: "zh_Hans"
+  - code: "zh-Hans"
     name: "Simplified Chinese"
-  - code: "zh_Hant"
+  - code: "zh-Hant"
     name: "Traditional Chinese"
 max_concurrent_api_calls: 1
 logging:
@@ -99,13 +99,13 @@ style_rules:
   af_ZA: []
   it: []
   pt_BR: []
-  zh_Hans:
+  zh-Hans:
     - "Use Simplified Chinese characters (mainland China standard)."
     - "Maintain formal tone appropriate for financial applications."
     - "Follow mainland China terminology conventions for technical terms."
     - "Use Chinese punctuation marks (。，、；：？！) rather than Western punctuation."
     - "Maintain consistency with established fintech terminology used in mainland China."
-  zh_Hant:
+  zh-Hant:
     - "Use Traditional Chinese characters (Taiwan/Hong Kong standard)."
     - "Maintain formal tone appropriate for financial applications."
     - "Follow Taiwan/Hong Kong terminology conventions for technical terms."

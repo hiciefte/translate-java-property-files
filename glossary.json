@@ -910,7 +910,7 @@
     "verify seeds": "Verifiera Seed-ord",
     "wallet": "Plånbok"
   },
-  "zh_Hans": {
+  "zh-Hans": {
     "account": "账户",
     "account_age": "账户年龄",
     "arbitrator": "仲裁员",
@@ -968,7 +968,7 @@
     "verify seeds": "验证助记词",
     "wallet": "钱包"
   },
-  "zh_Hant": {
+  "zh-Hant": {
     "account": "帳戶",
     "account_age": "帳戶年齡",
     "arbitrator": "仲裁員",
