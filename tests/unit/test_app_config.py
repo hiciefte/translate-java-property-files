@@ -91,7 +91,7 @@ class TestLoadAppConfig:
         # Should use default values
         assert config.model_name == "gpt-4"
         assert config.dry_run is True
-        assert config.holistic_review_chunk_size == 75
+        assert config.holistic_review_chunk_size == 30  # Updated from 75 to 30
         assert config.max_concurrent_api_calls == 1
 
     def test_load_config_with_environment_overrides(self):
