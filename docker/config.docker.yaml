@@ -15,6 +15,8 @@ supported_locales:
     name: "Spanish"
   - code: "fr"
     name: "French"
+  - code: "hi"
+    name: "Hindi"
   - code: "it"
     name: "Italian"
   - code: "pt_PT"
@@ -29,10 +31,18 @@ supported_locales:
     name: "Tamil"
   - code: "pcm"
     name: "Nigerian Pidgin"
+  - code: "pl"
+    name: "Polish"
   - code: "ru"
     name: "Russian"
+  - code: "sv"
+    name: "Swedish"
   - code: "af_ZA"
     name: "Afrikaans"
+  - code: "zh_Hans"
+    name: "Simplified Chinese"
+  - code: "zh_Hant"
+    name: "Traditional Chinese"
 max_concurrent_api_calls: 1
 logging:
   log_level: "INFO"
@@ -53,6 +63,12 @@ style_rules:
   fr:
     - "Use formal 'vous' form for user address."
     - "When referring to 'portefeuille' (wallet), use masculine pronouns."
+  hi:
+    - "Use Devanagari script throughout."
+    - "Maintain formal tone appropriate for financial applications."
+    - "Use formal pronouns (आप) rather than informal (तुम/तू)."
+    - "Technical crypto terms may be transliterated when no established Hindi term exists."
+    - "Ensure consistent transliteration of technical terms across the application."
   pt_PT:
     - "Use European Portuguese spelling and vocabulary (e.g., 'ecrã' instead of 'tela')."
     - "Maintain formal tone appropriate for financial applications."
@@ -68,11 +84,33 @@ style_rules:
   pcm:
     - "Maintain consistency with terms like 'connection' and 'camera' (do not use 'kamera')."
     - "For negative outcomes, prefer the 'no gree work' pattern where appropriate."
+  pl:
+    - "Use formal 'Pan/Pani' address forms for user interactions."
+    - "Maintain consistent grammatical case usage appropriate to context."
+    - "Technical terms should follow Polish IT convention (mix of borrowed English and Polish terms)."
+    - "Use Polish punctuation rules (e.g., space before question marks in informal contexts is optional)."
   ru:
     - "In a wallet context, prefer hyphenated terms like 'seed-фраза' and 'биткойн-кошелька'."
+  sv:
+    - "Use formal address appropriate for financial applications."
+    - "Compound words should follow Swedish orthography rules."
+    - "Technical crypto terms may remain in English when commonly used in Swedish context."
+    - "Use Swedish number formatting conventions (space as thousands separator)."
   af_ZA: []
   it: []
   pt_BR: []
+  zh_Hans:
+    - "Use Simplified Chinese characters (mainland China standard)."
+    - "Maintain formal tone appropriate for financial applications."
+    - "Follow mainland China terminology conventions for technical terms."
+    - "Use Chinese punctuation marks (。，、；：？！) rather than Western punctuation."
+    - "Maintain consistency with established fintech terminology used in mainland China."
+  zh_Hant:
+    - "Use Traditional Chinese characters (Taiwan/Hong Kong standard)."
+    - "Maintain formal tone appropriate for financial applications."
+    - "Follow Taiwan/Hong Kong terminology conventions for technical terms."
+    - "Use Chinese punctuation marks (。，、；：？！) rather than Western punctuation."
+    - "Maintain consistency with established fintech terminology used in Taiwan/Hong Kong."
 brand_technical_glossary:
 # (Optional) keep this list alphabetized and unique
   - ACH
