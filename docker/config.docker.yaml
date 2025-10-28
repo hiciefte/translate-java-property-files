@@ -13,10 +13,20 @@ supported_locales:
     name: "German"
   - code: "es"
     name: "Spanish"
+  - code: "fr"
+    name: "French"
   - code: "it"
     name: "Italian"
+  - code: "pt_PT"
+    name: "Portuguese"
   - code: "pt_BR"
     name: "Brazilian Portuguese"
+  - code: "tl"
+    name: "Tagalog"
+  - code: "bn"
+    name: "Bengali"
+  - code: "ta"
+    name: "Tamil"
   - code: "pcm"
     name: "Nigerian Pidgin"
   - code: "ru"
@@ -40,6 +50,21 @@ style_rules:
   es:
     - "When referring to 'billetera' (wallet), use feminine pronouns (e.g., 'Configúrala', 'restáurala')."
     - "Ensure questions that open with '¿' are properly closed with '?'."
+  fr:
+    - "Use formal 'vous' form for user address."
+    - "When referring to 'portefeuille' (wallet), use masculine pronouns."
+  pt_PT:
+    - "Use European Portuguese spelling and vocabulary (e.g., 'ecrã' instead of 'tela')."
+    - "Maintain formal tone appropriate for financial applications."
+  tl:
+    - "Use Filipino/Tagalog terms where natural, but technical crypto terms may remain in English."
+    - "Maintain respectful 'po' and 'opo' forms where appropriate for user interactions."
+  bn:
+    - "Use Bengali script throughout."
+    - "Technical crypto terms may be transliterated when no established Bengali term exists."
+  ta:
+    - "Use Tamil script throughout."
+    - "Maintain formal tone appropriate for financial applications."
   pcm:
     - "Maintain consistency with terms like 'connection' and 'camera' (do not use 'kamera')."
     - "For negative outcomes, prefer the 'no gree work' pattern where appropriate."

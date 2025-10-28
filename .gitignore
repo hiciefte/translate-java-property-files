@@ -49,3 +49,4 @@ docker/docker-compose.override.*.yaml
 /config-mobile.yaml
 /docs/requirements/
 /CLAUDE.md
+/.claude/

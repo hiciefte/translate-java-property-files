@@ -837,7 +837,7 @@ async def holistic_review_async(
                     ],
                     temperature=0.1,
                     response_format={"type": "json_object"},
-                    max_tokens=4096,  # Increase tokens to avoid truncation
+                    max_tokens=8192,  # Increased to handle larger review responses
                     timeout=120.0,
                 )
                 msg_content = response.choices[0].message.content
