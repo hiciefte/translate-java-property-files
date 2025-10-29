@@ -210,6 +210,28 @@ class TestCoreLogic(unittest.TestCase):
         self.assertIsNone(extract_language_from_filename("app_fr.properties", supported_codes))
         self.assertIsNone(extract_language_from_filename("app_de.txt", supported_codes))
 
+    def test_extract_language_from_filename_with_hyphens(self):
+        """Tests that `extract_language_from_filename` correctly identifies hyphenated locale codes like zh-Hans and zh-Hant."""
+        supported_codes = ["zh-Hans", "zh-Hant", "pt_BR", "de"]
+
+        # Test hyphenated Chinese locale codes
+        self.assertEqual(extract_language_from_filename("app_zh-Hans.properties", supported_codes), "zh-Hans")
+        self.assertEqual(extract_language_from_filename("application_zh-Hans.properties", supported_codes), "zh-Hans")
+        self.assertEqual(extract_language_from_filename("app_zh-Hant.properties", supported_codes), "zh-Hant")
+        self.assertEqual(extract_language_from_filename("application_zh-Hant.properties", supported_codes), "zh-Hant")
+
+        # Ensure underscore-based codes still work
+        self.assertEqual(extract_language_from_filename("app_pt_BR.properties", supported_codes), "pt_BR")
+        self.assertEqual(extract_language_from_filename("app_de.properties", supported_codes), "de")
+
+        # Test that longer hyphenated codes are matched before shorter ones
+        supported_codes_with_overlap = ["zh-Hans", "zh", "de"]
+        self.assertEqual(extract_language_from_filename("app_zh-Hans.properties", supported_codes_with_overlap), "zh-Hans")
+
+        # Test non-matching cases
+        self.assertIsNone(extract_language_from_filename("app.properties", supported_codes))
+        self.assertIsNone(extract_language_from_filename("app_fr.properties", supported_codes))
+
     def test_post_translation_validation_success(self):
         """Tests that valid content passes the post-translation validation."""
         final_content = "key.one=Valid value {0}"

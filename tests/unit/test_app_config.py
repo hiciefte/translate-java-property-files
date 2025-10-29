@@ -200,6 +200,49 @@ class TestLoadAppConfig:
         assert "Rule 1" in config.precomputed_style_rules_text["de"]
         assert "Rule 2" in config.precomputed_style_rules_text["de"]
 
+    def test_hyphenated_locale_codes(self):
+        """Test that hyphenated locale codes like zh-Hans and zh-Hant are handled correctly."""
+        mock_config = {
+            "dry_run": True,
+            "supported_locales": [
+                {"code": "zh-Hans", "name": "Simplified Chinese"},
+                {"code": "zh-Hant", "name": "Traditional Chinese"},
+                {"code": "pt_BR", "name": "Brazilian Portuguese"}
+            ],
+            "style_rules": {
+                "zh-Hans": ["Use simplified characters"],
+                "zh-Hant": ["Use traditional characters"]
+            }
+        }
+
+        with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config))):
+            with patch("os.path.exists", return_value=True):
+                with patch("os.access", return_value=True):
+                    with patch("src.logging_config.setup_logger") as mock_logger:
+                        mock_logger.return_value = MagicMock()
+                        with patch.dict(os.environ, {}, clear=True):
+                            config = load_app_config()
+
+        # Verify hyphenated codes are in language_codes dictionary
+        assert "zh-Hans" in config.language_codes
+        assert config.language_codes["zh-Hans"] == "Simplified Chinese"
+        assert "zh-Hant" in config.language_codes
+        assert config.language_codes["zh-Hant"] == "Traditional Chinese"
+
+        # Verify name_to_code mappings work
+        assert config.name_to_code["simplified chinese"] == "zh-Hans"
+        assert config.name_to_code["traditional chinese"] == "zh-Hant"
+
+        # Verify underscore codes still work
+        assert "pt_BR" in config.language_codes
+        assert config.language_codes["pt_BR"] == "Brazilian Portuguese"
+
+        # Verify style rules are precomputed correctly
+        assert "zh-Hans" in config.precomputed_style_rules_text
+        assert "simplified characters" in config.precomputed_style_rules_text["zh-Hans"]
+        assert "zh-Hant" in config.precomputed_style_rules_text
+        assert "traditional characters" in config.precomputed_style_rules_text["zh-Hant"]
+
     def test_custom_config_file_path(self):
         """Test using custom config file path via environment variable."""
         mock_config = {"model_name": "custom-model", "dry_run": True}
