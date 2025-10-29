@@ -385,6 +385,45 @@ class TestFileDetectionLogic(unittest.TestCase):
             self.assertIn("mobile_es.properties", changed_basenames)
             self.assertNotIn("desktop_de.properties", changed_basenames)
 
+    @patch('subprocess.run')
+    def test_get_changed_files_detects_hyphenated_locales(self, mock_subprocess_run):
+        """
+        Tests that get_changed_translation_files correctly detects files with
+        hyphenated locale codes like zh-Hans and zh-Hant, as well as untracked files.
+        """
+        from src.translate_localization_files import get_changed_translation_files
+
+        # Simulate git status output with both modified and untracked files
+        # Including hyphenated locale codes (zh-Hans, zh-Hant) and standard ones (pl, pt_BR)
+        git_output = textwrap.dedent("""
+             M i18n/resources/academy_pl.properties
+             M i18n/resources/application_pt_BR.properties
+            ?? i18n/resources/academy_zh-Hans.properties
+            ?? i18n/resources/academy_zh-Hant.properties
+            ?? i18n/resources/application_zh-Hans.properties
+            ?? i18n/resources/application_zh-Hant.properties
+        """).strip()
+        mock_subprocess_run.return_value = MagicMock(stdout=git_output, stderr="", check_returncode=MagicMock())
+
+        repo_root = "/fake/repo"
+        input_folder = "/fake/repo/i18n/resources"
+
+        changed_files = get_changed_translation_files(input_folder, repo_root)
+
+        # Verify all files are detected including hyphenated locale codes
+        changed_basenames = [os.path.basename(f) for f in changed_files]
+        self.assertEqual(len(changed_basenames), 6)
+
+        # Standard locale codes should be detected
+        self.assertIn("academy_pl.properties", changed_basenames)
+        self.assertIn("application_pt_BR.properties", changed_basenames)
+
+        # Hyphenated locale codes should be detected
+        self.assertIn("academy_zh-Hans.properties", changed_basenames)
+        self.assertIn("academy_zh-Hant.properties", changed_basenames)
+        self.assertIn("application_zh-Hans.properties", changed_basenames)
+        self.assertIn("application_zh-Hant.properties", changed_basenames)
+
 
 if __name__ == '__main__':
     unittest.main()

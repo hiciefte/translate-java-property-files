@@ -1071,7 +1071,8 @@ def get_changed_translation_files(input_folder_path: str, repo_root: str) -> Lis
             if cleaned_status in {'M', 'A', 'AM', 'MM', 'RM', 'R', '??'}:
                 if filepath.endswith('.properties'):
                     # Check if it's a translation file (has language suffix)
-                    if re.search(r'_[a-z]{2,3}(?:_[A-Z]{2})?\.properties$', filepath):
+                    # Updated regex to support hyphenated locale codes like zh-Hans, zh-Hant
+                    if re.search(r'_[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?\.properties$', filepath):
                         # Extract the filename relative to input_folder
                         rel_path = os.path.relpath(filepath, rel_input_folder)
                         changed_files.append(rel_path)
