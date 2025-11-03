@@ -29,6 +29,8 @@ supported_locales:
     name: "Bengali"
   - code: "ta"
     name: "Tamil"
+  - code: "th"
+    name: "Thai"
   - code: "pcm"
     name: "Nigerian Pidgin"
   - code: "pl"
@@ -81,6 +83,12 @@ style_rules:
   ta:
     - "Use Tamil script throughout."
     - "Maintain formal tone appropriate for financial applications."
+  th:
+    - "Use Thai script throughout."
+    - "Maintain formal and polite tone appropriate for financial applications."
+    - "Use polite particles (ครับ/ค่ะ) where appropriate for user interactions."
+    - "Technical crypto terms may be transliterated when no established Thai term exists."
+    - "Ensure consistent transliteration of technical terms across the application."
   pcm:
     - "Maintain consistency with terms like 'connection' and 'camera' (do not use 'kamera')."
     - "For negative outcomes, prefer the 'no gree work' pattern where appropriate."
