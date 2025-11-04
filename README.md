@@ -90,6 +90,19 @@ The service is configured through a combination of YAML files and a single envir
 *   **`glossary.json`**: Provides language-specific translations for key terms to ensure consistency.
 *   **`translation_file_filter_glob`** (optional, in `config.yaml`): A glob pattern that limits which changed `.properties` files are processed by the AI translator. This is useful for workflows where you want to pull all updated files from Transifex but only run the AI step on a specific subset (e.g., `mobile_*.properties`).
 
+### Adding New Languages
+
+To add support for a new language to the translation system:
+
+➡️ **[Adding New Locales Guide](./docs/adding-new-locales.md)**
+
+This comprehensive guide covers:
+- Determining the correct locale code
+- Updating configuration files
+- Adding glossary translations
+- Testing and validation steps
+- Complete real-world examples
+
 ## Troubleshooting
 
 *   **`Permission denied (publickey)` Errors**: This error during `git push` means the deploy key specified in `secrets/deploy_key/` has not been added to your target GitHub repository's "Deploy Keys" section with write access.
