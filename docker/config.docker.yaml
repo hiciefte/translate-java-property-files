@@ -19,6 +19,16 @@ supported_locales:
     name: "Hindi"
   - code: "it"
     name: "Italian"
+  - code: "id"
+    name: "Indonesian"
+  - code: "ja"
+    name: "Japanese"
+  - code: "ko"
+    name: "Korean"
+  - code: "nl"
+    name: "Dutch"
+  - code: "vi"
+    name: "Vietnamese"
   - code: "pt_PT"
     name: "Portuguese"
   - code: "pt_BR"
@@ -114,6 +124,36 @@ style_rules:
     - "Use Swedish number formatting conventions (space as thousands separator)."
   af_ZA: []
   it: []
+  id:
+    - "Use standard Indonesian (Bahasa Indonesia) throughout."
+    - "Maintain formal and polite tone appropriate for financial applications."
+    - "Use standard Indonesian terminology for technical terms when available."
+    - "Technical crypto terms may be kept in English when commonly used in Indonesian context."
+    - "Ensure consistent terminology across the application."
+  ja:
+    - "Use appropriate Japanese scripts (Hiragana, Katakana, and Kanji) throughout."
+    - "Maintain polite formal tone using です/ます form appropriate for financial applications."
+    - "Use appropriate honorifics and respectful language for user interactions."
+    - "Technical crypto terms may be transliterated to Katakana when no established Japanese term exists."
+    - "Ensure consistent transliteration and terminology across the application."
+  ko:
+    - "Use Hangul (Korean script) throughout with appropriate Hanja where conventional."
+    - "Maintain formal polite tone using 존댓말 (jondaetmal) appropriate for financial applications."
+    - "Use formal endings (합니다/습니다) for user interactions."
+    - "Technical crypto terms may be transliterated to Hangul when no established Korean term exists."
+    - "Ensure consistent transliteration and terminology across the application."
+  nl:
+    - "Use standard Dutch (Nederlands) throughout."
+    - "Maintain formal and polite tone using 'u' form appropriate for financial applications."
+    - "Follow Dutch grammar and spelling conventions."
+    - "Technical crypto terms may remain in English when commonly used in Dutch context."
+    - "Ensure consistent terminology across the application."
+  vi:
+    - "Use Vietnamese script with proper diacritical marks throughout."
+    - "Maintain formal and polite tone appropriate for financial applications."
+    - "Use formal address forms and respectful language for user interactions."
+    - "Technical crypto terms may be transliterated or kept in English when no established Vietnamese term exists."
+    - "Ensure consistent transliteration and terminology across the application."
   pt_BR: []
   zh-Hans:
     - "Use Simplified Chinese characters (mainland China standard)."
