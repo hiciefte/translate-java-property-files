@@ -31,6 +31,8 @@ supported_locales:
     name: "Tamil"
   - code: "th"
     name: "Thai"
+  - code: "tr"
+    name: "Turkish"
   - code: "pcm"
     name: "Nigerian Pidgin"
   - code: "pl"
@@ -89,6 +91,12 @@ style_rules:
     - "Use polite particles (ครับ/ค่ะ) where appropriate for user interactions."
     - "Technical crypto terms may be transliterated when no established Thai term exists."
     - "Ensure consistent transliteration of technical terms across the application."
+  tr:
+    - "Use Turkish alphabet (including ç, ğ, ı, ö, ş, ü) throughout."
+    - "Maintain formal tone appropriate for financial applications."
+    - "Use polite and professional language suitable for business context."
+    - "Technical crypto terms may be transliterated or kept in English when no established Turkish term exists."
+    - "Ensure consistent transliteration and terminology across the application."
   pcm:
     - "Maintain consistency with terms like 'connection' and 'camera' (do not use 'kamera')."
     - "For negative outcomes, prefer the 'no gree work' pattern where appropriate."
