@@ -72,3 +72,28 @@ CVE-2025-47907
 # Added: 2025-09-21
 # Revisit by: 2025-11-15
 CVE-2025-47906
+
+# CVE-2025-47912, CVE-2025-58183, CVE-2025-58186, CVE-2025-58187, CVE-2025-58188, CVE-2025-61724
+# Go stdlib vulnerabilities affecting third-party binaries (gh, tx, gosu)
+# Affects: gh (Go v1.22.4), tx (Go v1.16.15), gosu (Go v1.18.2)
+# Vulnerabilities:
+#   - CVE-2025-47912: IPv6 Parse function permits non-IPv6 values (fixed in Go 1.24.8, 1.25.2)
+#   - CVE-2025-58183: tar.Reader lacks max size limit on sparse file entries (fixed in Go 1.24.8, 1.25.2)
+#   - CVE-2025-58186: HTTP header count limit bypass (fixed in Go 1.24.8, 1.25.2)
+#   - CVE-2025-58187: Certificate name constraint checking performance issue (fixed in Go 1.24.9, 1.25.3)
+#   - CVE-2025-58188: DSA public key validation excessive memory consumption (fixed in Go 1.24.8, 1.25.2)
+#   - CVE-2025-61724: HTTP ReadResponse string concatenation memory issue (fixed in Go 1.24.8, 1.25.2)
+# Rationale: These are CI/CD tools (gh, tx) and privilege escalation utility (gosu) used exclusively
+#            in controlled containerized environments for build/deployment automation. They do not
+#            process untrusted user input and are not exposed to external networks. The binaries are
+#            vendor-supplied pre-compiled releases that we cannot rebuild. Actual exploitation risk
+#            is minimal given the controlled usage context. Vendors (especially Transifex with Go 1.16.15
+#            from 2022) are unlikely to release patched versions soon.
+# Added: 2025-11-06
+# Revisit by: 2026-01-15 (check for updated vendor releases)
+CVE-2025-47912
+CVE-2025-58183
+CVE-2025-58186
+CVE-2025-58187
+CVE-2025-58188
+CVE-2025-61724
