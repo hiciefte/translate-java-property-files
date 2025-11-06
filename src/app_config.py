@@ -235,7 +235,8 @@ def load_app_config() -> AppConfig:
     review_model_name = os.environ.get('REVIEW_MODEL_NAME', config.get('review_model_name', model_name))
 
     # Holistic review chunk size with environment override
-    default_chunk_size = config.get('holistic_review_chunk_size', 75)
+    # Reduced default from 75 to 30 to handle content-heavy files better
+    default_chunk_size = config.get('holistic_review_chunk_size', 30)
     holistic_review_chunk_size = int(os.environ.get('HOLISTIC_REVIEW_CHUNK_SIZE', default_chunk_size))
 
     # Queue folders

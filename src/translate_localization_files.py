@@ -837,7 +837,7 @@ async def holistic_review_async(
                     ],
                     temperature=0.1,
                     response_format={"type": "json_object"},
-                    max_tokens=4096,  # Increase tokens to avoid truncation
+                    max_tokens=8192,  # Increased to handle larger review responses
                     timeout=120.0,
                 )
                 msg_content = response.choices[0].message.content
@@ -958,7 +958,7 @@ def move_files_to_archive(input_folder_path: str, archive_folder_path: str):
     os.makedirs(archive_folder_path, exist_ok=True)
     for root, _, files in os.walk(input_folder_path):
         for filename in files:
-            if filename.endswith('.properties') and re.search(r'_[a-z]{2,3}(?:_[A-Z]{2})?\.properties$', filename):
+            if filename.endswith('.properties') and re.search(r'_[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?\.properties$', filename):
                 # Construct relative path to maintain directory structure
                 relative_path = os.path.relpath(os.path.join(root, filename), input_folder_path)
                 source_path = os.path.join(input_folder_path, relative_path)
@@ -986,7 +986,7 @@ def copy_translated_files_back(
     """
     for root, _dirs, files in os.walk(translated_queue_folder):
         for name in files:
-            if name.endswith('.properties') and re.search(r'_[a-z]{2,3}(?:_[A-Z]{2})?\.properties$', name):
+            if name.endswith('.properties') and re.search(r'_[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?\.properties$', name):
                 rel_path = os.path.relpath(os.path.join(root, name), translated_queue_folder)
                 translated_file_path = os.path.join(translated_queue_folder, rel_path)
                 dest_path = os.path.join(input_folder_path, rel_path)
@@ -1071,7 +1071,8 @@ def get_changed_translation_files(input_folder_path: str, repo_root: str) -> Lis
             if cleaned_status in {'M', 'A', 'AM', 'MM', 'RM', 'R', '??'}:
                 if filepath.endswith('.properties'):
                     # Check if it's a translation file (has language suffix)
-                    if re.search(r'_[a-z]{2,3}(?:_[A-Z]{2})?\.properties$', filepath):
+                    # Updated regex to support hyphenated locale codes like zh-Hans, zh-Hant
+                    if re.search(r'_[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?\.properties$', filepath):
                         # Extract the filename relative to input_folder
                         rel_path = os.path.relpath(filepath, rel_input_folder)
                         changed_files.append(rel_path)
@@ -1192,7 +1193,7 @@ async def process_translation_queue(
 
         # Define full paths
         translation_file_path = os.path.join(translation_queue_folder, translation_file)
-        source_file_name = re.sub(r'_[a-z]{2,3}(?:_[A-Z]{2})?\.properties$', '.properties', translation_file)
+        source_file_name = re.sub(r'_[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?\.properties$', '.properties', translation_file)
         source_file_path = os.path.join(INPUT_FOLDER, source_file_name)
 
         if not os.path.exists(source_file_path):
