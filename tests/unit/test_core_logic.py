@@ -254,6 +254,93 @@ class TestCoreLogic(unittest.TestCase):
         self.assertFalse(run_post_translation_validation(final_content, source_translations, filename))
 
 
+class TestSourceFilenameExtraction(unittest.TestCase):
+    """Tests for extracting source filename from translated filename."""
+
+    def test_get_source_filename_simple_language_code(self):
+        """Test extraction with simple 2-letter language codes."""
+        from src.translate_localization_files import get_source_filename
+
+        supported_codes = ['es', 'de', 'fr', 'pt_PT', 'pt_BR']
+
+        # Simple case: app_es.properties -> app.properties
+        result = get_source_filename('app_es.properties', supported_codes)
+        self.assertEqual(result, 'app.properties')
+
+        # Simple case: bisq_easy_de.properties -> bisq_easy.properties
+        result = get_source_filename('bisq_easy_de.properties', supported_codes)
+        self.assertEqual(result, 'bisq_easy.properties')
+
+    def test_get_source_filename_with_underscores_in_base_name(self):
+        """Test extraction when base filename contains underscores (mu_sig bug)."""
+        from src.translate_localization_files import get_source_filename
+
+        supported_codes = ['es', 'de', 'fr', 'pt_PT', 'pt_BR']
+
+        # BUG CASE: mu_sig_es.properties should -> mu_sig.properties (not mu.properties)
+        result = get_source_filename('mu_sig_es.properties', supported_codes)
+        self.assertEqual(result, 'mu_sig.properties',
+                        "Should preserve 'mu_sig' base name, not strip 'sig' as language code")
+
+        # Similar case with different language
+        result = get_source_filename('mu_sig_de.properties', supported_codes)
+        self.assertEqual(result, 'mu_sig.properties')
+
+        # Another multi-underscore base name
+        result = get_source_filename('user_auth_flow_fr.properties', supported_codes)
+        self.assertEqual(result, 'user_auth_flow.properties')
+
+    def test_get_source_filename_with_complex_language_codes(self):
+        """Test extraction with complex language codes like pt_PT."""
+        from src.translate_localization_files import get_source_filename
+
+        supported_codes = ['es', 'pt_PT', 'pt_BR', 'zh-Hans', 'zh-Hant']
+
+        # Complex language code: mu_sig_pt_PT.properties -> mu_sig.properties
+        result = get_source_filename('mu_sig_pt_PT.properties', supported_codes)
+        self.assertEqual(result, 'mu_sig.properties')
+
+        # Ensure pt_PT is matched before pt (if pt were in the list)
+        result = get_source_filename('app_pt_PT.properties', supported_codes)
+        self.assertEqual(result, 'app.properties')
+
+        # Hyphenated locale
+        result = get_source_filename('app_zh-Hans.properties', supported_codes)
+        self.assertEqual(result, 'app.properties')
+
+    def test_get_source_filename_no_language_code_match(self):
+        """Test when filename doesn't match any supported language code."""
+        from src.translate_localization_files import get_source_filename
+
+        supported_codes = ['es', 'de', 'fr']
+
+        # No language code in filename
+        result = get_source_filename('app.properties', supported_codes)
+        self.assertEqual(result, 'app.properties', "Should return unchanged if no language code")
+
+        # Unsupported language code
+        result = get_source_filename('app_ja.properties', supported_codes)
+        self.assertEqual(result, 'app_ja.properties', "Should return unchanged if language code not supported")
+
+    def test_get_source_filename_edge_cases(self):
+        """Test edge cases and unusual filenames."""
+        from src.translate_localization_files import get_source_filename
+
+        supported_codes = ['es', 'de', 'pt_PT']
+
+        # Single character base name
+        result = get_source_filename('a_es.properties', supported_codes)
+        self.assertEqual(result, 'a.properties')
+
+        # Multiple dots in filename (shouldn't happen, but defensive)
+        result = get_source_filename('app.config_es.properties', supported_codes)
+        self.assertEqual(result, 'app.config.properties')
+
+        # Base name ending with underscore (shouldn't happen, but defensive)
+        result = get_source_filename('app__es.properties', supported_codes)
+        self.assertEqual(result, 'app_.properties')
+
+
 class TestValidationLogic(unittest.TestCase):
     def test_linting_finds_common_errors(self):
         """
