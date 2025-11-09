@@ -385,6 +385,60 @@ def restore_placeholders(text: str, placeholder_mapping: Dict[str, str]) -> str:
         text = text.replace(token, placeholder)
     return text
 
+def protect_placeholders_in_properties(content: str) -> Tuple[str, Dict[str, str]]:
+    """
+    Protect all placeholders in properties file content by replacing them with unique tokens.
+
+    This function is designed for protecting entire properties file content (multiple keys)
+    before sending to holistic review. It uses the same protection mechanism as
+    extract_placeholders() but works on full file content.
+
+    Args:
+        content: Full properties file content with multiple key=value pairs
+
+    Returns:
+        Tuple containing:
+        - protected_content: Content with placeholders replaced by __PH_xxx__ tokens
+        - placeholder_mapping: Dict mapping tokens back to original placeholders
+    """
+    if not content:
+        return "", {}
+
+    # Pattern to match placeholders like {0}, {1}, {name} and HTML-like tags
+    pattern = re.compile(r'(<[^<>]+>)|({[^{}]+})')
+    placeholder_mapping = {}
+
+    def replace_placeholder(match):
+        full_match = match.group(0)
+        placeholder_token = f"__PH_{uuid.uuid4().hex}__"
+        placeholder_mapping[placeholder_token] = full_match
+        return placeholder_token
+
+    protected_content = pattern.sub(replace_placeholder, content)
+    return protected_content, placeholder_mapping
+
+def restore_placeholders_in_properties(content: str, placeholder_mapping: Dict[str, str]) -> str:
+    """
+    Restore all placeholders in properties file content from protection tokens.
+
+    This is the reverse operation of protect_placeholders_in_properties().
+    It replaces all __PH_xxx__ tokens back with their original placeholder values.
+
+    Args:
+        content: Properties file content with __PH_xxx__ protection tokens
+        placeholder_mapping: Dict mapping tokens to original placeholders
+
+    Returns:
+        Content with all placeholders restored to original {0}, {1}, etc.
+    """
+    if not content or not placeholder_mapping:
+        return content
+
+    for token, placeholder in placeholder_mapping.items():
+        content = content.replace(token, placeholder)
+
+    return content
+
 def clean_translated_text(translated_text: str, original_text: str) -> str:
     """
     Cleans the translated text by removing leading/trailing quotes and ensuring
@@ -554,8 +608,17 @@ def run_post_translation_validation(
                 target_value = final_translations.get(key, "")
                 if not check_placeholder_parity(source_value, target_value):
                     is_valid = False
+                    # Extract placeholders for detailed logging
+                    placeholder_regex = re.compile(r'\{([^{}]+)\}')
+                    source_placeholders = placeholder_regex.findall(source_value)
+                    target_placeholders = placeholder_regex.findall(target_value)
                     logger.error(
-                        f"Post-translation validation failed for '{filename}': Placeholder mismatch for key '{key}'.")
+                        f"Post-translation validation failed for '{filename}': Placeholder mismatch for key '{key}'.\n"
+                        f"  Source value: {source_value}\n"
+                        f"  Target value: {target_value}\n"
+                        f"  Source placeholders: {source_placeholders}\n"
+                        f"  Target placeholders: {target_placeholders}"
+                    )
         except (IOError, OSError):
             is_valid = False
             logger.exception(
@@ -576,6 +639,74 @@ def run_post_translation_validation(
             f"Post-translation validation failed for '{filename}'. AI-generated content is invalid and will be discarded.")
 
     return is_valid
+
+def run_per_key_validation(
+        final_translations: Dict[str, str],
+        source_translations: Dict[str, str],
+        filename: str
+) -> Tuple[Dict[str, str], List[str]]:
+    """
+    Validates each translation key individually and selectively reverts failed keys.
+
+    Instead of discarding all translations when validation fails, this function:
+    1. Validates each key's placeholder parity individually
+    2. Keeps valid translations
+    3. Reverts only failed keys to their source values
+
+    Args:
+        final_translations: Dictionary of translated key-value pairs to validate
+        source_translations: Dictionary of source (English) key-value pairs
+        filename: Name of the file being validated (for logging)
+
+    Returns:
+        Tuple containing:
+        - valid_translations: Dictionary with valid translations + reverted source for failed keys
+        - failed_keys: List of keys that failed validation
+    """
+    valid_translations = {}
+    failed_keys = []
+
+    for key, target_value in final_translations.items():
+        source_value = source_translations.get(key, "")
+
+        # Validate placeholder parity for this key
+        if check_placeholder_parity(source_value, target_value):
+            # Validation passed - keep the translation
+            valid_translations[key] = target_value
+        else:
+            # Validation failed - revert to source and track the failure
+            failed_keys.append(key)
+
+            # Extract placeholder details for detailed logging
+            placeholder_regex = re.compile(r'\{([^{}]+)\}')
+            source_placeholders = placeholder_regex.findall(source_value)
+            target_placeholders = placeholder_regex.findall(target_value)
+
+            logger.warning(
+                f"Key '{key}' failed validation in '{filename}' - reverting to source.\n"
+                f"  Source: {source_value}\n"
+                f"  Translation: {target_value}\n"
+                f"  Expected placeholders: {source_placeholders}\n"
+                f"  Found placeholders: {target_placeholders}"
+            )
+
+            # Use source value for this failed key
+            valid_translations[key] = source_value
+
+    # Log summary if any keys failed
+    if failed_keys:
+        logger.warning(
+            f"Validation failed for {len(failed_keys)} out of {len(final_translations)} keys in '{filename}'. "
+            f"Failed keys reverted to source: {', '.join(failed_keys[:5])}"
+            f"{' ...' if len(failed_keys) > 5 else ''}"
+        )
+        logger.info(
+            f"Successfully validated {len(final_translations) - len(failed_keys)} keys in '{filename}'."
+        )
+    else:
+        logger.info(f"All {len(final_translations)} keys passed validation in '{filename}'.")
+
+    return valid_translations, failed_keys
 
 async def translate_text_async(
         text: str,
@@ -756,10 +887,15 @@ You are a lead editor and quality assurance specialist for software localization
     ```
     {keys_to_review_text}
     ```
-2.  **Apply All Quality Rules**: Meticulously apply the language-specific quality checklist to every key in your scope.
-3.  **Do Not Escape Single Quotes**: The system will handle all necessary escaping for Java `MessageFormat`. Return single quotes (') as literal characters in the JSON values.
-4.  **Output JSON Only**: Your final output **must** be a single, valid JSON object that adheres to the required schema. This object should contain ONLY the keys listed in the "Strictly Limited Scope" section above, with their final, corrected translations as the values.
-5.  **Do Not Add Explanations**: Do not output any text, markdown, or explanations before or after the JSON object.
+2.  **CRITICAL - Placeholder Protection**: You will see placeholder tokens in the format `__PH_abc123__`. These represent dynamic values like {{0}}, {{1}}, etc.
+    - DO NOT translate, modify, remove, or duplicate these tokens
+    - DO NOT add new placeholder tokens
+    - Maintain EXACT 1:1 correspondence with source placeholders
+    - These tokens are automatically managed by the system
+3.  **Apply All Quality Rules**: Meticulously apply the language-specific quality checklist to every key in your scope.
+4.  **Do Not Escape Single Quotes**: The system will handle all necessary escaping for Java `MessageFormat`. Return single quotes (') as literal characters in the JSON values.
+5.  **Output JSON Only**: Your final output **must** be a single, valid JSON object that adheres to the required schema. This object should contain ONLY the keys listed in the "Strictly Limited Scope" section above, with their final, corrected translations as the values.
+6.  **Do Not Add Explanations**: Do not output any text, markdown, or explanations before or after the JSON object.
 
 {style_rules_text}
 
@@ -818,12 +954,19 @@ async def holistic_review_async(
         logger.error("OpenAI client is None. Cannot proceed with holistic review.")
         return {}
 
+    # Protect placeholders in both source and translated content before sending to AI
+    protected_source, source_placeholder_map = protect_placeholders_in_properties(source_content)
+    protected_translated, translated_placeholder_map = protect_placeholders_in_properties(translated_content)
+
+    logger.debug(f"Protected {len(source_placeholder_map)} placeholders in source content")
+    logger.debug(f"Protected {len(translated_placeholder_map)} placeholders in translated content")
+
     async with semaphore, rate_limiter:
         review_system_prompt = _build_holistic_review_system_prompt(
             target_language=target_language,
             keys_to_review=keys_to_review,
-            source_content=source_content,
-            translated_content=translated_content,
+            source_content=protected_source,
+            translated_content=protected_translated,
             style_rules_text=style_rules_text
         )
         max_retries = 3
@@ -849,7 +992,34 @@ async def holistic_review_async(
                 # The response should be a JSON string. Parse and validate it.
                 parsed_json = json.loads(response_text)
                 jsonschema.validate(instance=parsed_json, schema=LOCALIZATION_SCHEMA)
-                return parsed_json
+
+                # Debug: Check what AI returned before restoration
+                sample_ai_keys = list(parsed_json.keys())[:2]
+                for sample_key in sample_ai_keys:
+                    ai_value = parsed_json.get(sample_key, "")
+                    has_tokens = "__PH_" in ai_value
+                    logger.debug(f"AI returned for '{sample_key}': '{ai_value}' (has_tokens={has_tokens})")
+
+                # Restore placeholders in the reviewed translations
+                # AI might use tokens from EITHER source or translated content, so restore with both
+                restored_json = {}
+                for key, value in parsed_json.items():
+                    # First restore with translated map, then with source map for any remaining tokens
+                    restored_value = restore_placeholders_in_properties(value, translated_placeholder_map)
+                    restored_value = restore_placeholders_in_properties(restored_value, source_placeholder_map)
+                    restored_json[key] = restored_value
+
+                # Debug: Check restoration results
+                for sample_key in sample_ai_keys:
+                    if sample_key in restored_json:
+                        restored_value = restored_json[sample_key]
+                        has_tokens = "__PH_" in restored_value
+                        has_placeholders = "{0}" in restored_value or "{1}" in restored_value
+                        logger.debug(f"After restoration '{sample_key}': '{restored_value}' "
+                                   f"(has_tokens={has_tokens}, has_placeholders={has_placeholders})")
+
+                logger.debug(f"Restored placeholders in {len(restored_json)} reviewed translations")
+                return restored_json
 
             except json.JSONDecodeError:
                 logger.exception("Holistic review failed: AI did not return valid JSON.")
@@ -946,6 +1116,45 @@ def extract_language_from_filename(filename: str, supported_codes: List[str]) ->
         if filename.endswith(f'_{code}.properties'):
             return code
     return None
+
+def get_source_filename(translation_file: str, supported_codes: List[str]) -> str:
+    """
+    Extract the source filename by removing the language code suffix.
+
+    This function correctly handles base filenames containing underscores
+    (e.g., 'mu_sig') by checking against actual supported language codes
+    instead of using regex patterns that could incorrectly match parts
+    of the base filename.
+
+    Args:
+        translation_file: Filename with language code, e.g., 'mu_sig_pt_PT.properties'
+        supported_codes: List of valid language codes, e.g., ['es', 'pt_PT', 'pt_BR']
+
+    Returns:
+        Source filename with language suffix removed, e.g., 'mu_sig.properties'
+        If no language code is found, returns the original filename unchanged.
+
+    Examples:
+        >>> get_source_filename('mu_sig_es.properties', ['es', 'de'])
+        'mu_sig.properties'
+        >>> get_source_filename('mu_sig_pt_PT.properties', ['pt_PT', 'es'])
+        'mu_sig.properties'
+        >>> get_source_filename('app.properties', ['es', 'de'])
+        'app.properties'
+    """
+    # Sort by length (longest first) to handle 'pt_PT' before 'pt'
+    # This ensures we match the most specific language code first
+    sorted_codes = sorted(supported_codes, key=len, reverse=True)
+
+    for code in sorted_codes:
+        suffix = f'_{code}.properties'
+        if translation_file.endswith(suffix):
+            # Remove the language suffix and return base name + .properties
+            return translation_file[:-len(suffix)] + '.properties'
+
+    # Fallback: No language code found, return unchanged
+    # This handles source files like 'app.properties' or unsupported language codes
+    return translation_file
 
 def move_files_to_archive(input_folder_path: str, archive_folder_path: str):
     """
@@ -1193,7 +1402,8 @@ async def process_translation_queue(
 
         # Define full paths
         translation_file_path = os.path.join(translation_queue_folder, translation_file)
-        source_file_name = re.sub(r'_[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?\.properties$', '.properties', translation_file)
+        # Use get_source_filename() to correctly handle underscores in base filenames (e.g., mu_sig)
+        source_file_name = get_source_filename(translation_file, list(LANGUAGE_CODES.keys()))
         source_file_path = os.path.join(INPUT_FOLDER, source_file_name)
 
         if not os.path.exists(source_file_path):
@@ -1331,30 +1541,73 @@ async def process_translation_queue(
 
         # Always apply the results from the review stage, which includes fallbacks to draft for failed chunks.
         logger.info("Applying corrected translations (including any draft fallbacks).")
-        logger.debug(f"--- ALL CORRECTED JSON FROM REVIEW ---\n{json.dumps(final_corrected_translations, indent=2)}")
+
+        # Debug: Check if restored translations have real placeholders or protection tokens
+        sample_keys = list(final_corrected_translations.keys())[:3]
+        for sample_key in sample_keys:
+            sample_value = final_corrected_translations.get(sample_key, "")
+            has_protection_tokens = "__PH_" in sample_value
+            has_real_placeholders = "{0}" in sample_value or "{1}" in sample_value or "{2}" in sample_value
+            logger.debug(f"Sample restored translation for '{sample_key}': '{sample_value}' "
+                        f"(has_tokens={has_protection_tokens}, has_placeholders={has_real_placeholders})")
+
+        logger.debug("--- ALL CORRECTED JSON FROM REVIEW (first 3 keys) ---")
+        for key in sample_keys:
+            logger.debug(f"  {key}={final_corrected_translations.get(key, '')}")
+
+        # Track changes made by holistic review for INFO-level logging
+        review_changes = 0
         for line in draft_lines:
             if line['type'] == 'entry':
                 key = line.get('key')
                 if key in final_corrected_translations:
                     new_value = final_corrected_translations[key]
-                    logger.debug(f"Review changed key '{key}': FROM '{line['value']}' TO '{new_value}'")
+                    old_value = line['value']
+                    if old_value != new_value:
+                        review_changes += 1
+                        logger.debug(f"Review changed key '{key}': FROM '{old_value}' TO '{new_value}'")
                     line['value'] = new_value
 
-        # Reassemble the final file content
+        if review_changes > 0:
+            logger.info(f"Holistic review modified {review_changes} translations out of {len(final_corrected_translations)} reviewed keys.")
+
+        # --- Per-Key Validation ---
+        # Extract final translations from updated lines
+        final_translations = {}
+        for line in draft_lines:
+            if line['type'] == 'entry':
+                key = line.get('key')
+                if key:
+                    final_translations[key] = line['value']
+
+        # Debug: Check what's in final_translations before validation
+        validation_sample_keys = list(final_translations.keys())[:3]
+        logger.debug("--- FINAL TRANSLATIONS BEFORE VALIDATION (first 3 keys) ---")
+        for sample_key in validation_sample_keys:
+            sample_value = final_translations.get(sample_key, "")
+            has_protection_tokens = "__PH_" in sample_value
+            has_real_placeholders = "{0}" in sample_value or "{1}" in sample_value or "{2}" in sample_value
+            logger.debug(f"  {sample_key}={sample_value} "
+                        f"(has_tokens={has_protection_tokens}, has_placeholders={has_real_placeholders})")
+
+        # Validate each key individually and selectively revert failures
+        valid_translations, failed_keys = run_per_key_validation(
+            final_translations,
+            source_translations,
+            translation_file
+        )
+
+        # Apply validated translations (valid translations + reverted source for failed keys)
+        for line in draft_lines:
+            if line['type'] == 'entry':
+                key = line.get('key')
+                if key and key in valid_translations:
+                    line['value'] = valid_translations[key]
+
+        # Reassemble the final file content with validated translations
         updated_lines = draft_lines
         new_file_content = reassemble_file(updated_lines)
-
-        # --- Post-translation Validator ---
-        is_final_content_valid = run_post_translation_validation(
-            final_content=new_file_content,
-            source_translations=source_translations,
-            filename=translation_file
-        )
-        if not is_final_content_valid:
-            logger.error(
-                f"Discarding invalid translation for '{translation_file}'. The original file will be used.")
-            continue  # Skip to the next file
-        # --- End Post-translation Validator ---
+        # --- End Per-Key Validation ---
 
         translated_file_path = os.path.join(translated_queue_folder, translation_file)
 
