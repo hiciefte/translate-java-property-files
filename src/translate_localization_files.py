@@ -1403,7 +1403,7 @@ async def process_translation_queue(
         # Define full paths
         translation_file_path = os.path.join(translation_queue_folder, translation_file)
         # Use get_source_filename() to correctly handle underscores in base filenames (e.g., mu_sig)
-        source_file_name = get_source_filename(translation_file, LANGUAGE_CODES)
+        source_file_name = get_source_filename(translation_file, list(LANGUAGE_CODES.keys()))
         source_file_path = os.path.join(INPUT_FOLDER, source_file_name)
 
         if not os.path.exists(source_file_path):
@@ -1551,7 +1551,7 @@ async def process_translation_queue(
             logger.debug(f"Sample restored translation for '{sample_key}': '{sample_value}' "
                         f"(has_tokens={has_protection_tokens}, has_placeholders={has_real_placeholders})")
 
-        logger.debug(f"--- ALL CORRECTED JSON FROM REVIEW (first 3 keys) ---")
+        logger.debug("--- ALL CORRECTED JSON FROM REVIEW (first 3 keys) ---")
         for key in sample_keys:
             logger.debug(f"  {key}={final_corrected_translations.get(key, '')}")
 
@@ -1582,7 +1582,7 @@ async def process_translation_queue(
 
         # Debug: Check what's in final_translations before validation
         validation_sample_keys = list(final_translations.keys())[:3]
-        logger.debug(f"--- FINAL TRANSLATIONS BEFORE VALIDATION (first 3 keys) ---")
+        logger.debug("--- FINAL TRANSLATIONS BEFORE VALIDATION (first 3 keys) ---")
         for sample_key in validation_sample_keys:
             sample_value = final_translations.get(sample_key, "")
             has_protection_tokens = "__PH_" in sample_value

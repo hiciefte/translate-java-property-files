@@ -5,11 +5,9 @@ Tests the ability to protect placeholders during holistic review phase
 to prevent the AI from modifying, removing, or adding placeholders.
 """
 
-import pytest
 from src.translate_localization_files import (
     protect_placeholders_in_properties,
-    restore_placeholders_in_properties,
-    extract_placeholders
+    restore_placeholders_in_properties
 )
 
 

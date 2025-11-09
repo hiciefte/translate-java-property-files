@@ -5,7 +5,6 @@ Tests the ability to validate individual translation keys and selectively
 revert only failed keys to source instead of discarding entire translation files.
 """
 
-import pytest
 from src.translate_localization_files import run_per_key_validation
 
 
