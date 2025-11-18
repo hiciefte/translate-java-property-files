@@ -103,11 +103,50 @@ This comprehensive guide covers:
 - Testing and validation steps
 - Complete real-world examples
 
+## 🔧 Maintenance
+
+### Disk Space Management
+
+Docker-based deployments can accumulate significant disk space over time due to:
+- Dangling/unused Docker images from continuous builds
+- Build cache accumulation
+- Large log files and systemd journals
+
+**Automated cleanup recommended** for production deployments:
+
+- **Weekly Docker cleanup**: Removes old containers, images, volumes, and build cache
+- **Daily log rotation**: Keeps 7 days of logs with compression
+- **Systemd journal limits**: Cap at 1GB, 7-day retention
+
+**Implementation guides**:
+➡️ **[Disk Space Management Guide](./docs/maintenance/disk-space-management.md)** - Complete setup instructions
+➡️ **[Docker Cleanup Script](./scripts/docker-cleanup.sh)** - Ready-to-deploy cleanup script
+
+The maintenance documentation includes:
+- Automated maintenance scripts and cron job setup
+- Log rotation and journal management configuration
+- Monitoring commands and troubleshooting procedures
+- Real-world impact analysis and best practices
+
+**Monitor disk usage:**
+```bash
+# Check disk usage
+df -h /
+docker system df -v
+
+# Verify journal size
+journalctl --disk-usage
+
+# View cleanup logs (after setup)
+tail -50 logs/docker-cleanup.log
+```
+
 ## Troubleshooting
 
 *   **`Permission denied (publickey)` Errors**: This error during `git push` means the deploy key specified in `secrets/deploy_key/` has not been added to your target GitHub repository's "Deploy Keys" section with write access.
 *   **Validation Errors in Pull Request**: The PR description now includes a report of any files that were skipped due to linter or validation errors. These errors must be fixed manually in the source repository. See `docs/llm/debug-docker-service.md` for more details on common errors.
 *   **Server Deployment Issues**: Refer to the detailed deployment guide and the debugging documentation in the `docs/` directory.
+*   **Disk Space Issues**: See the [Disk Space Management](#disk-space-management) section above for automated cleanup strategies.
 
 ## Contributing
 
