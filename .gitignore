@@ -50,3 +50,4 @@ docker/docker-compose.override.*.yaml
 /docs/requirements/
 /CLAUDE.md
 /.claude/
+/claudedocs/
