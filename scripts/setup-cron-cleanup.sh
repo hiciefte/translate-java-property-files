@@ -46,7 +46,8 @@ cp "$SCRIPT_SOURCE" "$SCRIPT_DEST"
 chmod +x "$SCRIPT_DEST"
 
 # Create cron job
-PROJECT_NAME=$(basename "$PROJECT_PATH")
+# Sanitize project name for safe filename usage
+PROJECT_NAME=$(basename "$PROJECT_PATH" | sed 's/[^a-zA-Z0-9._-]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
 CRON_FILE="/etc/cron.weekly/docker-cleanup-${PROJECT_NAME}"
 
 echo "Creating weekly cron job: $CRON_FILE"

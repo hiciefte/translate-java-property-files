@@ -26,6 +26,7 @@
 #   4. Add to cron: see docs/maintenance/disk-space-management.md
 
 set -e
+set -o pipefail  # Ensure pipe failures are detected
 
 # Configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,9 +39,19 @@ mkdir -p "$(dirname "$LOG_FILE")"
 
 echo "[$DATE] Starting Docker cleanup..." | tee -a "$LOG_FILE"
 
-# Get disk usage before cleanup
-BEFORE=$(df -h / | tail -1 | awk '{print $5}' | sed 's/%//g')
-echo "[$DATE] Disk usage before: ${BEFORE}%" | tee -a "$LOG_FILE"
+# Get disk usage before cleanup (in KB for robustness across systems)
+BEFORE_AVAIL=$(df --block-size=1K / 2>/dev/null | awk 'NR==2 {print $4}')
+if ! [[ "$BEFORE_AVAIL" =~ ^[0-9]+$ ]]; then
+    # Fallback for systems without --block-size support (e.g., macOS)
+    BEFORE_AVAIL=$(df -k / | awk 'NR==2 {print $4}')
+    if ! [[ "$BEFORE_AVAIL" =~ ^[0-9]+$ ]]; then
+        echo "[$DATE] Warning: Could not parse disk usage reliably" | tee -a "$LOG_FILE"
+        BEFORE_AVAIL=0
+    fi
+fi
+BEFORE_GB=$((BEFORE_AVAIL / 1024 / 1024))
+BEFORE_PERCENT=$(df / | awk 'NR==2 {gsub(/%/, "", $5); print $5}')
+echo "[$DATE] Disk before cleanup: ${BEFORE_GB} GB available (${BEFORE_PERCENT}% used)" | tee -a "$LOG_FILE"
 
 # Remove stopped containers older than 24 hours
 echo "[$DATE] Removing old containers..." | tee -a "$LOG_FILE"
@@ -62,11 +73,28 @@ docker volume prune -f 2>&1 | tee -a "$LOG_FILE"
 echo "[$DATE] Removing old build cache..." | tee -a "$LOG_FILE"
 docker builder prune -f --filter "until=168h" 2>&1 | tee -a "$LOG_FILE"
 
-# Get disk usage after cleanup
-AFTER=$(df -h / | tail -1 | awk '{print $5}' | sed 's/%//g')
-FREED=$((BEFORE - AFTER))
-echo "[$DATE] Disk usage after: ${AFTER}%" | tee -a "$LOG_FILE"
-echo "[$DATE] Space freed: ${FREED}%" | tee -a "$LOG_FILE"
+# Get disk usage after cleanup (in KB for robustness across systems)
+AFTER_AVAIL=$(df --block-size=1K / 2>/dev/null | awk 'NR==2 {print $4}')
+if ! [[ "$AFTER_AVAIL" =~ ^[0-9]+$ ]]; then
+    # Fallback for systems without --block-size support (e.g., macOS)
+    AFTER_AVAIL=$(df -k / | awk 'NR==2 {print $4}')
+    if ! [[ "$AFTER_AVAIL" =~ ^[0-9]+$ ]]; then
+        echo "[$DATE] Warning: Could not parse disk usage reliably" | tee -a "$LOG_FILE"
+        AFTER_AVAIL=0
+    fi
+fi
+AFTER_GB=$((AFTER_AVAIL / 1024 / 1024))
+AFTER_PERCENT=$(df / | awk 'NR==2 {gsub(/%/, "", $5); print $5}')
+FREED_KB=$((AFTER_AVAIL - BEFORE_AVAIL))
+FREED_GB=$((FREED_KB / 1024 / 1024))
+PERCENT_CHANGE=$((BEFORE_PERCENT - AFTER_PERCENT))
+
+echo "[$DATE] Disk after cleanup: ${AFTER_GB} GB available (${AFTER_PERCENT}% used)" | tee -a "$LOG_FILE"
+if [ "$FREED_GB" -gt 0 ]; then
+    echo "[$DATE] Space freed: ${FREED_GB} GB (disk usage reduced by ${PERCENT_CHANGE} percentage points)" | tee -a "$LOG_FILE"
+else
+    echo "[$DATE] Space freed: ${FREED_KB} KB (disk usage reduced by ${PERCENT_CHANGE} percentage points)" | tee -a "$LOG_FILE"
+fi
 
 echo "[$DATE] Docker cleanup completed successfully" | tee -a "$LOG_FILE"
 echo "---" | tee -a "$LOG_FILE"
