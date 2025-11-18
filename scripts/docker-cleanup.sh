@@ -50,7 +50,16 @@ if ! [[ "$BEFORE_AVAIL" =~ ^[0-9]+$ ]]; then
     fi
 fi
 BEFORE_GB=$((BEFORE_AVAIL / 1024 / 1024))
-BEFORE_PERCENT=$(df / | awk 'NR==2 {gsub(/%/, "", $5); print $5}')
+# Extract percentage with robust parsing
+BEFORE_PERCENT=$(df --output=pcent / 2>/dev/null | tail -1 | sed 's/[^0-9]//g')
+if ! [[ "$BEFORE_PERCENT" =~ ^[0-9]+$ ]]; then
+    # Fallback: find the column with % sign
+    BEFORE_PERCENT=$(df / | awk 'NR==2 {for(i=1;i<=NF;i++) if($i ~ /%$/) {gsub(/%/, "", $i); print $i; exit}}')
+    if ! [[ "$BEFORE_PERCENT" =~ ^[0-9]+$ ]]; then
+        echo "[$DATE] Warning: Could not parse disk percentage reliably" | tee -a "$LOG_FILE"
+        BEFORE_PERCENT=0
+    fi
+fi
 echo "[$DATE] Disk before cleanup: ${BEFORE_GB} GB available (${BEFORE_PERCENT}% used)" | tee -a "$LOG_FILE"
 
 # Remove stopped containers older than 24 hours
@@ -84,7 +93,16 @@ if ! [[ "$AFTER_AVAIL" =~ ^[0-9]+$ ]]; then
     fi
 fi
 AFTER_GB=$((AFTER_AVAIL / 1024 / 1024))
-AFTER_PERCENT=$(df / | awk 'NR==2 {gsub(/%/, "", $5); print $5}')
+# Extract percentage with robust parsing
+AFTER_PERCENT=$(df --output=pcent / 2>/dev/null | tail -1 | sed 's/[^0-9]//g')
+if ! [[ "$AFTER_PERCENT" =~ ^[0-9]+$ ]]; then
+    # Fallback: find the column with % sign
+    AFTER_PERCENT=$(df / | awk 'NR==2 {for(i=1;i<=NF;i++) if($i ~ /%$/) {gsub(/%/, "", $i); print $i; exit}}')
+    if ! [[ "$AFTER_PERCENT" =~ ^[0-9]+$ ]]; then
+        echo "[$DATE] Warning: Could not parse disk percentage reliably" | tee -a "$LOG_FILE"
+        AFTER_PERCENT=0
+    fi
+fi
 FREED_KB=$((AFTER_AVAIL - BEFORE_AVAIL))
 FREED_GB=$((FREED_KB / 1024 / 1024))
 PERCENT_CHANGE=$((BEFORE_PERCENT - AFTER_PERCENT))
