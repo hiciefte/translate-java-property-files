@@ -147,4 +147,35 @@ Once the manual run is successful, schedule the service to run automatically.
     ```
 3.  Save and close the file.
 
+## Step 7: Configure Log Rotation
+
+To prevent log files from growing indefinitely, set up logrotate. **Important**: The Docker container runs as `appuser` (uid 9999), so log files must be created with the correct ownership after rotation.
+
+1.  Create a logrotate configuration file:
+    ```bash
+    sudo nano /etc/logrotate.d/translator-service
+    ```
+
+2.  Add the following configuration:
+    ```
+    /opt/translator-service/logs/*.log {
+        daily
+        rotate 7
+        compress
+        delaycompress
+        missingok
+        notifempty
+        create 0644 9999 9999
+        dateext
+        dateformat -%Y%m%d
+    }
+    ```
+
+    > **Critical**: The `create 0644 9999 9999` line ensures new log files are owned by uid 9999 (appuser). Without this, the container will fail with "Permission denied" errors after log rotation.
+
+3.  Test the configuration:
+    ```bash
+    sudo logrotate -d /etc/logrotate.d/translator-service
+    ```
+
 **Deployment is now complete.** The service will run automatically on the schedule you've set. You can check the log file at `/opt/translator-service/logs/cron_job.log` to monitor its execution.
