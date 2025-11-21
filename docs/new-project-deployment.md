@@ -157,7 +157,7 @@ To prevent log files from growing indefinitely, set up logrotate. **Important**:
     ```
 
 2.  Add the following configuration:
-    ```
+    ```ini
     /opt/translator-service/logs/*.log {
         daily
         rotate 7
