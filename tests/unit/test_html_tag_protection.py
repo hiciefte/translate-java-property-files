@@ -30,8 +30,9 @@ class TestPlaceholderExtraction:
         assert "{0}" in mapping.values()
         assert "{1}" in mapping.values()
 
-        # The processed text should contain placeholder tokens
-        assert "__PH_" in processed
+        # The processed text should contain the generated placeholder tokens
+        for token in mapping.keys():
+            assert token in processed
 
         # Should NOT contain the original placeholders
         assert "{0}" not in processed
