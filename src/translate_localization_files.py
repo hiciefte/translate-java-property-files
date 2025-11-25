@@ -775,7 +775,8 @@ async def translate_text_async(
 You are an expert translator specializing in software localization. Translate the following text from English to {target_language}, considering the context and glossary provided.
 
 **Instructions**:
-- **Do not translate or modify placeholder tokens**: Any text enclosed within double underscores `__` (e.g., `__PH_abc123__`) should remain exactly as is.
+- **Do not translate or modify placeholder tokens**: Any text enclosed within double underscores `__` (e.g., `__PH_abc123__`) should remain exactly as is. These represent placeholders like {{0}}, {{1}}, or HTML tags.
+- **CRITICAL - Translate ALL other text**: You MUST translate all regular text, even if it appears between, before, or after placeholder tokens. Do not skip text just because it is near placeholders.
 - **Strictly follow all glossaries**:
   - **Brand/Technical Glossary**: These terms MUST NOT be translated. Preserve their original casing and form.
   - **Translation Glossary**: These terms are non-negotiable. You MUST use the provided translation, matching the source term case-insensitively.
@@ -887,15 +888,16 @@ You are a lead editor and quality assurance specialist for software localization
     ```
     {keys_to_review_text}
     ```
-2.  **CRITICAL - Placeholder Protection**: You will see placeholder tokens in the format `__PH_abc123__`. These represent dynamic values like {{0}}, {{1}}, etc.
+2.  **CRITICAL - Placeholder Protection**: You will see placeholder tokens in the format `__PH_abc123__`. These represent dynamic values like {{0}}, {{1}}, HTML tags, etc.
     - DO NOT translate, modify, remove, or duplicate these tokens
     - DO NOT add new placeholder tokens
     - Maintain EXACT 1:1 correspondence with source placeholders
     - These tokens are automatically managed by the system
-3.  **Apply All Quality Rules**: Meticulously apply the language-specific quality checklist to every key in your scope.
-4.  **Do Not Escape Single Quotes**: The system will handle all necessary escaping for Java `MessageFormat`. Return single quotes (') as literal characters in the JSON values.
-5.  **Output JSON Only**: Your final output **must** be a single, valid JSON object that adheres to the required schema. This object should contain ONLY the keys listed in the "Strictly Limited Scope" section above, with their final, corrected translations as the values.
-6.  **Do Not Add Explanations**: Do not output any text, markdown, or explanations before or after the JSON object.
+3.  **CRITICAL - Translate ALL Other Text**: You MUST ensure that ALL regular text (text that is NOT a placeholder token) is properly translated, even if it appears between, before, or after placeholder tokens. Do not leave any translatable text untranslated just because it is near placeholders.
+4.  **Apply All Quality Rules**: Meticulously apply the language-specific quality checklist to every key in your scope.
+5.  **Do Not Escape Single Quotes**: The system will handle all necessary escaping for Java `MessageFormat`. Return single quotes (') as literal characters in the JSON values.
+6.  **Output JSON Only**: Your final output **must** be a single, valid JSON object that adheres to the required schema. This object should contain ONLY the keys listed in the "Strictly Limited Scope" section above, with their final, corrected translations as the values.
+7.  **Do Not Add Explanations**: Do not output any text, markdown, or explanations before or after the JSON object.
 
 {style_rules_text}
 
