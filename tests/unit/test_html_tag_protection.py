@@ -7,7 +7,6 @@ This test module verifies that:
 3. Text between placeholders and HTML tags is NOT protected and can be translated
 """
 
-import pytest
 from src.translate_localization_files import (
     extract_placeholders,
     restore_placeholders,
