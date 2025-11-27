@@ -96,6 +96,34 @@ for tool in yq git tx curl; do
     fi
 done
 
+# --- Execution Lock and Logging ---
+# Lock file to prevent concurrent executions for the same repository
+LOCK_FILE="/tmp/translation-${UPSTREAM_REPO_NAME//\//-}.lock"
+EXECUTION_LOG="/var/log/translation-executions.log"
+
+# Log execution start
+echo "$(date -Iseconds) START ${HOSTNAME:-unknown} REPO=${UPSTREAM_REPO_NAME} PID=$$" >> "$EXECUTION_LOG" 2>/dev/null || true
+
+# Try to acquire exclusive lock
+exec 200>"$LOCK_FILE"
+if ! flock -n 200; then
+    log "Another translation process is running for $UPSTREAM_REPO_NAME" "ERROR"
+    log "Lock file: $LOCK_FILE" "ERROR"
+    log "If you believe this is an error, remove the lock file manually" "ERROR"
+    echo "$(date -Iseconds) BLOCKED ${HOSTNAME:-unknown} REPO=${UPSTREAM_REPO_NAME} PID=$$" >> "$EXECUTION_LOG" 2>/dev/null || true
+    exit 0
+fi
+
+# Lock will be automatically released on script exit
+trap 'flock -u 200; echo "$(date -Iseconds) END ${HOSTNAME:-unknown} REPO=${UPSTREAM_REPO_NAME} PID=$$ STATUS=$?" >> '"$EXECUTION_LOG"' 2>/dev/null || true' EXIT
+
+log "Acquired execution lock for $UPSTREAM_REPO_NAME"
+
+# Add random delay (0-5 seconds) to desynchronize concurrent starts
+RANDOM_DELAY=$((RANDOM % 6))
+log "Adding random delay of ${RANDOM_DELAY}s to desynchronize concurrent starts..." "DEBUG"
+sleep "$RANDOM_DELAY"
+
 # --- Pull Request Gate ---
 # This gate prevents the script from running if there's already a pending PR.
 # It checks for two conditions:
