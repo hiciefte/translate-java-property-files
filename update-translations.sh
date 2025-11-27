@@ -96,6 +96,47 @@ for tool in yq git tx curl; do
     fi
 done
 
+# --- Execution Lock and Logging ---
+# Lock file to prevent concurrent executions for the same repository
+LOCK_FILE="/tmp/translation-${UPSTREAM_REPO_NAME//\//-}.lock"
+EXECUTION_LOG="/var/log/translation-executions.log"
+
+# Log execution start
+echo "$(date -Iseconds) START ${HOSTNAME:-unknown} REPO=${UPSTREAM_REPO_NAME} PID=$$" >> "$EXECUTION_LOG" 2>/dev/null || true
+
+# Try to acquire exclusive lock
+exec 200>"$LOCK_FILE"
+if ! flock -n 200; then
+    log "Another translation process is running for $UPSTREAM_REPO_NAME" "ERROR"
+    log "Lock file: $LOCK_FILE" "ERROR"
+    log "If you believe this is an error, remove the lock file manually" "ERROR"
+    echo "$(date -Iseconds) BLOCKED ${HOSTNAME:-unknown} REPO=${UPSTREAM_REPO_NAME} PID=$$" >> "$EXECUTION_LOG" 2>/dev/null || true
+    exit 0
+fi
+
+# Lock will be automatically released on script exit
+# Centralized cleanup function to ensure proper resource cleanup
+cleanup_on_exit() {
+    local exit_status=$?
+    # Kill keepalive process if it's running
+    if [ -n "${KEEPALIVE_PID:-}" ]; then
+        kill "$KEEPALIVE_PID" 2>/dev/null || true
+    fi
+    # Always release the flock
+    flock -u 200 2>/dev/null || true
+    # Log execution end
+    echo "$(date -Iseconds) END ${HOSTNAME:-unknown} REPO=${UPSTREAM_REPO_NAME} PID=$$ STATUS=$exit_status" >> "$EXECUTION_LOG" 2>/dev/null || true
+}
+
+trap cleanup_on_exit EXIT
+
+log "Acquired execution lock for $UPSTREAM_REPO_NAME"
+
+# Add random delay (0-5 seconds) to desynchronize concurrent starts
+RANDOM_DELAY=$((RANDOM % 6))
+log "Adding random delay of ${RANDOM_DELAY}s to desynchronize concurrent starts..." "DEBUG"
+sleep "$RANDOM_DELAY"
+
 # --- Pull Request Gate ---
 # This gate prevents the script from running if there's already a pending PR.
 # It checks for two conditions:
@@ -301,11 +342,6 @@ else
         # Get the process ID of the background loop
         KEEPALIVE_PID=$!
 
-        # When this script exits, kill the background keepalive process.
-        # This ensures it doesn't become a zombie process.
-        # The kill is made non-fatal to prevent script exit if the PID is already gone.
-        trap 'kill "$KEEPALIVE_PID" 2>/dev/null || true' EXIT
-        
         # Execute and filter output, but preserve original tx exit code.
         set +e
         { $TX_PULL_CMD 2>&1 | grep -v -E 'Pulling file|Creating download job|File was not found locally'; }
@@ -314,11 +350,11 @@ else
 
         # Stop the keepalive process now that tx pull is done.
         # Make the kill non-fatal in case the process has already exited.
+        # Note: cleanup_on_exit will also kill KEEPALIVE_PID if still running at script exit
         if [ -n "${KEEPALIVE_PID:-}" ]; then
             kill "$KEEPALIVE_PID" 2>/dev/null || true
+            unset KEEPALIVE_PID
         fi
-        # Remove the trap so it doesn't try to kill a non-existent process on exit.
-        trap - EXIT
 
         if [ $TX_STATUS -ne 0 ]; then
             log "Transifex pull failed (exit $TX_STATUS). See previous logs for details." "ERROR"
