@@ -607,6 +607,98 @@ class TestFileDetectionLogic(unittest.TestCase):
         self.assertIn("application_zh-Hans.properties", changed_basenames)
         self.assertIn("application_zh-Hant.properties", changed_basenames)
 
+    @patch('subprocess.run')
+    def test_get_changed_files_process_all_files_mode(self, mock_subprocess_run):
+        """Tests process_all_files mode scans input folder directly without git."""
+        from src.translate_localization_files import get_changed_translation_files
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = temp_dir
+            input_folder = os.path.join(temp_dir, "i18n", "resources")
+            nested_folder = os.path.join(input_folder, "nested")
+            os.makedirs(nested_folder, exist_ok=True)
+
+            included_paths = [
+                os.path.join(input_folder, "mobile_de.properties"),
+                os.path.join(nested_folder, "payment_method_pt_BR.properties"),
+                os.path.join(nested_folder, "academy_zh-Hans.properties"),
+            ]
+            excluded_paths = [
+                os.path.join(input_folder, "mobile.properties"),  # source file
+                os.path.join(input_folder, "notes.txt"),  # not properties
+            ]
+
+            for file_path in included_paths + excluded_paths:
+                with open(file_path, "w", encoding="utf-8") as temp_file:
+                    temp_file.write("k=v\n")
+
+            files = get_changed_translation_files(input_folder, repo_root, process_all_files=True)
+
+        mock_subprocess_run.assert_not_called()
+        self.assertEqual(
+            files,
+            [
+                "mobile_de.properties",
+                "nested/academy_zh-Hans.properties",
+                "nested/payment_method_pt_BR.properties",
+            ]
+        )
+
+    @patch('subprocess.run')
+    def test_get_changed_files_process_all_files_mode_with_glob_filter(self, mock_subprocess_run):
+        """Tests process_all_files mode also honors TRANSLATION_FILTER_GLOB."""
+        from src.translate_localization_files import get_changed_translation_files
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = temp_dir
+            input_folder = os.path.join(temp_dir, "i18n", "resources")
+            os.makedirs(input_folder, exist_ok=True)
+
+            for file_name in [
+                "mobile_de.properties",
+                "desktop_de.properties",
+                "mobile_es.properties",
+            ]:
+                with open(os.path.join(input_folder, file_name), "w", encoding="utf-8") as temp_file:
+                    temp_file.write("k=v\n")
+
+            with patch.dict('os.environ', {'TRANSLATION_FILTER_GLOB': 'mobile_*.properties'}):
+                files = get_changed_translation_files(input_folder, repo_root, process_all_files=True)
+
+        mock_subprocess_run.assert_not_called()
+        self.assertEqual(files, ["mobile_de.properties", "mobile_es.properties"])
+
+    @patch('subprocess.run')
+    def test_get_changed_files_excludes_archive_paths(self, mock_subprocess_run):
+        """Tests file detection excludes archive directories in both discovery modes."""
+        from src.translate_localization_files import get_changed_translation_files
+
+        git_output = textwrap.dedent("""
+             M i18n/resources/archive/mobile_de.properties
+             M i18n/resources/mobile_es.properties
+        """).strip()
+        mock_subprocess_run.return_value = MagicMock(stdout=git_output, stderr="", check_returncode=MagicMock())
+
+        repo_root = "/fake/repo"
+        input_folder = "/fake/repo/i18n/resources"
+        changed_files = get_changed_translation_files(input_folder, repo_root)
+        changed_basenames = [os.path.basename(f) for f in changed_files]
+        self.assertEqual(changed_basenames, ["mobile_es.properties"])
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = temp_dir
+            input_folder = os.path.join(temp_dir, "i18n", "resources")
+            archive_folder = os.path.join(input_folder, "archive")
+            os.makedirs(archive_folder, exist_ok=True)
+
+            with open(os.path.join(archive_folder, "mobile_de.properties"), "w", encoding="utf-8") as temp_file:
+                temp_file.write("k=v\n")
+            with open(os.path.join(input_folder, "mobile_es.properties"), "w", encoding="utf-8") as temp_file:
+                temp_file.write("k=v\n")
+
+            files = get_changed_translation_files(input_folder, repo_root, process_all_files=True)
+            self.assertEqual(files, ["mobile_es.properties"])
+
 
 if __name__ == '__main__':
     unittest.main()

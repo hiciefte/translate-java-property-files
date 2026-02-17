@@ -29,6 +29,7 @@ class AppConfig:
 
     # Processing settings
     dry_run: bool
+    process_all_files: bool
     holistic_review_chunk_size: int
     max_concurrent_api_calls: int
 
@@ -233,6 +234,7 @@ def load_app_config() -> AppConfig:
 
     # Get configuration values with defaults
     dry_run = config.get('dry_run', False)
+    process_all_files = bool(config.get('process_all_files', False))
     model_name = config.get('model_name', 'gpt-4')
     review_model_name = os.environ.get('REVIEW_MODEL_NAME', config.get('review_model_name', model_name))
     retranslate_identical_source_strings = bool(config.get('retranslate_identical_source_strings', False))
@@ -267,6 +269,7 @@ def load_app_config() -> AppConfig:
         review_model_name=review_model_name,
         max_model_tokens=config.get('max_model_tokens', 4000),
         dry_run=dry_run,
+        process_all_files=process_all_files,
         holistic_review_chunk_size=holistic_review_chunk_size,
         max_concurrent_api_calls=config.get('max_concurrent_api_calls', 1),
         language_codes=language_codes,

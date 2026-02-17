@@ -469,6 +469,11 @@ brand_technical_glossary:
 # Set to null or remove to translate all changed files.
 # translation_file_filter_glob: null
 
+# Optional: Process all translation files under input_folder instead of only git-changed files.
+# Useful for one-time ledger bootstrap or forced full retranslation runs.
+# Keep false for normal incremental operation.
+process_all_files: false
+
 # Optional: Pull source files (*_en.properties) from Transifex as well as translations.
 # Set to `true` if the canonical source of truth for English strings is Transifex.
 # The default behavior (`false`) is to only pull translation files and assume

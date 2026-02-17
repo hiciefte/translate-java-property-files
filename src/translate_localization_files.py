@@ -72,6 +72,7 @@ MODEL_NAME = config.model_name
 REVIEW_MODEL_NAME = config.review_model_name
 MAX_MODEL_TOKENS = config.max_model_tokens
 DRY_RUN = config.dry_run
+PROCESS_ALL_FILES = config.process_all_files
 HOLISTIC_REVIEW_CHUNK_SIZE = config.holistic_review_chunk_size
 MAX_CONCURRENT_API_CALLS = config.max_concurrent_api_calls
 LANGUAGE_CODES = config.language_codes
@@ -1350,7 +1351,11 @@ def validate_paths(input_folder: str, translation_queue: str, translated_queue: 
             raise PermissionError(f"{name} '{path}' lacks required permissions.")
     logger.info("All critical paths are valid and accessible.")
 
-def get_changed_translation_files(input_folder_path: str, repo_root: str) -> List[str]:
+def get_changed_translation_files(
+        input_folder_path: str,
+        repo_root: str,
+        process_all_files: bool = False
+) -> List[str]:
     """
     Use git to find changed translation files in the input folder.
 
@@ -1361,11 +1366,55 @@ def get_changed_translation_files(input_folder_path: str, repo_root: str) -> Lis
     Args:
         input_folder_path (str): The absolute path to the input folder.
         repo_root (str): The absolute path to the Git repository root.
+        process_all_files (bool): If true, scan all translation files under input_folder_path
+            instead of only changed files from git status.
 
     Returns:
-        List[str]: List of changed translation file names relative to input_folder_path.
+        List[str]: List of translation file names relative to input_folder_path.
     """
+    def is_archive_path(relative_path: str) -> bool:
+        """Return True when a relative file path is inside an archive directory."""
+        normalized_path = relative_path.replace('\\', '/')
+        return normalized_path.startswith('archive/') or '/archive/' in normalized_path
+
+    def apply_filter_glob(files: List[str]) -> List[str]:
+        """Apply optional TRANSLATION_FILTER_GLOB filtering to discovered files."""
+        filter_glob = os.environ.get('TRANSLATION_FILTER_GLOB')
+        if not filter_glob:
+            return files
+
+        import fnmatch
+        # If the glob contains a path separator, match against the full relative path.
+        # Otherwise, match against the basename to preserve the original behavior.
+        if '/' in filter_glob:
+            filtered_list = [f for f in files if fnmatch.fnmatch(f, filter_glob)]
+        else:
+            filtered_list = [f for f in files if fnmatch.fnmatch(os.path.basename(f), filter_glob)]
+
+        logger.info(
+            "Applied filter '%s', %d out of %d files will be translated.",
+            filter_glob,
+            len(filtered_list),
+            len(files)
+        )
+        return filtered_list
+
     try:
+        if process_all_files:
+            logger.info("process_all_files=true, scanning all translation files under '%s'.", input_folder_path)
+            all_translation_files: List[str] = []
+            for root, _, files in os.walk(input_folder_path):
+                for filename in files:
+                    if not filename.endswith('.properties'):
+                        continue
+                    if re.search(r'_[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?\.properties$', filename):
+                        absolute_path = os.path.join(root, filename)
+                        relative_path = os.path.relpath(absolute_path, input_folder_path)
+                        if is_archive_path(relative_path):
+                            continue
+                        all_translation_files.append(relative_path)
+            return apply_filter_glob(sorted(all_translation_files))
+
         # Calculate the relative path of input_folder from repo_root
         rel_input_folder = os.path.relpath(input_folder_path, repo_root)
 
@@ -1402,26 +1451,11 @@ def get_changed_translation_files(input_folder_path: str, repo_root: str) -> Lis
                     if re.search(r'_[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?\.properties$', filepath):
                         # Extract the filename relative to input_folder
                         rel_path = os.path.relpath(filepath, rel_input_folder)
+                        if is_archive_path(rel_path):
+                            continue
                         changed_files.append(rel_path)
 
-        # If a filter glob is provided via environment variable, apply it now.
-        # This allows the pipeline to selectively translate only a subset of changed files.
-        filter_glob = os.environ.get('TRANSLATION_FILTER_GLOB')
-        if filter_glob:
-            # We need the `fnmatch` module to compare against the glob pattern.
-            import fnmatch
-            # If the glob contains a path separator, match against the full relative path.
-            # Otherwise, match against the basename to preserve the original behavior.
-            if '/' in filter_glob:
-                filtered_list = [f for f in changed_files if fnmatch.fnmatch(f, filter_glob)]
-            else:
-                filtered_list = [f for f in changed_files if fnmatch.fnmatch(os.path.basename(f), filter_glob)]
-
-            logger.info(
-                f"Applied filter '{filter_glob}', {len(filtered_list)} out of {len(changed_files)} files will be translated.")
-            return filtered_list
-
-        return changed_files
+        return apply_filter_glob(changed_files)
     except subprocess.CalledProcessError as git_exc:
         logger.error(f"Error running git command: {git_exc.stderr}")
         return []
@@ -1789,12 +1823,16 @@ async def main():
     # --- Validation and Setup ---
     validate_paths(INPUT_FOLDER, TRANSLATION_QUEUE_FOLDER, TRANSLATED_QUEUE_FOLDER, REPO_ROOT)
 
-    # Step 1: Identify changed translation files
-    changed_files = get_changed_translation_files(INPUT_FOLDER, REPO_ROOT)
+    # Step 1: Identify translation files to process.
+    changed_files = get_changed_translation_files(
+        INPUT_FOLDER,
+        REPO_ROOT,
+        process_all_files=PROCESS_ALL_FILES
+    )
     if not changed_files:
-        logger.info("No changed translation files detected. Exiting.")
+        logger.info("No translation files to process. Exiting.")
         return
-    logger.info(f"Detected {len(changed_files)} changed translation file(s).")
+    logger.info(f"Detected {len(changed_files)} translation file(s) to process.")
 
     # Step 2: Archive the original files before any processing.
     archive_folder_path = os.path.join(INPUT_FOLDER, 'archive')

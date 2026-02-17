@@ -89,6 +89,7 @@ The service is configured through a combination of YAML files and a single envir
 *   **`docker/config.docker.yaml`**: **Server configuration.** This is the configuration file used by the service when running inside Docker. It points to paths within the container (e.g., `/target_repo`).
 *   **`glossary.json`**: Provides language-specific translations for key terms to ensure consistency.
 *   **`translation_file_filter_glob`** (optional, in `config.yaml`): A glob pattern that limits which changed `.properties` files are processed by the AI translator. This is useful for workflows where you want to pull all updated files from Transifex but only run the AI step on a specific subset (e.g., `mobile_*.properties`).
+*   **`process_all_files`** (optional, in `config.yaml`): Defaults to `false`. When `true`, the pipeline scans and processes all translation files under `input_folder` instead of only git-changed files. Useful for one-time ledger bootstrap runs.
 *   **`retranslate_identical_source_strings`** (optional, in `config.yaml`): Defaults to `false`. When `false`, the pipeline avoids re-translating existing keys that already match source text unless they were newly synchronized in the current run. Set to `true` to restore legacy behavior.
 *   **`translation_key_ledger_file_path`** (optional, in `config.yaml`): File path for a persistent per-key hash ledger. The ledger stores source/target hashes per key and lets the pipeline retranslate only when source text changes, without repeatedly touching already-stable keys.
 
