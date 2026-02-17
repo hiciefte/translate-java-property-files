@@ -41,7 +41,7 @@ def check_placeholder_parity(base_string: str, target_string: str) -> bool:
 
     return base_placeholders == target_placeholders
 
-def synchronize_keys(target_file_path: str, source_file_path: str):
+def synchronize_keys(target_file_path: str, source_file_path: str) -> Tuple[Set[str], Set[str]]:
     """
     Synchronizes the keys in a target .properties file with a source file.
     - Removes keys from the target that are not in the source.
@@ -51,6 +51,9 @@ def synchronize_keys(target_file_path: str, source_file_path: str):
     Args:
         target_file_path: The path to the target locale file to be modified.
         source_file_path: The path to the source (e.g., English) file.
+
+    Returns:
+        A tuple of (missing_keys, extra_keys) that were applied to the target.
     """
     # Parse both files to get their structure and key-value pairs
     target_parsed_lines, target_translations = parse_properties_file(target_file_path)
@@ -60,7 +63,7 @@ def synchronize_keys(target_file_path: str, source_file_path: str):
     missing_keys, extra_keys = check_key_coverage(set(source_translations.keys()), set(target_translations.keys()))
 
     if not missing_keys and not extra_keys:
-        return # No changes needed
+        return missing_keys, extra_keys  # No changes needed
 
     # Filter out lines with extra keys from the target file
     final_parsed_lines = [
@@ -82,6 +85,8 @@ def synchronize_keys(target_file_path: str, source_file_path: str):
     new_content = reassemble_file(final_parsed_lines)
     with open(target_file_path, 'w', encoding='utf-8') as f:
         f.write(new_content)
+
+    return missing_keys, extra_keys
 
 def check_encoding_and_mojibake(file_path: str) -> List[str]:
     """

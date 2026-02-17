@@ -43,6 +43,15 @@ translated_queue_folder: "translated_queue"
 # If true, the script logs actions without altering files
 dry_run: false
 
+# If true, existing keys whose target text is identical to source text
+# are retranslated on every run (legacy behavior). Keep this false to
+# only translate newly added keys by default and reduce translation churn.
+retranslate_identical_source_strings: false
+
+# Optional persistent per-key hash ledger used to detect source changes
+# without reprocessing already-stable translations.
+translation_key_ledger_file_path: "logs/translation_key_ledger.json"
+
 # Concurrency setting for OpenAI API calls.
 # This controls how many API requests can be active at the same time.
 # A lower value (e.g., 1 or 2) is safer to avoid API rate limits.

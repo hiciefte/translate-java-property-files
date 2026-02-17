@@ -14,6 +14,7 @@ os.environ['OPENAI_API_KEY'] = 'DUMMY_KEY_FOR_TESTING'
 from src.translate_localization_files import (
     build_context,
     normalize_value,
+    compute_ledger_hash,
     extract_texts_to_translate,
     extract_language_from_filename,
     run_post_translation_validation
@@ -180,12 +181,12 @@ class TestCoreLogic(unittest.TestCase):
         source_translations = {'key0_translated': 'Source Value 0', 'key1_needs_translation': 'Source Value 1', 'key2_new': 'Source Value 2'}
 
         texts, indices, keys = extract_texts_to_translate(parsed_lines, source_translations, target_translations)
-        expected_texts = sorted(['Source Value 1', 'Source Value 2'])
-        expected_keys = sorted(['key1_needs_translation', 'key2_new'])
-        expected_indices = [1, 3]
+        expected_texts = ['Source Value 2']
+        expected_keys = ['key2_new']
+        expected_indices = [3]
 
-        self.assertEqual(sorted(texts), expected_texts)
-        self.assertEqual(sorted(keys), expected_keys)
+        self.assertEqual(texts, expected_texts)
+        self.assertEqual(keys, expected_keys)
         self.assertEqual(indices, expected_indices)
 
     def test_should_not_retranslate_existing_translations(self):
@@ -198,6 +199,76 @@ class TestCoreLogic(unittest.TestCase):
         source_translations = {'key1': 'Source Value 1', 'key2': 'Source Value 2'}
         texts, _, _ = extract_texts_to_translate(parsed_lines, source_translations, target_translations)
         self.assertEqual(len(texts), 0)
+
+    def test_extract_texts_to_translate_includes_newly_added_identical_keys(self):
+        """Newly synchronized keys with source-identical values should be translated."""
+        parsed_lines = [
+            {'type': 'entry', 'key': 'key_existing', 'value': 'Source Existing', 'line_number': 0},
+            {'type': 'entry', 'key': 'key_newly_added', 'value': 'Source New', 'line_number': 1},
+        ]
+        target_translations = {
+            'key_existing': 'Source Existing',
+            'key_newly_added': 'Source New'
+        }
+        source_translations = {
+            'key_existing': 'Source Existing',
+            'key_newly_added': 'Source New'
+        }
+
+        texts, indices, keys = extract_texts_to_translate(
+            parsed_lines,
+            source_translations,
+            target_translations,
+            newly_added_keys={'key_newly_added'}
+        )
+
+        self.assertEqual(texts, ['Source New'])
+        self.assertEqual(indices, [1])
+        self.assertEqual(keys, ['key_newly_added'])
+
+    def test_extract_texts_to_translate_can_opt_in_retranslate_identical_existing(self):
+        """Legacy behavior can be enabled explicitly for source-identical existing keys."""
+        parsed_lines = [
+            {'type': 'entry', 'key': 'key_existing', 'value': 'Source Existing', 'line_number': 0},
+        ]
+        target_translations = {'key_existing': 'Source Existing'}
+        source_translations = {'key_existing': 'Source Existing'}
+
+        texts, indices, keys = extract_texts_to_translate(
+            parsed_lines,
+            source_translations,
+            target_translations,
+            retranslate_identical_existing=True
+        )
+
+        self.assertEqual(texts, ['Source Existing'])
+        self.assertEqual(indices, [0])
+        self.assertEqual(keys, ['key_existing'])
+
+    def test_extract_texts_to_translate_includes_existing_key_when_source_hash_changed(self):
+        """Existing keys should be translated when source text changed since last run."""
+        parsed_lines = [
+            {'type': 'entry', 'key': 'key_existing', 'value': 'Old Target Translation', 'line_number': 0},
+        ]
+        target_translations = {'key_existing': 'Old Target Translation'}
+        source_translations = {'key_existing': 'New Source Value'}
+        file_ledger_entries = {
+            'key_existing': {
+                'source_hash': compute_ledger_hash('Old Source Value'),
+                'target_hash': compute_ledger_hash('Old Target Translation')
+            }
+        }
+
+        texts, indices, keys = extract_texts_to_translate(
+            parsed_lines,
+            source_translations,
+            target_translations,
+            file_ledger_entries=file_ledger_entries
+        )
+
+        self.assertEqual(texts, ['New Source Value'])
+        self.assertEqual(indices, [0])
+        self.assertEqual(keys, ['key_existing'])
 
     def test_extract_language_from_filename(self):
         """Tests that `extract_language_from_filename` correctly identifies language codes."""

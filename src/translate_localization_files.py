@@ -1,5 +1,6 @@
 import asyncio
 import datetime as _dt
+import hashlib
 import json
 import logging
 import os
@@ -11,7 +12,7 @@ import sys
 import tempfile
 import uuid
 from email.utils import parsedate_to_datetime
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Set
 
 # --- Python Version Check ---
 # This script requires Python 3.11 or newer for features like modern asyncio.
@@ -75,11 +76,13 @@ HOLISTIC_REVIEW_CHUNK_SIZE = config.holistic_review_chunk_size
 MAX_CONCURRENT_API_CALLS = config.max_concurrent_api_calls
 LANGUAGE_CODES = config.language_codes
 NAME_TO_CODE = config.name_to_code
+RETRANSLATE_IDENTICAL_SOURCE_STRINGS = config.retranslate_identical_source_strings
 STYLE_RULES = config.style_rules
 PRECOMPUTED_STYLE_RULES_TEXT = config.precomputed_style_rules_text
 BRAND_GLOSSARY = config.brand_glossary
 TRANSLATION_QUEUE_FOLDER = config.translation_queue_folder
 TRANSLATED_QUEUE_FOLDER = config.translated_queue_folder
+TRANSLATION_KEY_LEDGER_FILE_PATH = config.translation_key_ledger_file_path
 PRESERVE_QUEUES_FOR_DEBUG = config.preserve_queues_for_debug
 client = config.openai_client
 
@@ -206,21 +209,97 @@ def normalize_value(value: Optional[str]) -> str:
     value = re.sub(r'\s+', ' ', value.strip())
     return value
 
+
+def compute_ledger_hash(value: Optional[str]) -> str:
+    """Compute a stable hash for ledger comparisons."""
+    normalized = normalize_value(value)
+    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+
+
+def load_translation_key_ledger(ledger_file_path: str) -> Dict[str, Dict[str, Dict[str, str]]]:
+    """
+    Load the persistent translation key ledger from disk.
+
+    Returns:
+        Mapping of translation_file -> key -> {source_hash, target_hash}
+    """
+    if not os.path.exists(ledger_file_path):
+        return {}
+    try:
+        with open(ledger_file_path, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+        if not isinstance(payload, dict):
+            logger.warning("Translation key ledger has invalid format, resetting: %s", ledger_file_path)
+            return {}
+        files_obj = payload.get("files", {})
+        if not isinstance(files_obj, dict):
+            logger.warning("Translation key ledger missing 'files' map, resetting: %s", ledger_file_path)
+            return {}
+        return files_obj
+    except Exception as exc:
+        logger.warning("Failed to load translation key ledger '%s': %s", ledger_file_path, exc)
+        return {}
+
+
+def save_translation_key_ledger(
+        ledger_file_path: str,
+        key_ledger: Dict[str, Dict[str, Dict[str, str]]]
+) -> None:
+    """Persist translation key ledger to disk."""
+    if DRY_RUN:
+        logger.info("[Dry Run] Skipping write of translation key ledger.")
+        return
+    try:
+        os.makedirs(os.path.dirname(ledger_file_path), exist_ok=True)
+        payload = {
+            "version": 1,
+            "updated_at": _dt.datetime.utcnow().isoformat() + "Z",
+            "files": key_ledger
+        }
+        temp_path = f"{ledger_file_path}.tmp"
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(temp_path, ledger_file_path)
+    except Exception:
+        logger.exception("Failed to save translation key ledger to '%s'.", ledger_file_path)
+
+
+def build_file_key_ledger(
+        source_translations: Dict[str, str],
+        final_translations: Dict[str, str]
+) -> Dict[str, Dict[str, str]]:
+    """Build per-file ledger entries from source/target key-value maps."""
+    file_ledger: Dict[str, Dict[str, str]] = {}
+    for key, target_value in final_translations.items():
+        source_value = source_translations.get(key, "")
+        file_ledger[key] = {
+            "source_hash": compute_ledger_hash(source_value),
+            "target_hash": compute_ledger_hash(target_value)
+        }
+    return file_ledger
+
 def extract_texts_to_translate(
         parsed_lines: List[Dict],
         source_translations: Dict[str, str],
-        target_translations: Dict[str, str]
+        target_translations: Dict[str, str],
+        newly_added_keys: Optional[Set[str]] = None,
+        file_ledger_entries: Optional[Dict[str, Dict[str, str]]] = None,
+        retranslate_identical_existing: bool = False
 ) -> Tuple[List[str], List[int], List[str]]:
     """
     Identifies which texts need to be translated. A text needs translation if:
     1. The key is new (exists in source, not in target).
-    2. The key exists in both, but the source and target values are identical,
-       indicating an untranslated string copied from the source by a tool like Transifex.
+    2. The key was newly synchronized in this run and currently equals the source.
+    3. (Optional legacy mode) Existing keys with source-identical values are also
+       translated when ``retranslate_identical_existing`` is enabled.
 
     Args:
         parsed_lines: The parsed content of the target language file.
         source_translations: A dictionary of key-value pairs from the source (e.g., English) file.
         target_translations: A dictionary of key-value pairs from the target file being processed.
+        newly_added_keys: Keys that were added by key synchronization in this run.
+        file_ledger_entries: Persisted hash data for keys in this translation file.
+        retranslate_identical_existing: Whether to retranslate pre-existing source-identical keys.
 
     Returns:
         A tuple containing the list of texts to translate, their corresponding indices, and their keys.
@@ -228,22 +307,36 @@ def extract_texts_to_translate(
     texts_to_translate = []
     indices = []
     keys_to_translate = []
+    newly_added_keys = newly_added_keys or set()
+    file_ledger_entries = file_ledger_entries or {}
 
     existing_keys_in_target = {line['key'] for line in parsed_lines if line['type'] == 'entry'}
 
     # 1. Check existing keys for required updates.
-    # A key needs translation if the source value is THE SAME as the target value,
-    # as this indicates a fallback to the source language.
     for i, line in enumerate(parsed_lines):
         if line['type'] == 'entry':
             key = line['key']
             target_value = line.get('value', '')
             source_value = source_translations.get(key)
 
-            # If key exists in source and the values are identical (a direct string comparison),
-            # it needs translation. This handles cases where Transifex might have copied
-            # the source English text into the target file.
-            if source_value is not None and source_value.strip() == target_value.strip():
+            if source_value is None:
+                continue
+
+            is_source_identical = source_value.strip() == target_value.strip()
+            ledger_entry = file_ledger_entries.get(key, {})
+            previous_source_hash = ledger_entry.get("source_hash")
+            current_source_hash = compute_ledger_hash(source_value)
+            should_translate_existing = (
+                # New keys synchronized in this run should always be translated.
+                key in newly_added_keys
+                # Legacy behavior: also retranslate any source-identical existing key.
+                or (is_source_identical and retranslate_identical_existing)
+                # Source text changed since the last run for this key.
+                or (previous_source_hash is not None and previous_source_hash != current_source_hash)
+            )
+
+            # Only newly synchronized source-identical keys are translated by default.
+            if should_translate_existing:
                 # The value to translate is the source value.
                 texts_to_translate.append(source_value)
                 indices.append(i)  # Use the line's actual index
@@ -507,7 +600,7 @@ async def _handle_retry(attempt: int, max_retries: int, base_delay: float, key: 
         logger.error(f"Translation failed for key '{key}' after {max_retries} attempts.")
         return False
 
-def run_pre_translation_validation(target_file_path: str, source_file_path: str) -> List[str]:
+def run_pre_translation_validation(target_file_path: str, source_file_path: str) -> Tuple[List[str], Set[str]]:
     """
     Runs a series of validation and preparation checks on a target properties file.
     - Synchronizes keys with the source file (adds missing, removes extra).
@@ -518,20 +611,24 @@ def run_pre_translation_validation(target_file_path: str, source_file_path: str)
         source_file_path: The absolute path to the source English .properties file.
 
     Returns:
-        A list of validation error messages. An empty list indicates success.
+        A tuple containing:
+        - A list of validation error messages. An empty list indicates success.
+        - A set of keys newly added to the target file during key synchronization.
     """
     errors: List[str] = []
+    newly_added_keys: Set[str] = set()
     filename = os.path.basename(target_file_path)
     logger.info(f"Running pre-translation validation for '{filename}'...")
 
     # 1. Synchronize keys (add missing, remove extra)
     try:
-        synchronize_keys(target_file_path, source_file_path)
+        missing_keys, _extra_keys = synchronize_keys(target_file_path, source_file_path)
+        newly_added_keys = set(missing_keys)
         logger.info(f"Key synchronization complete for '{filename}'.")
     except (IOError, OSError) as e:
         logger.exception("Failed to synchronize keys for '%s'", filename)
         errors.append(f"I/O error during key synchronization: {e}")
-        return errors  # Fail hard if we can't even sync the file
+        return errors, newly_added_keys  # Fail hard if we can't even sync the file
 
     # 2. Check encoding and mojibake on the (potentially modified) file
     encoding_errors = check_encoding_and_mojibake(target_file_path)
@@ -546,7 +643,7 @@ def run_pre_translation_validation(target_file_path: str, source_file_path: str)
     except (IOError, OSError) as e:
         logger.exception("Validation failed for '%s': Could not parse properties file after key sync", filename)
         errors.append(f"Could not parse properties file after key sync: {e}")
-        return errors
+        return errors, newly_added_keys
 
     # 3. Check placeholder parity
     common_keys = set(source_translations.keys()).intersection(set(target_translations.keys()))
@@ -561,7 +658,7 @@ def run_pre_translation_validation(target_file_path: str, source_file_path: str)
     else:
         logger.error(f"Pre-translation validation failed for '{filename}'.")
 
-    return errors
+    return errors, newly_added_keys
 
 def run_post_translation_validation(
         final_content: str,
@@ -1377,6 +1474,7 @@ async def process_translation_queue(
 
     # Load the glossary from the JSON file
     glossary = load_glossary(glossary_file_path)
+    key_ledger = load_translation_key_ledger(TRANSLATION_KEY_LEDGER_FILE_PATH)
 
     # Set up a single semaphore for all API calls to control concurrency globally.
     # A value of 1 ensures that only one API request is active at any time.
@@ -1415,7 +1513,7 @@ async def process_translation_queue(
         logger.info(f"Processing file '{translation_file}' for language '{target_language}'...")
 
         # --- Pre-flight Validator ---
-        validation_errors = run_pre_translation_validation(translation_file_path, source_file_path)
+        validation_errors, newly_added_keys = run_pre_translation_validation(translation_file_path, source_file_path)
         if validation_errors:
             logger.error(f"Skipping translation for '{translation_file}' due to pre-translation validation errors.")
             for error in validation_errors:
@@ -1440,12 +1538,18 @@ async def process_translation_queue(
         _, source_translations = parse_properties_file(source_file_path)
 
         # Extract texts to translate
+        file_ledger_entries = key_ledger.get(translation_file, {})
         texts_to_translate, indices, keys_to_translate = extract_texts_to_translate(
             parsed_lines,
             source_translations,
-            target_translations
+            target_translations,
+            newly_added_keys=newly_added_keys,
+            file_ledger_entries=file_ledger_entries,
+            retranslate_identical_existing=RETRANSLATE_IDENTICAL_SOURCE_STRINGS
         )
         if not texts_to_translate:
+            # Refresh ledger baseline even when no translation was required.
+            key_ledger[translation_file] = build_file_key_ledger(source_translations, target_translations)
             logger.info(f"No texts to translate in file '{translation_file}'.")
             continue
 
@@ -1611,6 +1715,9 @@ async def process_translation_queue(
         new_file_content = reassemble_file(updated_lines)
         # --- End Per-Key Validation ---
 
+        # Update per-file key ledger from validated source/target state.
+        key_ledger[translation_file] = build_file_key_ledger(source_translations, valid_translations)
+
         translated_file_path = os.path.join(translated_queue_folder, translation_file)
 
         if DRY_RUN:
@@ -1624,6 +1731,7 @@ async def process_translation_queue(
 
         processed_files_count += 1
 
+    save_translation_key_ledger(TRANSLATION_KEY_LEDGER_FILE_PATH, key_ledger)
     return processed_files_count, skipped_files
 
 def archive_original_files(

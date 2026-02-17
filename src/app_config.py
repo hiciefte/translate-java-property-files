@@ -35,6 +35,7 @@ class AppConfig:
     # Language configuration
     language_codes: Dict[str, str]
     name_to_code: Dict[str, str]
+    retranslate_identical_source_strings: bool
     style_rules: Dict[str, List[str]]
     precomputed_style_rules_text: Dict[str, str]
     brand_glossary: List[str]
@@ -42,6 +43,7 @@ class AppConfig:
     # Queue settings
     translation_queue_folder: str
     translated_queue_folder: str
+    translation_key_ledger_file_path: str
     preserve_queues_for_debug: bool
 
     # OpenAI client
@@ -233,6 +235,7 @@ def load_app_config() -> AppConfig:
     dry_run = config.get('dry_run', False)
     model_name = config.get('model_name', 'gpt-4')
     review_model_name = os.environ.get('REVIEW_MODEL_NAME', config.get('review_model_name', model_name))
+    retranslate_identical_source_strings = bool(config.get('retranslate_identical_source_strings', False))
 
     # Holistic review chunk size with environment override
     # Reduced default from 75 to 30 to handle content-heavy files better
@@ -245,6 +248,12 @@ def load_app_config() -> AppConfig:
     translated_queue_name = config.get('translated_queue_folder', 'translated_queue')
     translation_queue_folder = os.path.join(temp_dir, translation_queue_name)
     translated_queue_folder = os.path.join(temp_dir, translated_queue_name)
+    translation_key_ledger_file_path = config.get(
+        'translation_key_ledger_file_path',
+        os.path.join(project_root, 'logs', 'translation_key_ledger.json')
+    )
+    if not os.path.isabs(translation_key_ledger_file_path):
+        translation_key_ledger_file_path = os.path.join(project_root, translation_key_ledger_file_path)
 
     # Create OpenAI client
     openai_client = _create_openai_client(dry_run, logger)
@@ -262,11 +271,13 @@ def load_app_config() -> AppConfig:
         max_concurrent_api_calls=config.get('max_concurrent_api_calls', 1),
         language_codes=language_codes,
         name_to_code=name_to_code,
+        retranslate_identical_source_strings=retranslate_identical_source_strings,
         style_rules=style_rules,
         precomputed_style_rules_text=precomputed_style_rules_text,
         brand_glossary=config.get('brand_technical_glossary', ['MuSig', 'Bisq', 'Lightning', 'I2P', 'Tor']),
         translation_queue_folder=translation_queue_folder,
         translated_queue_folder=translated_queue_folder,
+        translation_key_ledger_file_path=translation_key_ledger_file_path,
         preserve_queues_for_debug=config.get('preserve_queues_for_debug', False),
         openai_client=openai_client
     )

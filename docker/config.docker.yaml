@@ -6,6 +6,8 @@ model_name: 'gpt-4o-mini'
 translation_queue_folder: 'translation_queue' # Relative to /app
 translated_queue_folder: 'translated_queue' # Relative to /app
 dry_run: false
+retranslate_identical_source_strings: false
+translation_key_ledger_file_path: "/app/logs/translation_key_ledger.json"
 supported_locales:
   - code: "cs"
     name: "Czech"

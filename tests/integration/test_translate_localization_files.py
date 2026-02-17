@@ -64,7 +64,7 @@ async def test_process_translation_queue_end_to_end(integration_test_environment
 async def test_handles_already_escaped_quotes_correctly(integration_test_environment):
     env = integration_test_environment
     source_content = "key.name=URL is ''{0}''"
-    target_content = "key.name=URL is ''{0}''"
+    target_content = ""
 
     source_en_path = os.path.join(env['input_folder'], 'app.properties')
     target_de_path = os.path.join(env['translation_queue_folder'], 'app_de.properties')

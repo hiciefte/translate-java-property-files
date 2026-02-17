@@ -32,8 +32,9 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
         from src.translate_localization_files import process_translation_queue, LANGUAGE_CODES, NAME_TO_CODE
 
         # Configure the mocks
-        # The pre-validator now returns a list of errors; an empty list means success.
-        mock_pre_validator.return_value = []
+        # The pre-validator returns (errors, newly_added_keys).
+        # Mark the key as newly synchronized so it is translated in this run.
+        mock_pre_validator.return_value = ([], {"test.key"})
         mock_post_validator.return_value = True # Post-validation is now mocked
         mock_holistic_review.return_value = None
         mock_load_glossary.return_value = {}  # Mock the glossary to be empty

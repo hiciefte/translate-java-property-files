@@ -132,7 +132,7 @@ class TestTranslationValidator(unittest.TestCase):
 
         try:
             # Run the synchronization
-            synchronize_keys(target_path, source_path)
+            missing_keys, extra_keys = synchronize_keys(target_path, source_path)
 
             # Read the modified target file and check its content
             with open(target_path, 'r', encoding='utf-8') as f_target_mod:
@@ -146,6 +146,8 @@ class TestTranslationValidator(unittest.TestCase):
             self.assertNotIn("key.four", modified_content)  # Extra key removed
             self.assertIn("key.one=Eins", modified_content) # Existing key preserved
             self.assertEqual(len(modified_translations), 3)
+            self.assertEqual(missing_keys, {"key.two"})
+            self.assertEqual(extra_keys, {"key.four"})
 
         finally:
             os.remove(source_path)

@@ -26,11 +26,13 @@ class TestAppConfig:
             max_concurrent_api_calls=1,
             language_codes={"de": "German"},
             name_to_code={"german": "de"},
+            retranslate_identical_source_strings=False,
             style_rules={},
             precomputed_style_rules_text={},
             brand_glossary=["Bisq"],
             translation_queue_folder="/tmp/queue",
             translated_queue_folder="/tmp/translated",
+            translation_key_ledger_file_path="/tmp/ledger.json",
             preserve_queues_for_debug=False,
             openai_client=None
         )
