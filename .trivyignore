@@ -90,10 +90,25 @@ CVE-2025-47906
 #            is minimal given the controlled usage context. Vendors (especially Transifex with Go 1.16.15
 #            from 2022) are unlikely to release patched versions soon.
 # Added: 2025-11-06
-# Revisit by: 2026-01-15 (check for updated vendor releases)
+# Revalidated: 2026-02-17 (CI Trivy still reports embedded Go stdlib in vendor binaries)
+# Revisit by: 2026-04-15 (check for updated vendor releases)
 CVE-2025-47912
 CVE-2025-58183
 CVE-2025-58186
 CVE-2025-58187
 CVE-2025-58188
 CVE-2025-61724
+
+# CVE-2025-68121, CVE-2025-61726, CVE-2025-61728, CVE-2025-61729, CVE-2025-61730
+# Go stdlib vulnerabilities affecting vendor-supplied Go binaries in the image.
+# Affects: tx (Transifex CLI), gosu, and potentially yq depending on upstream build toolchain.
+# Rationale: These binaries are used only in controlled CI/CD/container contexts and are
+#            not exposed as user-facing services. We cannot directly patch their embedded
+#            Go stdlib; mitigation depends on upstream binary releases.
+# Added: 2026-02-17
+# Revisit by: 2026-04-15 (re-check upstream releases and rebuild provenance)
+CVE-2025-68121
+CVE-2025-61726
+CVE-2025-61728
+CVE-2025-61729
+CVE-2025-61730

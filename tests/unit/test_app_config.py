@@ -22,15 +22,18 @@ class TestAppConfig:
             review_model_name="gpt-4o",
             max_model_tokens=4000,
             dry_run=False,
+            process_all_files=False,
             holistic_review_chunk_size=75,
             max_concurrent_api_calls=1,
             language_codes={"de": "German"},
             name_to_code={"german": "de"},
+            retranslate_identical_source_strings=False,
             style_rules={},
             precomputed_style_rules_text={},
             brand_glossary=["Bisq"],
             translation_queue_folder="/tmp/queue",
             translated_queue_folder="/tmp/translated",
+            translation_key_ledger_file_path="/tmp/ledger.json",
             preserve_queues_for_debug=False,
             openai_client=None
         )
@@ -51,6 +54,8 @@ class TestLoadAppConfig:
             "input_folder": "/custom/input",
             "model_name": "gpt-4o-mini",
             "dry_run": True,
+            "retranslate_identical_source_strings": True,
+            "translation_key_ledger_file_path": "/tmp/test-ledger.json",
             "supported_locales": [
                 {"code": "de", "name": "German"},
                 {"code": "es", "name": "Spanish"}
@@ -73,6 +78,8 @@ class TestLoadAppConfig:
         assert config.input_folder == "/custom/input"
         assert config.model_name == "gpt-4o-mini"
         assert config.dry_run is True
+        assert config.retranslate_identical_source_strings is True
+        assert config.translation_key_ledger_file_path == "/tmp/test-ledger.json"
         assert config.language_codes == {"de": "German", "es": "Spanish"}
         assert config.name_to_code == {"german": "de", "spanish": "es"}
 
@@ -93,6 +100,27 @@ class TestLoadAppConfig:
         assert config.dry_run is True
         assert config.holistic_review_chunk_size == 30  # Updated from 75 to 30
         assert config.max_concurrent_api_calls == 1
+        assert config.process_all_files is False
+        assert config.retranslate_identical_source_strings is False
+        assert config.translation_key_ledger_file_path == os.path.join(
+            config.project_root, "logs", "translation_key_ledger.json"
+        )
+
+    def test_load_config_with_process_all_files_enabled(self):
+        """Test process_all_files can be enabled via config."""
+        mock_config = {
+            "dry_run": True,
+            "process_all_files": True
+        }
+
+        with patch("src.app_config._load_yaml_config", return_value=mock_config):
+            with patch("os.path.exists", return_value=False):
+                with patch("src.logging_config.setup_logger") as mock_logger:
+                    mock_logger.return_value = MagicMock()
+                    with patch.dict(os.environ, {}, clear=True):
+                        config = load_app_config()
+
+        assert config.process_all_files is True
 
     def test_load_config_with_environment_overrides(self):
         """Test that environment variables override config file values."""

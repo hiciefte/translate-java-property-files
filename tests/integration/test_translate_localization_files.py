@@ -21,7 +21,11 @@ import src.translate_localization_files
 async def test_main_flow_no_changes(mock_move, mock_copy_back, mock_process, mock_copy_to_queue, mock_get_changed, integration_test_environment):
     mock_get_changed.return_value = []
     await src.translate_localization_files.main()
-    mock_get_changed.assert_called_once()
+    mock_get_changed.assert_called_once_with(
+        src.translate_localization_files.INPUT_FOLDER,
+        src.translate_localization_files.REPO_ROOT,
+        process_all_files=src.translate_localization_files.PROCESS_ALL_FILES
+    )
     mock_copy_to_queue.assert_not_called()
     mock_process.assert_not_called()
     mock_copy_back.assert_not_called()
@@ -64,7 +68,7 @@ async def test_process_translation_queue_end_to_end(integration_test_environment
 async def test_handles_already_escaped_quotes_correctly(integration_test_environment):
     env = integration_test_environment
     source_content = "key.name=URL is ''{0}''"
-    target_content = "key.name=URL is ''{0}''"
+    target_content = ""
 
     source_en_path = os.path.join(env['input_folder'], 'app.properties')
     target_de_path = os.path.join(env['translation_queue_folder'], 'app_de.properties')

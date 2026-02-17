@@ -132,7 +132,7 @@ class TestTranslationValidator(unittest.TestCase):
 
         try:
             # Run the synchronization
-            synchronize_keys(target_path, source_path)
+            missing_keys, extra_keys = synchronize_keys(target_path, source_path)
 
             # Read the modified target file and check its content
             with open(target_path, 'r', encoding='utf-8') as f_target_mod:
@@ -145,8 +145,75 @@ class TestTranslationValidator(unittest.TestCase):
             self.assertIn("key.two=Two", modified_content)  # Missing key added from source
             self.assertNotIn("key.four", modified_content)  # Extra key removed
             self.assertIn("key.one=Eins", modified_content) # Existing key preserved
+            self.assertLess(modified_content.index("key.one=Eins"), modified_content.index("key.two=Two"))
+            self.assertLess(modified_content.index("key.two=Two"), modified_content.index("key.three=Drei"))
             self.assertEqual(len(modified_translations), 3)
+            self.assertEqual(missing_keys, {"key.two"})
+            self.assertEqual(extra_keys, {"key.four"})
 
+        finally:
+            os.remove(source_path)
+            os.remove(target_path)
+
+    def test_key_synchronization_preserves_comment_relative_position(self):
+        source_content = "key.one=One\nkey.two=Two\n# section marker\nkey.three=Three\n"
+        target_content = "key.one=Uno\n# section marker\nkey.three=Tres\n"
+
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8') as f_source:
+            f_source.write(source_content)
+            source_path = f_source.name
+
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8') as f_target:
+            f_target.write(target_content)
+            target_path = f_target.name
+
+        try:
+            synchronize_keys(target_path, source_path)
+
+            with open(target_path, 'r', encoding='utf-8') as f_target_mod:
+                modified_content = f_target_mod.read()
+
+            self.assertLess(modified_content.index("key.two=Two"), modified_content.index("# section marker"))
+            self.assertLess(modified_content.index("# section marker"), modified_content.index("key.three=Tres"))
+        finally:
+            os.remove(source_path)
+            os.remove(target_path)
+
+    def test_key_synchronization_preserves_position_between_duplicate_comments(self):
+        source_content = (
+            "key.one=One\n"
+            "# suppress inspection \"UnusedProperty\"\n"
+            "key.two=Two\n"
+            "# suppress inspection \"UnusedProperty\"\n"
+            "key.three=Three\n"
+        )
+        target_content = (
+            "key.one=Uno\n"
+            "# suppress inspection \"UnusedProperty\"\n"
+            "# suppress inspection \"UnusedProperty\"\n"
+            "key.three=Tres\n"
+        )
+
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8') as f_source:
+            f_source.write(source_content)
+            source_path = f_source.name
+
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8') as f_target:
+            f_target.write(target_content)
+            target_path = f_target.name
+
+        try:
+            synchronize_keys(target_path, source_path)
+
+            with open(target_path, 'r', encoding='utf-8') as f_target_mod:
+                lines = f_target_mod.read().splitlines()
+
+            first_comment_idx = lines.index('# suppress inspection "UnusedProperty"')
+            second_comment_idx = lines.index('# suppress inspection "UnusedProperty"', first_comment_idx + 1)
+            key_idx = lines.index('key.two=Two')
+
+            self.assertLess(first_comment_idx, key_idx)
+            self.assertLess(key_idx, second_comment_idx)
         finally:
             os.remove(source_path)
             os.remove(target_path)

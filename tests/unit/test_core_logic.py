@@ -14,6 +14,7 @@ os.environ['OPENAI_API_KEY'] = 'DUMMY_KEY_FOR_TESTING'
 from src.translate_localization_files import (
     build_context,
     normalize_value,
+    compute_ledger_hash,
     extract_texts_to_translate,
     extract_language_from_filename,
     run_post_translation_validation
@@ -180,12 +181,12 @@ class TestCoreLogic(unittest.TestCase):
         source_translations = {'key0_translated': 'Source Value 0', 'key1_needs_translation': 'Source Value 1', 'key2_new': 'Source Value 2'}
 
         texts, indices, keys = extract_texts_to_translate(parsed_lines, source_translations, target_translations)
-        expected_texts = sorted(['Source Value 1', 'Source Value 2'])
-        expected_keys = sorted(['key1_needs_translation', 'key2_new'])
-        expected_indices = [1, 3]
+        expected_texts = ['Source Value 2']
+        expected_keys = ['key2_new']
+        expected_indices = [3]
 
-        self.assertEqual(sorted(texts), expected_texts)
-        self.assertEqual(sorted(keys), expected_keys)
+        self.assertEqual(texts, expected_texts)
+        self.assertEqual(keys, expected_keys)
         self.assertEqual(indices, expected_indices)
 
     def test_should_not_retranslate_existing_translations(self):
@@ -198,6 +199,152 @@ class TestCoreLogic(unittest.TestCase):
         source_translations = {'key1': 'Source Value 1', 'key2': 'Source Value 2'}
         texts, _, _ = extract_texts_to_translate(parsed_lines, source_translations, target_translations)
         self.assertEqual(len(texts), 0)
+
+    def test_extract_texts_to_translate_includes_newly_added_identical_keys(self):
+        """Newly synchronized keys with source-identical values should be translated."""
+        parsed_lines = [
+            {'type': 'entry', 'key': 'key_existing', 'value': 'Source Existing', 'line_number': 0},
+            {'type': 'entry', 'key': 'key_newly_added', 'value': 'Source New', 'line_number': 1},
+        ]
+        target_translations = {
+            'key_existing': 'Source Existing',
+            'key_newly_added': 'Source New'
+        }
+        source_translations = {
+            'key_existing': 'Source Existing',
+            'key_newly_added': 'Source New'
+        }
+
+        texts, indices, keys = extract_texts_to_translate(
+            parsed_lines,
+            source_translations,
+            target_translations,
+            newly_added_keys={'key_newly_added'}
+        )
+
+        self.assertEqual(texts, ['Source New'])
+        self.assertEqual(indices, [1])
+        self.assertEqual(keys, ['key_newly_added'])
+
+    def test_extract_texts_to_translate_can_opt_in_retranslate_identical_existing(self):
+        """Legacy behavior can be enabled explicitly for source-identical existing keys."""
+        parsed_lines = [
+            {'type': 'entry', 'key': 'key_existing', 'value': 'Source Existing', 'line_number': 0},
+        ]
+        target_translations = {'key_existing': 'Source Existing'}
+        source_translations = {'key_existing': 'Source Existing'}
+
+        texts, indices, keys = extract_texts_to_translate(
+            parsed_lines,
+            source_translations,
+            target_translations,
+            retranslate_identical_existing=True
+        )
+
+        self.assertEqual(texts, ['Source Existing'])
+        self.assertEqual(indices, [0])
+        self.assertEqual(keys, ['key_existing'])
+
+    def test_extract_texts_to_translate_includes_existing_key_when_source_hash_changed(self):
+        """Existing keys should be translated when source text changed since last run."""
+        parsed_lines = [
+            {'type': 'entry', 'key': 'key_existing', 'value': 'Old Target Translation', 'line_number': 0},
+        ]
+        target_translations = {'key_existing': 'Old Target Translation'}
+        source_translations = {'key_existing': 'New Source Value'}
+        file_ledger_entries = {
+            'key_existing': {
+                'source_hash': compute_ledger_hash('Old Source Value'),
+                'target_hash': compute_ledger_hash('Old Target Translation')
+            }
+        }
+
+        texts, indices, keys = extract_texts_to_translate(
+            parsed_lines,
+            source_translations,
+            target_translations,
+            file_ledger_entries=file_ledger_entries
+        )
+
+        self.assertEqual(texts, ['New Source Value'])
+        self.assertEqual(indices, [0])
+        self.assertEqual(keys, ['key_existing'])
+
+    def test_extract_texts_to_translate_retries_failed_ledger_keys(self):
+        """Keys marked failed in the ledger should be eligible for retranslation."""
+        parsed_lines = [
+            {'type': 'entry', 'key': 'key_existing', 'value': 'Source Existing', 'line_number': 0},
+        ]
+        target_translations = {'key_existing': 'Source Existing'}
+        source_translations = {'key_existing': 'Source Existing'}
+        file_ledger_entries = {
+            'key_existing': {
+                'source_hash': compute_ledger_hash('Source Existing'),
+                'target_hash': compute_ledger_hash('Source Existing'),
+                'status': 'failed'
+            }
+        }
+
+        texts, indices, keys = extract_texts_to_translate(
+            parsed_lines,
+            source_translations,
+            target_translations,
+            file_ledger_entries=file_ledger_entries
+        )
+
+        self.assertEqual(texts, ['Source Existing'])
+        self.assertEqual(indices, [0])
+        self.assertEqual(keys, ['key_existing'])
+
+    def test_extract_texts_to_translate_retries_when_target_regresses_to_source(self):
+        """Previously translated keys should be retried if target falls back to source text."""
+        parsed_lines = [
+            {'type': 'entry', 'key': 'key_existing', 'value': 'Source Existing', 'line_number': 0},
+        ]
+        target_translations = {'key_existing': 'Source Existing'}
+        source_translations = {'key_existing': 'Source Existing'}
+        file_ledger_entries = {
+            'key_existing': {
+                'source_hash': compute_ledger_hash('Source Existing'),
+                'target_hash': compute_ledger_hash('Old Real Translation')
+            }
+        }
+
+        texts, indices, keys = extract_texts_to_translate(
+            parsed_lines,
+            source_translations,
+            target_translations,
+            file_ledger_entries=file_ledger_entries
+        )
+
+        self.assertEqual(texts, ['Source Existing'])
+        self.assertEqual(indices, [0])
+        self.assertEqual(keys, ['key_existing'])
+
+    def test_extract_texts_to_translate_logs_missing_ledger_baseline_skip(self):
+        """Existing source-identical keys should log migration hint when no baseline hash exists."""
+        parsed_lines = [
+            {'type': 'entry', 'key': 'key_existing', 'value': 'Source Existing', 'line_number': 0},
+        ]
+        target_translations = {'key_existing': 'Source Existing'}
+        source_translations = {'key_existing': 'Source Existing'}
+
+        with self.assertLogs('translation_script', level='INFO') as captured_logs:
+            texts, indices, keys = extract_texts_to_translate(
+                parsed_lines,
+                source_translations,
+                target_translations,
+                newly_added_keys=set(),
+                file_ledger_entries={},
+                retranslate_identical_existing=False
+            )
+
+        self.assertEqual(texts, [])
+        self.assertEqual(indices, [])
+        self.assertEqual(keys, [])
+        joined_logs = "\n".join(captured_logs.output)
+        self.assertIn("Skipping key 'key_existing' (source==target)", joined_logs)
+        self.assertIn("retranslate_identical_source_strings", joined_logs)
 
     def test_extract_language_from_filename(self):
         """Tests that `extract_language_from_filename` correctly identifies language codes."""
@@ -510,6 +657,125 @@ class TestFileDetectionLogic(unittest.TestCase):
         self.assertIn("academy_zh-Hant.properties", changed_basenames)
         self.assertIn("application_zh-Hans.properties", changed_basenames)
         self.assertIn("application_zh-Hant.properties", changed_basenames)
+
+    @patch('subprocess.run')
+    def test_get_changed_files_process_all_files_mode(self, mock_subprocess_run):
+        """Tests process_all_files mode scans input folder directly without git."""
+        from src.translate_localization_files import get_changed_translation_files
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = temp_dir
+            input_folder = os.path.join(temp_dir, "i18n", "resources")
+            nested_folder = os.path.join(input_folder, "nested")
+            os.makedirs(nested_folder, exist_ok=True)
+
+            included_paths = [
+                os.path.join(input_folder, "mobile_de.properties"),
+                os.path.join(nested_folder, "payment_method_pt_BR.properties"),
+                os.path.join(nested_folder, "academy_zh-Hans.properties"),
+            ]
+            excluded_paths = [
+                os.path.join(input_folder, "mobile.properties"),  # source file
+                os.path.join(input_folder, "notes.txt"),  # not properties
+            ]
+
+            for file_path in included_paths + excluded_paths:
+                with open(file_path, "w", encoding="utf-8") as temp_file:
+                    temp_file.write("k=v\n")
+
+            files = get_changed_translation_files(input_folder, repo_root, process_all_files=True)
+
+        mock_subprocess_run.assert_not_called()
+        self.assertEqual(
+            files,
+            [
+                "mobile_de.properties",
+                "nested/academy_zh-Hans.properties",
+                "nested/payment_method_pt_BR.properties",
+            ]
+        )
+
+    @patch('subprocess.run')
+    def test_get_changed_files_process_all_files_mode_with_glob_filter(self, mock_subprocess_run):
+        """Tests process_all_files mode also honors TRANSLATION_FILTER_GLOB."""
+        from src.translate_localization_files import get_changed_translation_files
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = temp_dir
+            input_folder = os.path.join(temp_dir, "i18n", "resources")
+            os.makedirs(input_folder, exist_ok=True)
+
+            for file_name in [
+                "mobile_de.properties",
+                "desktop_de.properties",
+                "mobile_es.properties",
+            ]:
+                with open(os.path.join(input_folder, file_name), "w", encoding="utf-8") as temp_file:
+                    temp_file.write("k=v\n")
+
+            with patch.dict('os.environ', {'TRANSLATION_FILTER_GLOB': 'mobile_*.properties'}):
+                files = get_changed_translation_files(input_folder, repo_root, process_all_files=True)
+
+        mock_subprocess_run.assert_not_called()
+        self.assertEqual(files, ["mobile_de.properties", "mobile_es.properties"])
+
+    @patch('subprocess.run')
+    def test_get_changed_files_excludes_archive_paths(self, mock_subprocess_run):
+        """Tests file detection excludes archive directories in both discovery modes."""
+        from src.translate_localization_files import get_changed_translation_files
+
+        git_output = textwrap.dedent("""
+             M i18n/resources/archive/mobile_de.properties
+             M i18n/resources/mobile_es.properties
+        """).strip()
+        mock_subprocess_run.return_value = MagicMock(stdout=git_output, stderr="", check_returncode=MagicMock())
+
+        repo_root = "/fake/repo"
+        input_folder = "/fake/repo/i18n/resources"
+        changed_files = get_changed_translation_files(input_folder, repo_root)
+        changed_basenames = [os.path.basename(f) for f in changed_files]
+        self.assertEqual(changed_basenames, ["mobile_es.properties"])
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = temp_dir
+            input_folder = os.path.join(temp_dir, "i18n", "resources")
+            archive_folder = os.path.join(input_folder, "archive")
+            os.makedirs(archive_folder, exist_ok=True)
+
+            with open(os.path.join(archive_folder, "mobile_de.properties"), "w", encoding="utf-8") as temp_file:
+                temp_file.write("k=v\n")
+            with open(os.path.join(input_folder, "mobile_es.properties"), "w", encoding="utf-8") as temp_file:
+                temp_file.write("k=v\n")
+
+            files = get_changed_translation_files(input_folder, repo_root, process_all_files=True)
+            self.assertEqual(files, ["mobile_es.properties"])
+
+    @patch('subprocess.run')
+    def test_get_changed_files_includes_locale_files_when_source_file_changed(self, mock_subprocess_run):
+        """When a source file changes, all related locale files should be queued."""
+        from src.translate_localization_files import get_changed_translation_files
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = temp_dir
+            input_folder = os.path.join(temp_dir, "i18n", "resources")
+            os.makedirs(input_folder, exist_ok=True)
+
+            for file_name in [
+                "mobile.properties",
+                "mobile_de.properties",
+                "mobile_es.properties",
+                "desktop.properties",
+                "desktop_de.properties",
+            ]:
+                with open(os.path.join(input_folder, file_name), "w", encoding="utf-8") as temp_file:
+                    temp_file.write("k=v\n")
+
+            git_output = " M i18n/resources/mobile.properties"
+            mock_subprocess_run.return_value = MagicMock(stdout=git_output, stderr="", check_returncode=MagicMock())
+
+            files = get_changed_translation_files(input_folder, repo_root)
+
+        self.assertEqual(sorted(files), ["mobile_de.properties", "mobile_es.properties"])
 
 
 if __name__ == '__main__':

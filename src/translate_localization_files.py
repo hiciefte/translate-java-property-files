@@ -1,5 +1,6 @@
 import asyncio
 import datetime as _dt
+import hashlib
 import json
 import logging
 import os
@@ -11,7 +12,7 @@ import sys
 import tempfile
 import uuid
 from email.utils import parsedate_to_datetime
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Set
 
 # --- Python Version Check ---
 # This script requires Python 3.11 or newer for features like modern asyncio.
@@ -71,15 +72,18 @@ MODEL_NAME = config.model_name
 REVIEW_MODEL_NAME = config.review_model_name
 MAX_MODEL_TOKENS = config.max_model_tokens
 DRY_RUN = config.dry_run
+PROCESS_ALL_FILES = config.process_all_files
 HOLISTIC_REVIEW_CHUNK_SIZE = config.holistic_review_chunk_size
 MAX_CONCURRENT_API_CALLS = config.max_concurrent_api_calls
 LANGUAGE_CODES = config.language_codes
 NAME_TO_CODE = config.name_to_code
+RETRANSLATE_IDENTICAL_SOURCE_STRINGS = config.retranslate_identical_source_strings
 STYLE_RULES = config.style_rules
 PRECOMPUTED_STYLE_RULES_TEXT = config.precomputed_style_rules_text
 BRAND_GLOSSARY = config.brand_glossary
 TRANSLATION_QUEUE_FOLDER = config.translation_queue_folder
 TRANSLATED_QUEUE_FOLDER = config.translated_queue_folder
+TRANSLATION_KEY_LEDGER_FILE_PATH = config.translation_key_ledger_file_path
 PRESERVE_QUEUES_FOR_DEBUG = config.preserve_queues_for_debug
 client = config.openai_client
 
@@ -206,21 +210,104 @@ def normalize_value(value: Optional[str]) -> str:
     value = re.sub(r'\s+', ' ', value.strip())
     return value
 
+
+def compute_ledger_hash(value: Optional[str]) -> str:
+    """Compute a stable hash for ledger comparisons."""
+    normalized = normalize_value(value)
+    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+
+
+def load_translation_key_ledger(ledger_file_path: str) -> Dict[str, Dict[str, Dict[str, str]]]:
+    """
+    Load the persistent translation key ledger from disk.
+
+    Returns:
+        Mapping of translation_file -> key -> {source_hash, target_hash}
+    """
+    if not os.path.exists(ledger_file_path):
+        return {}
+    try:
+        with open(ledger_file_path, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+        if not isinstance(payload, dict):
+            logger.warning("Translation key ledger has invalid format, resetting: %s", ledger_file_path)
+            return {}
+        files_obj = payload.get("files", {})
+        if not isinstance(files_obj, dict):
+            logger.warning("Translation key ledger missing 'files' map, resetting: %s", ledger_file_path)
+            return {}
+        return files_obj
+    except Exception as exc:
+        logger.warning("Failed to load translation key ledger '%s': %s", ledger_file_path, exc)
+        return {}
+
+
+def save_translation_key_ledger(
+        ledger_file_path: str,
+        key_ledger: Dict[str, Dict[str, Dict[str, str]]]
+) -> None:
+    """Persist translation key ledger to disk."""
+    if DRY_RUN:
+        logger.info("[Dry Run] Skipping write of translation key ledger.")
+        return
+    try:
+        parent_dir = os.path.dirname(ledger_file_path)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+        payload = {
+            "version": 1,
+            "updated_at": _dt.datetime.now(_dt.timezone.utc).isoformat().replace('+00:00', 'Z'),
+            "files": key_ledger
+        }
+        temp_path = f"{ledger_file_path}.tmp"
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(temp_path, ledger_file_path)
+    except Exception:
+        logger.exception("Failed to save translation key ledger to '%s'.", ledger_file_path)
+
+
+def build_file_key_ledger(
+        source_translations: Dict[str, str],
+        final_translations: Dict[str, str],
+        failed_keys: Optional[Set[str]] = None
+) -> Dict[str, Dict[str, str]]:
+    """Build per-file ledger entries from source/target key-value maps."""
+    file_ledger: Dict[str, Dict[str, str]] = {}
+    failed_keys = failed_keys or set()
+    for key, target_value in final_translations.items():
+        source_value = source_translations.get(key, "")
+        entry = {
+            "source_hash": compute_ledger_hash(source_value),
+            "target_hash": compute_ledger_hash(target_value)
+        }
+        if key in failed_keys:
+            entry["status"] = "failed"
+        file_ledger[key] = entry
+    return file_ledger
+
 def extract_texts_to_translate(
         parsed_lines: List[Dict],
         source_translations: Dict[str, str],
-        target_translations: Dict[str, str]
+        target_translations: Dict[str, str],
+        newly_added_keys: Optional[Set[str]] = None,
+        file_ledger_entries: Optional[Dict[str, Dict[str, str]]] = None,
+        retranslate_identical_existing: bool = False
 ) -> Tuple[List[str], List[int], List[str]]:
     """
     Identifies which texts need to be translated. A text needs translation if:
     1. The key is new (exists in source, not in target).
-    2. The key exists in both, but the source and target values are identical,
-       indicating an untranslated string copied from the source by a tool like Transifex.
+    2. The key was newly synchronized in this run and currently equals the source.
+    3. (Optional legacy mode) Existing keys with source-identical values are also
+       translated when ``retranslate_identical_existing`` is enabled.
 
     Args:
         parsed_lines: The parsed content of the target language file.
         source_translations: A dictionary of key-value pairs from the source (e.g., English) file.
         target_translations: A dictionary of key-value pairs from the target file being processed.
+        newly_added_keys: Keys that were added by key synchronization in this run.
+        file_ledger_entries: Persisted hash data for keys in this translation file.
+        retranslate_identical_existing: Whether to retranslate pre-existing source-identical keys.
 
     Returns:
         A tuple containing the list of texts to translate, their corresponding indices, and their keys.
@@ -228,26 +315,72 @@ def extract_texts_to_translate(
     texts_to_translate = []
     indices = []
     keys_to_translate = []
+    newly_added_keys = newly_added_keys or set()
+    file_ledger_entries = file_ledger_entries or {}
 
     existing_keys_in_target = {line['key'] for line in parsed_lines if line['type'] == 'entry'}
 
     # 1. Check existing keys for required updates.
-    # A key needs translation if the source value is THE SAME as the target value,
-    # as this indicates a fallback to the source language.
     for i, line in enumerate(parsed_lines):
         if line['type'] == 'entry':
             key = line['key']
             target_value = line.get('value', '')
             source_value = source_translations.get(key)
 
-            # If key exists in source and the values are identical (a direct string comparison),
-            # it needs translation. This handles cases where Transifex might have copied
-            # the source English text into the target file.
-            if source_value is not None and source_value.strip() == target_value.strip():
+            if source_value is None:
+                continue
+
+            is_source_identical = source_value.strip() == target_value.strip()
+            ledger_entry = file_ledger_entries.get(key, {})
+            previous_status = ledger_entry.get("status")
+            previous_source_hash = ledger_entry.get("source_hash")
+            previous_target_hash = ledger_entry.get("target_hash")
+            current_source_hash = compute_ledger_hash(source_value)
+            current_target_hash = compute_ledger_hash(target_value)
+            should_translate_newly_added = key in newly_added_keys
+            should_translate_legacy_mode = is_source_identical and retranslate_identical_existing
+            should_translate_changed_source = (
+                previous_source_hash is not None and previous_source_hash != current_source_hash
+            )
+            should_translate_regressed_to_source = (
+                previous_target_hash is not None
+                and current_target_hash == current_source_hash
+                and previous_target_hash != current_source_hash
+            )
+            should_translate_failed_status = previous_status == "failed"
+            should_translate_existing = (
+                # New keys synchronized in this run should always be translated.
+                should_translate_newly_added
+                # Legacy behavior: also retranslate any source-identical existing key.
+                or should_translate_legacy_mode
+                # Source text changed since the last run for this key.
+                or should_translate_changed_source
+                # Previously translated key fell back to source-identical content.
+                or should_translate_regressed_to_source
+                # Keys previously reverted by validation should be retried.
+                or should_translate_failed_status
+            )
+
+            # Only newly synchronized source-identical keys are translated by default.
+            if should_translate_existing:
                 # The value to translate is the source value.
                 texts_to_translate.append(source_value)
                 indices.append(i)  # Use the line's actual index
                 keys_to_translate.append(key)
+                continue
+
+            # Migration visibility: without a baseline, existing source-identical keys are skipped by default.
+            if (
+                    is_source_identical
+                    and previous_source_hash is None
+                    and not retranslate_identical_existing
+                    and not should_translate_newly_added
+            ):
+                logger.info(
+                    "Skipping key '%s' (source==target) because no ledger baseline exists yet. "
+                    "Enable 'retranslate_identical_source_strings' or seed the translation key ledger.",
+                    key
+                )
 
     # 2. Find new keys that are in the source but not in the target file.
     new_keys = source_translations.keys() - existing_keys_in_target
@@ -507,7 +640,7 @@ async def _handle_retry(attempt: int, max_retries: int, base_delay: float, key: 
         logger.error(f"Translation failed for key '{key}' after {max_retries} attempts.")
         return False
 
-def run_pre_translation_validation(target_file_path: str, source_file_path: str) -> List[str]:
+def run_pre_translation_validation(target_file_path: str, source_file_path: str) -> Tuple[List[str], Set[str]]:
     """
     Runs a series of validation and preparation checks on a target properties file.
     - Synchronizes keys with the source file (adds missing, removes extra).
@@ -518,20 +651,24 @@ def run_pre_translation_validation(target_file_path: str, source_file_path: str)
         source_file_path: The absolute path to the source English .properties file.
 
     Returns:
-        A list of validation error messages. An empty list indicates success.
+        A tuple containing:
+        - A list of validation error messages. An empty list indicates success.
+        - A set of keys newly added to the target file during key synchronization.
     """
     errors: List[str] = []
+    newly_added_keys: Set[str] = set()
     filename = os.path.basename(target_file_path)
     logger.info(f"Running pre-translation validation for '{filename}'...")
 
     # 1. Synchronize keys (add missing, remove extra)
     try:
-        synchronize_keys(target_file_path, source_file_path)
+        missing_keys, _extra_keys = synchronize_keys(target_file_path, source_file_path)
+        newly_added_keys = missing_keys
         logger.info(f"Key synchronization complete for '{filename}'.")
     except (IOError, OSError) as e:
         logger.exception("Failed to synchronize keys for '%s'", filename)
         errors.append(f"I/O error during key synchronization: {e}")
-        return errors  # Fail hard if we can't even sync the file
+        return errors, newly_added_keys  # Fail hard if we can't even sync the file
 
     # 2. Check encoding and mojibake on the (potentially modified) file
     encoding_errors = check_encoding_and_mojibake(target_file_path)
@@ -546,7 +683,7 @@ def run_pre_translation_validation(target_file_path: str, source_file_path: str)
     except (IOError, OSError) as e:
         logger.exception("Validation failed for '%s': Could not parse properties file after key sync", filename)
         errors.append(f"Could not parse properties file after key sync: {e}")
-        return errors
+        return errors, newly_added_keys
 
     # 3. Check placeholder parity
     common_keys = set(source_translations.keys()).intersection(set(target_translations.keys()))
@@ -561,7 +698,7 @@ def run_pre_translation_validation(target_file_path: str, source_file_path: str)
     else:
         logger.error(f"Pre-translation validation failed for '{filename}'.")
 
-    return errors
+    return errors, newly_added_keys
 
 def run_post_translation_validation(
         final_content: str,
@@ -1234,7 +1371,11 @@ def validate_paths(input_folder: str, translation_queue: str, translated_queue: 
             raise PermissionError(f"{name} '{path}' lacks required permissions.")
     logger.info("All critical paths are valid and accessible.")
 
-def get_changed_translation_files(input_folder_path: str, repo_root: str) -> List[str]:
+def get_changed_translation_files(
+        input_folder_path: str,
+        repo_root: str,
+        process_all_files: bool = False
+) -> List[str]:
     """
     Use git to find changed translation files in the input folder.
 
@@ -1245,11 +1386,60 @@ def get_changed_translation_files(input_folder_path: str, repo_root: str) -> Lis
     Args:
         input_folder_path (str): The absolute path to the input folder.
         repo_root (str): The absolute path to the Git repository root.
+        process_all_files (bool): If true, scan all translation files under input_folder_path
+            instead of only changed files from git status.
 
     Returns:
-        List[str]: List of changed translation file names relative to input_folder_path.
+        List[str]: List of translation file names relative to input_folder_path.
     """
+    def is_archive_path(relative_path: str) -> bool:
+        """Return True when a relative file path is inside an archive directory."""
+        normalized_path = relative_path.replace('\\', '/')
+        return normalized_path.startswith('archive/') or '/archive/' in normalized_path
+
+    def apply_filter_glob(files: List[str]) -> List[str]:
+        """Apply optional TRANSLATION_FILTER_GLOB filtering to discovered files."""
+        filter_glob = os.environ.get('TRANSLATION_FILTER_GLOB')
+        if not filter_glob:
+            return files
+
+        import fnmatch
+        # If the glob contains a path separator, match against the full relative path.
+        # Otherwise, match against the basename to preserve the original behavior.
+        if '/' in filter_glob:
+            filtered_list = [f for f in files if fnmatch.fnmatch(f, filter_glob)]
+        else:
+            filtered_list = [f for f in files if fnmatch.fnmatch(os.path.basename(f), filter_glob)]
+
+        logger.info(
+            "Applied filter '%s', %d out of %d files will be translated.",
+            filter_glob,
+            len(filtered_list),
+            len(files)
+        )
+        return filtered_list
+
+    def discover_translation_files() -> List[str]:
+        """Discover all translation files (excluding source files and archive paths)."""
+        discovered_files: List[str] = []
+        for root, _, files in os.walk(input_folder_path):
+            for filename in files:
+                if not filename.endswith('.properties'):
+                    continue
+                if not re.search(r'_[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?\.properties$', filename):
+                    continue
+                absolute_path = os.path.join(root, filename)
+                relative_path = os.path.relpath(absolute_path, input_folder_path)
+                if is_archive_path(relative_path):
+                    continue
+                discovered_files.append(relative_path)
+        return sorted(discovered_files)
+
     try:
+        if process_all_files:
+            logger.info("process_all_files=true, scanning all translation files under '%s'.", input_folder_path)
+            return apply_filter_glob(discover_translation_files())
+
         # Calculate the relative path of input_folder from repo_root
         rel_input_folder = os.path.relpath(input_folder_path, repo_root)
 
@@ -1267,7 +1457,8 @@ def get_changed_translation_files(input_folder_path: str, repo_root: str) -> Lis
             check=True
         )
 
-        changed_files = []
+        changed_translation_files: Set[str] = set()
+        changed_source_files: Set[str] = set()
         for line in result.stdout.splitlines():
             if len(line) < 4:
                 continue
@@ -1281,31 +1472,30 @@ def get_changed_translation_files(input_folder_path: str, repo_root: str) -> Lis
             # We now also check for '??' (untracked files)
             if cleaned_status in {'M', 'A', 'AM', 'MM', 'RM', 'R', '??'}:
                 if filepath.endswith('.properties'):
-                    # Check if it's a translation file (has language suffix)
-                    # Updated regex to support hyphenated locale codes like zh-Hans, zh-Hant
-                    if re.search(r'_[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?\.properties$', filepath):
-                        # Extract the filename relative to input_folder
-                        rel_path = os.path.relpath(filepath, rel_input_folder)
-                        changed_files.append(rel_path)
+                    # Extract the filename relative to input_folder
+                    rel_path = os.path.relpath(filepath, rel_input_folder)
+                    if is_archive_path(rel_path):
+                        continue
 
-        # If a filter glob is provided via environment variable, apply it now.
-        # This allows the pipeline to selectively translate only a subset of changed files.
-        filter_glob = os.environ.get('TRANSLATION_FILTER_GLOB')
-        if filter_glob:
-            # We need the `fnmatch` module to compare against the glob pattern.
-            import fnmatch
-            # If the glob contains a path separator, match against the full relative path.
-            # Otherwise, match against the basename to preserve the original behavior.
-            if '/' in filter_glob:
-                filtered_list = [f for f in changed_files if fnmatch.fnmatch(f, filter_glob)]
-            else:
-                filtered_list = [f for f in changed_files if fnmatch.fnmatch(os.path.basename(f), filter_glob)]
+                    # Check if it's a translation file (has language suffix).
+                    # Updated regex to support hyphenated locale codes like zh-Hans, zh-Hant.
+                    if re.search(r'_[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?\.properties$', os.path.basename(filepath)):
+                        changed_translation_files.add(rel_path)
+                    else:
+                        changed_source_files.add(rel_path.replace('\\', '/'))
 
-            logger.info(
-                f"Applied filter '{filter_glob}', {len(filtered_list)} out of {len(changed_files)} files will be translated.")
-            return filtered_list
+        # Resilience to delayed Transifex propagation:
+        # if source files changed, also enqueue all related locale files even if unchanged in git status.
+        if changed_source_files:
+            for translation_rel_path in discover_translation_files():
+                rel_dir = os.path.dirname(translation_rel_path)
+                translation_filename = os.path.basename(translation_rel_path)
+                source_filename = get_source_filename(translation_filename, list(LANGUAGE_CODES.keys()))
+                source_rel_path = os.path.join(rel_dir, source_filename) if rel_dir else source_filename
+                if source_rel_path.replace('\\', '/') in changed_source_files:
+                    changed_translation_files.add(translation_rel_path)
 
-        return changed_files
+        return apply_filter_glob(sorted(changed_translation_files))
     except subprocess.CalledProcessError as git_exc:
         logger.error(f"Error running git command: {git_exc.stderr}")
         return []
@@ -1377,6 +1567,7 @@ async def process_translation_queue(
 
     # Load the glossary from the JSON file
     glossary = load_glossary(glossary_file_path)
+    key_ledger = load_translation_key_ledger(TRANSLATION_KEY_LEDGER_FILE_PATH)
 
     # Set up a single semaphore for all API calls to control concurrency globally.
     # A value of 1 ensures that only one API request is active at any time.
@@ -1415,7 +1606,7 @@ async def process_translation_queue(
         logger.info(f"Processing file '{translation_file}' for language '{target_language}'...")
 
         # --- Pre-flight Validator ---
-        validation_errors = run_pre_translation_validation(translation_file_path, source_file_path)
+        validation_errors, newly_added_keys = run_pre_translation_validation(translation_file_path, source_file_path)
         if validation_errors:
             logger.error(f"Skipping translation for '{translation_file}' due to pre-translation validation errors.")
             for error in validation_errors:
@@ -1440,12 +1631,19 @@ async def process_translation_queue(
         _, source_translations = parse_properties_file(source_file_path)
 
         # Extract texts to translate
+        file_ledger_entries = key_ledger.get(translation_file, {})
         texts_to_translate, indices, keys_to_translate = extract_texts_to_translate(
             parsed_lines,
             source_translations,
-            target_translations
+            target_translations,
+            newly_added_keys=newly_added_keys,
+            file_ledger_entries=file_ledger_entries,
+            retranslate_identical_existing=RETRANSLATE_IDENTICAL_SOURCE_STRINGS
         )
         if not texts_to_translate:
+            # Refresh ledger baseline even when no translation was required.
+            key_ledger[translation_file] = build_file_key_ledger(source_translations, target_translations)
+            save_translation_key_ledger(TRANSLATION_KEY_LEDGER_FILE_PATH, key_ledger)
             logger.info(f"No texts to translate in file '{translation_file}'.")
             continue
 
@@ -1622,6 +1820,14 @@ async def process_translation_queue(
                 file.write(new_file_content)
             logger.info(f"Translated file saved to '{translated_file_path}'.\n")
 
+        # Update and persist per-file key ledger after successful file processing.
+        key_ledger[translation_file] = build_file_key_ledger(
+            source_translations,
+            valid_translations,
+            failed_keys=set(failed_keys)
+        )
+        save_translation_key_ledger(TRANSLATION_KEY_LEDGER_FILE_PATH, key_ledger)
+
         processed_files_count += 1
 
     return processed_files_count, skipped_files
@@ -1660,12 +1866,16 @@ async def main():
     # --- Validation and Setup ---
     validate_paths(INPUT_FOLDER, TRANSLATION_QUEUE_FOLDER, TRANSLATED_QUEUE_FOLDER, REPO_ROOT)
 
-    # Step 1: Identify changed translation files
-    changed_files = get_changed_translation_files(INPUT_FOLDER, REPO_ROOT)
+    # Step 1: Identify translation files to process.
+    changed_files = get_changed_translation_files(
+        INPUT_FOLDER,
+        REPO_ROOT,
+        process_all_files=PROCESS_ALL_FILES
+    )
     if not changed_files:
-        logger.info("No changed translation files detected. Exiting.")
+        logger.info("No translation files to process. Exiting.")
         return
-    logger.info(f"Detected {len(changed_files)} changed translation file(s).")
+    logger.info(f"Detected {len(changed_files)} translation file(s) to process.")
 
     # Step 2: Archive the original files before any processing.
     archive_folder_path = os.path.join(INPUT_FOLDER, 'archive')

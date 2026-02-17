@@ -99,7 +99,7 @@ done
 # --- Execution Lock and Logging ---
 # Lock file to prevent concurrent executions for the same repository
 LOCK_FILE="/tmp/translation-${UPSTREAM_REPO_NAME//\//-}.lock"
-EXECUTION_LOG="/var/log/translation-executions.log"
+EXECUTION_LOG="${LOG_DIR}/translation-executions.log"
 
 # Log execution start
 echo "$(date -Iseconds) START ${HOSTNAME:-unknown} REPO=${UPSTREAM_REPO_NAME} PID=$$" >> "$EXECUTION_LOG" 2>/dev/null || true

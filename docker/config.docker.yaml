@@ -6,6 +6,8 @@ model_name: 'gpt-4o-mini'
 translation_queue_folder: 'translation_queue' # Relative to /app
 translated_queue_folder: 'translated_queue' # Relative to /app
 dry_run: false
+retranslate_identical_source_strings: false
+translation_key_ledger_file_path: "/app/logs/translation_key_ledger.json"
 supported_locales:
   - code: "cs"
     name: "Czech"
@@ -466,6 +468,11 @@ brand_technical_glossary:
 
 # Set to null or remove to translate all changed files.
 # translation_file_filter_glob: null
+
+# Optional: Process all translation files under input_folder instead of only git-changed files.
+# Useful for one-time ledger bootstrap or forced full retranslation runs.
+# Keep false for normal incremental operation.
+process_all_files: false
 
 # Optional: Pull source files (*_en.properties) from Transifex as well as translations.
 # Set to `true` if the canonical source of truth for English strings is Transifex.
