@@ -334,11 +334,18 @@ def extract_texts_to_translate(
             ledger_entry = file_ledger_entries.get(key, {})
             previous_status = ledger_entry.get("status")
             previous_source_hash = ledger_entry.get("source_hash")
+            previous_target_hash = ledger_entry.get("target_hash")
             current_source_hash = compute_ledger_hash(source_value)
+            current_target_hash = compute_ledger_hash(target_value)
             should_translate_newly_added = key in newly_added_keys
             should_translate_legacy_mode = is_source_identical and retranslate_identical_existing
             should_translate_changed_source = (
                 previous_source_hash is not None and previous_source_hash != current_source_hash
+            )
+            should_translate_regressed_to_source = (
+                previous_target_hash is not None
+                and current_target_hash == current_source_hash
+                and previous_target_hash != current_source_hash
             )
             should_translate_failed_status = previous_status == "failed"
             should_translate_existing = (
@@ -348,6 +355,8 @@ def extract_texts_to_translate(
                 or should_translate_legacy_mode
                 # Source text changed since the last run for this key.
                 or should_translate_changed_source
+                # Previously translated key fell back to source-identical content.
+                or should_translate_regressed_to_source
                 # Keys previously reverted by validation should be retried.
                 or should_translate_failed_status
             )

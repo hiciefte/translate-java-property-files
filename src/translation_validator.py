@@ -1,4 +1,4 @@
-from typing import Set, Tuple, List
+from typing import Dict, Set, Tuple, List
 import re
 from collections import Counter
 from src.properties_parser import parse_properties_file, reassemble_file
@@ -41,6 +41,60 @@ def check_placeholder_parity(base_string: str, target_string: str) -> bool:
 
     return base_placeholders == target_placeholders
 
+def _find_insertion_index_for_missing_key(
+        key: str,
+        source_key_order: List[str],
+        source_parsed_lines: List[Dict],
+        source_line_index_by_key: Dict[str, int],
+        final_parsed_lines: List[Dict]
+) -> int:
+    """
+    Find insertion index for a missing key so key order follows source order.
+
+    The key is inserted before the next existing source key when possible, or
+    directly after the previous existing source key as fallback.
+    """
+    source_index_map = {source_key: idx for idx, source_key in enumerate(source_key_order)}
+    target_entry_index_map = {
+        line['key']: idx
+        for idx, line in enumerate(final_parsed_lines)
+        if line.get('type') == 'entry'
+    }
+    source_idx = source_index_map[key]
+
+    # Insert before the next source key that already exists in target.
+    for next_key in source_key_order[source_idx + 1:]:
+        if next_key in target_entry_index_map:
+            insertion_index = target_entry_index_map[next_key]
+            key_line_idx = source_line_index_by_key[key]
+            next_key_line_idx = source_line_index_by_key[next_key]
+            has_non_entry_between = any(
+                line.get('type') != 'entry'
+                for line in source_parsed_lines[key_line_idx + 1:next_key_line_idx]
+            )
+            if has_non_entry_between:
+                while insertion_index > 0 and final_parsed_lines[insertion_index - 1].get('type') != 'entry':
+                    insertion_index -= 1
+            return insertion_index
+
+    # Otherwise insert after the previous source key that exists in target.
+    for prev_key in reversed(source_key_order[:source_idx]):
+        if prev_key in target_entry_index_map:
+            insertion_index = target_entry_index_map[prev_key] + 1
+            prev_key_line_idx = source_line_index_by_key[prev_key]
+            key_line_idx = source_line_index_by_key[key]
+            has_non_entry_between = any(
+                line.get('type') != 'entry'
+                for line in source_parsed_lines[prev_key_line_idx + 1:key_line_idx]
+            )
+            if has_non_entry_between:
+                while insertion_index < len(final_parsed_lines) and final_parsed_lines[insertion_index].get('type') != 'entry':
+                    insertion_index += 1
+            return insertion_index
+
+    # No anchor keys exist; append at end.
+    return len(final_parsed_lines)
+
 def synchronize_keys(target_file_path: str, source_file_path: str) -> Tuple[Set[str], Set[str]]:
     """
     Synchronizes the keys in a target .properties file with a source file.
@@ -57,7 +111,7 @@ def synchronize_keys(target_file_path: str, source_file_path: str) -> Tuple[Set[
     """
     # Parse both files to get their structure and key-value pairs
     target_parsed_lines, target_translations = parse_properties_file(target_file_path)
-    _, source_translations = parse_properties_file(source_file_path)
+    source_parsed_lines, source_translations = parse_properties_file(source_file_path)
 
     # Find the differences in keys
     missing_keys, extra_keys = check_key_coverage(set(source_translations.keys()), set(target_translations.keys()))
@@ -71,14 +125,37 @@ def synchronize_keys(target_file_path: str, source_file_path: str) -> Tuple[Set[
         if line.get('key') not in extra_keys
     ]
 
-    # Add missing keys to the end of the file structure
-    for key in sorted(list(missing_keys)): # Sort for deterministic order
-        final_parsed_lines.append({
+    source_key_order = [line['key'] for line in source_parsed_lines if line.get('type') == 'entry']
+    source_line_index_by_key = {
+        line['key']: idx
+        for idx, line in enumerate(source_parsed_lines)
+        if line.get('type') == 'entry'
+    }
+    source_entry_map = {
+        line['key']: line for line in source_parsed_lines if line.get('type') == 'entry'
+    }
+
+    # Add missing keys in source order and at source-relative positions.
+    for key in source_key_order:
+        if key not in missing_keys:
+            continue
+
+        source_entry = source_entry_map.get(key, {})
+        insertion_index = _find_insertion_index_for_missing_key(
+            key,
+            source_key_order,
+            source_parsed_lines,
+            source_line_index_by_key,
+            final_parsed_lines
+        )
+        final_parsed_lines.insert(insertion_index, {
             'type': 'entry',
             'key': key,
             'value': source_translations[key],
             'original_value': source_translations[key],
-            'line_number': len(final_parsed_lines) # Assign a new line number
+            'line_number': source_entry.get('line_number', insertion_index),
+            'was_multiline': source_entry.get('was_multiline', False),
+            'separator_group': source_entry.get('separator_group', '=')
         })
 
     # Reassemble the file content and write it back
