@@ -750,6 +750,33 @@ class TestFileDetectionLogic(unittest.TestCase):
             files = get_changed_translation_files(input_folder, repo_root, process_all_files=True)
             self.assertEqual(files, ["mobile_es.properties"])
 
+    @patch('subprocess.run')
+    def test_get_changed_files_includes_locale_files_when_source_file_changed(self, mock_subprocess_run):
+        """When a source file changes, all related locale files should be queued."""
+        from src.translate_localization_files import get_changed_translation_files
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = temp_dir
+            input_folder = os.path.join(temp_dir, "i18n", "resources")
+            os.makedirs(input_folder, exist_ok=True)
+
+            for file_name in [
+                "mobile.properties",
+                "mobile_de.properties",
+                "mobile_es.properties",
+                "desktop.properties",
+                "desktop_de.properties",
+            ]:
+                with open(os.path.join(input_folder, file_name), "w", encoding="utf-8") as temp_file:
+                    temp_file.write("k=v\n")
+
+            git_output = " M i18n/resources/mobile.properties"
+            mock_subprocess_run.return_value = MagicMock(stdout=git_output, stderr="", check_returncode=MagicMock())
+
+            files = get_changed_translation_files(input_folder, repo_root)
+
+        self.assertEqual(sorted(files), ["mobile_de.properties", "mobile_es.properties"])
+
 
 if __name__ == '__main__':
     unittest.main()

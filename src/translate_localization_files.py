@@ -1419,21 +1419,26 @@ def get_changed_translation_files(
         )
         return filtered_list
 
+    def discover_translation_files() -> List[str]:
+        """Discover all translation files (excluding source files and archive paths)."""
+        discovered_files: List[str] = []
+        for root, _, files in os.walk(input_folder_path):
+            for filename in files:
+                if not filename.endswith('.properties'):
+                    continue
+                if not re.search(r'_[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?\.properties$', filename):
+                    continue
+                absolute_path = os.path.join(root, filename)
+                relative_path = os.path.relpath(absolute_path, input_folder_path)
+                if is_archive_path(relative_path):
+                    continue
+                discovered_files.append(relative_path)
+        return sorted(discovered_files)
+
     try:
         if process_all_files:
             logger.info("process_all_files=true, scanning all translation files under '%s'.", input_folder_path)
-            all_translation_files: List[str] = []
-            for root, _, files in os.walk(input_folder_path):
-                for filename in files:
-                    if not filename.endswith('.properties'):
-                        continue
-                    if re.search(r'_[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?\.properties$', filename):
-                        absolute_path = os.path.join(root, filename)
-                        relative_path = os.path.relpath(absolute_path, input_folder_path)
-                        if is_archive_path(relative_path):
-                            continue
-                        all_translation_files.append(relative_path)
-            return apply_filter_glob(sorted(all_translation_files))
+            return apply_filter_glob(discover_translation_files())
 
         # Calculate the relative path of input_folder from repo_root
         rel_input_folder = os.path.relpath(input_folder_path, repo_root)
@@ -1452,7 +1457,8 @@ def get_changed_translation_files(
             check=True
         )
 
-        changed_files = []
+        changed_translation_files: Set[str] = set()
+        changed_source_files: Set[str] = set()
         for line in result.stdout.splitlines():
             if len(line) < 4:
                 continue
@@ -1466,16 +1472,30 @@ def get_changed_translation_files(
             # We now also check for '??' (untracked files)
             if cleaned_status in {'M', 'A', 'AM', 'MM', 'RM', 'R', '??'}:
                 if filepath.endswith('.properties'):
-                    # Check if it's a translation file (has language suffix)
-                    # Updated regex to support hyphenated locale codes like zh-Hans, zh-Hant
-                    if re.search(r'_[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?\.properties$', filepath):
-                        # Extract the filename relative to input_folder
-                        rel_path = os.path.relpath(filepath, rel_input_folder)
-                        if is_archive_path(rel_path):
-                            continue
-                        changed_files.append(rel_path)
+                    # Extract the filename relative to input_folder
+                    rel_path = os.path.relpath(filepath, rel_input_folder)
+                    if is_archive_path(rel_path):
+                        continue
 
-        return apply_filter_glob(changed_files)
+                    # Check if it's a translation file (has language suffix).
+                    # Updated regex to support hyphenated locale codes like zh-Hans, zh-Hant.
+                    if re.search(r'_[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?\.properties$', os.path.basename(filepath)):
+                        changed_translation_files.add(rel_path)
+                    else:
+                        changed_source_files.add(rel_path.replace('\\', '/'))
+
+        # Resilience to delayed Transifex propagation:
+        # if source files changed, also enqueue all related locale files even if unchanged in git status.
+        if changed_source_files:
+            for translation_rel_path in discover_translation_files():
+                rel_dir = os.path.dirname(translation_rel_path)
+                translation_filename = os.path.basename(translation_rel_path)
+                source_filename = get_source_filename(translation_filename, list(LANGUAGE_CODES.keys()))
+                source_rel_path = os.path.join(rel_dir, source_filename) if rel_dir else source_filename
+                if source_rel_path.replace('\\', '/') in changed_source_files:
+                    changed_translation_files.add(translation_rel_path)
+
+        return apply_filter_glob(sorted(changed_translation_files))
     except subprocess.CalledProcessError as git_exc:
         logger.error(f"Error running git command: {git_exc.stderr}")
         return []
