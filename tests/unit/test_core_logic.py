@@ -270,6 +270,31 @@ class TestCoreLogic(unittest.TestCase):
         self.assertEqual(indices, [0])
         self.assertEqual(keys, ['key_existing'])
 
+    def test_extract_texts_to_translate_logs_missing_ledger_baseline_skip(self):
+        """Existing source-identical keys should log migration hint when no baseline hash exists."""
+        parsed_lines = [
+            {'type': 'entry', 'key': 'key_existing', 'value': 'Source Existing', 'line_number': 0},
+        ]
+        target_translations = {'key_existing': 'Source Existing'}
+        source_translations = {'key_existing': 'Source Existing'}
+
+        with self.assertLogs('translation_script', level='INFO') as captured_logs:
+            texts, indices, keys = extract_texts_to_translate(
+                parsed_lines,
+                source_translations,
+                target_translations,
+                newly_added_keys=set(),
+                file_ledger_entries={},
+                retranslate_identical_existing=False
+            )
+
+        self.assertEqual(texts, [])
+        self.assertEqual(indices, [])
+        self.assertEqual(keys, [])
+        joined_logs = "\n".join(captured_logs.output)
+        self.assertIn("Skipping key 'key_existing' (source==target)", joined_logs)
+        self.assertIn("retranslate_identical_source_strings", joined_logs)
+
     def test_extract_language_from_filename(self):
         """Tests that `extract_language_from_filename` correctly identifies language codes."""
         supported_codes = ["de", "pt_BR", "af_ZA", "en"]

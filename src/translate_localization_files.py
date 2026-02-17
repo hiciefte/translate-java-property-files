@@ -253,7 +253,7 @@ def save_translation_key_ledger(
         os.makedirs(os.path.dirname(ledger_file_path), exist_ok=True)
         payload = {
             "version": 1,
-            "updated_at": _dt.datetime.utcnow().isoformat() + "Z",
+            "updated_at": _dt.datetime.now(_dt.timezone.utc).isoformat().replace('+00:00', 'Z'),
             "files": key_ledger
         }
         temp_path = f"{ledger_file_path}.tmp"
@@ -326,13 +326,18 @@ def extract_texts_to_translate(
             ledger_entry = file_ledger_entries.get(key, {})
             previous_source_hash = ledger_entry.get("source_hash")
             current_source_hash = compute_ledger_hash(source_value)
+            should_translate_newly_added = key in newly_added_keys
+            should_translate_legacy_mode = is_source_identical and retranslate_identical_existing
+            should_translate_changed_source = (
+                previous_source_hash is not None and previous_source_hash != current_source_hash
+            )
             should_translate_existing = (
                 # New keys synchronized in this run should always be translated.
-                key in newly_added_keys
+                should_translate_newly_added
                 # Legacy behavior: also retranslate any source-identical existing key.
-                or (is_source_identical and retranslate_identical_existing)
+                or should_translate_legacy_mode
                 # Source text changed since the last run for this key.
-                or (previous_source_hash is not None and previous_source_hash != current_source_hash)
+                or should_translate_changed_source
             )
 
             # Only newly synchronized source-identical keys are translated by default.
@@ -341,6 +346,20 @@ def extract_texts_to_translate(
                 texts_to_translate.append(source_value)
                 indices.append(i)  # Use the line's actual index
                 keys_to_translate.append(key)
+                continue
+
+            # Migration visibility: without a baseline, existing source-identical keys are skipped by default.
+            if (
+                    is_source_identical
+                    and previous_source_hash is None
+                    and not retranslate_identical_existing
+                    and not should_translate_newly_added
+            ):
+                logger.info(
+                    "Skipping key '%s' (source==target) because no ledger baseline exists yet. "
+                    "Enable 'retranslate_identical_source_strings' or seed the translation key ledger.",
+                    key
+                )
 
     # 2. Find new keys that are in the source but not in the target file.
     new_keys = source_translations.keys() - existing_keys_in_target
@@ -623,7 +642,7 @@ def run_pre_translation_validation(target_file_path: str, source_file_path: str)
     # 1. Synchronize keys (add missing, remove extra)
     try:
         missing_keys, _extra_keys = synchronize_keys(target_file_path, source_file_path)
-        newly_added_keys = set(missing_keys)
+        newly_added_keys = missing_keys
         logger.info(f"Key synchronization complete for '{filename}'.")
     except (IOError, OSError) as e:
         logger.exception("Failed to synchronize keys for '%s'", filename)
@@ -1550,6 +1569,7 @@ async def process_translation_queue(
         if not texts_to_translate:
             # Refresh ledger baseline even when no translation was required.
             key_ledger[translation_file] = build_file_key_ledger(source_translations, target_translations)
+            save_translation_key_ledger(TRANSLATION_KEY_LEDGER_FILE_PATH, key_ledger)
             logger.info(f"No texts to translate in file '{translation_file}'.")
             continue
 
@@ -1715,9 +1735,6 @@ async def process_translation_queue(
         new_file_content = reassemble_file(updated_lines)
         # --- End Per-Key Validation ---
 
-        # Update per-file key ledger from validated source/target state.
-        key_ledger[translation_file] = build_file_key_ledger(source_translations, valid_translations)
-
         translated_file_path = os.path.join(translated_queue_folder, translation_file)
 
         if DRY_RUN:
@@ -1728,6 +1745,10 @@ async def process_translation_queue(
             with open(translated_file_path, 'w', encoding='utf-8') as file:
                 file.write(new_file_content)
             logger.info(f"Translated file saved to '{translated_file_path}'.\n")
+
+        # Update and persist per-file key ledger after successful file processing.
+        key_ledger[translation_file] = build_file_key_ledger(source_translations, valid_translations)
+        save_translation_key_ledger(TRANSLATION_KEY_LEDGER_FILE_PATH, key_ledger)
 
         processed_files_count += 1
 

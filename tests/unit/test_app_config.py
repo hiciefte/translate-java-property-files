@@ -95,6 +95,10 @@ class TestLoadAppConfig:
         assert config.dry_run is True
         assert config.holistic_review_chunk_size == 30  # Updated from 75 to 30
         assert config.max_concurrent_api_calls == 1
+        assert config.retranslate_identical_source_strings is False
+        assert config.translation_key_ledger_file_path == os.path.join(
+            config.project_root, "logs", "translation_key_ledger.json"
+        )
 
     def test_load_config_with_environment_overrides(self):
         """Test that environment variables override config file values."""
