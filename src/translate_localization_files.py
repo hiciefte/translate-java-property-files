@@ -251,7 +251,9 @@ def save_translation_key_ledger(
         logger.info("[Dry Run] Skipping write of translation key ledger.")
         return
     try:
-        os.makedirs(os.path.dirname(ledger_file_path), exist_ok=True)
+        parent_dir = os.path.dirname(ledger_file_path)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
         payload = {
             "version": 1,
             "updated_at": _dt.datetime.now(_dt.timezone.utc).isoformat().replace('+00:00', 'Z'),

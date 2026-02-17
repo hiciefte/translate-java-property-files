@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -52,6 +53,27 @@ def test_translation_key_ledger_timestamp_uses_utc_z_suffix():
             payload = json.load(ledger_file)
 
         assert payload["updated_at"].endswith("Z")
+
+
+def test_save_translation_key_ledger_with_filename_only_path():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        old_cwd = os.getcwd()
+        os.chdir(temp_dir)
+        try:
+            key_ledger = {
+                "mobile_de.properties": {
+                    "key.one": {
+                        "source_hash": compute_ledger_hash("Source one"),
+                        "target_hash": compute_ledger_hash("Ziel eins")
+                    }
+                }
+            }
+
+            save_translation_key_ledger("ledger.json", key_ledger)
+            loaded = load_translation_key_ledger("ledger.json")
+            assert loaded == key_ledger
+        finally:
+            os.chdir(old_cwd)
 
 
 def test_build_file_key_ledger_replaces_removed_keys():
