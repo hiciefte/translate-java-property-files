@@ -62,35 +62,49 @@ def _find_insertion_index_for_missing_key(
     }
     source_idx = source_index_map[key]
 
-    # Insert before the next source key that already exists in target.
-    for next_key in source_key_order[source_idx + 1:]:
-        if next_key in target_entry_index_map:
-            insertion_index = target_entry_index_map[next_key]
-            key_line_idx = source_line_index_by_key[key]
-            next_key_line_idx = source_line_index_by_key[next_key]
-            has_non_entry_between = any(
-                line.get('type') != 'entry'
-                for line in source_parsed_lines[key_line_idx + 1:next_key_line_idx]
-            )
-            if has_non_entry_between:
-                while insertion_index > 0 and final_parsed_lines[insertion_index - 1].get('type') != 'entry':
-                    insertion_index -= 1
-            return insertion_index
+    def count_non_entry_lines(start_idx: int, end_idx: int) -> int:
+        return sum(
+            1 for line in source_parsed_lines[start_idx:end_idx]
+            if line.get('type') != 'entry'
+        )
 
-    # Otherwise insert after the previous source key that exists in target.
-    for prev_key in reversed(source_key_order[:source_idx]):
-        if prev_key in target_entry_index_map:
-            insertion_index = target_entry_index_map[prev_key] + 1
-            prev_key_line_idx = source_line_index_by_key[prev_key]
-            key_line_idx = source_line_index_by_key[key]
-            has_non_entry_between = any(
-                line.get('type') != 'entry'
-                for line in source_parsed_lines[prev_key_line_idx + 1:key_line_idx]
-            )
-            if has_non_entry_between:
-                while insertion_index < len(final_parsed_lines) and final_parsed_lines[insertion_index].get('type') != 'entry':
-                    insertion_index += 1
-            return insertion_index
+    prev_key = next(
+        (candidate for candidate in reversed(source_key_order[:source_idx]) if candidate in target_entry_index_map),
+        None
+    )
+    next_key = next(
+        (candidate for candidate in source_key_order[source_idx + 1:] if candidate in target_entry_index_map),
+        None
+    )
+
+    # Prefer previous-key anchoring so leading comments for the missing key are preserved.
+    if prev_key is not None:
+        insertion_index = target_entry_index_map[prev_key] + 1
+        prev_key_line_idx = source_line_index_by_key[prev_key]
+        key_line_idx = source_line_index_by_key[key]
+        non_entry_before_key = count_non_entry_lines(prev_key_line_idx + 1, key_line_idx)
+        while (
+                insertion_index < len(final_parsed_lines)
+                and non_entry_before_key > 0
+                and final_parsed_lines[insertion_index].get('type') != 'entry'
+        ):
+            insertion_index += 1
+            non_entry_before_key -= 1
+        return insertion_index
+
+    if next_key is not None:
+        insertion_index = target_entry_index_map[next_key]
+        key_line_idx = source_line_index_by_key[key]
+        next_key_line_idx = source_line_index_by_key[next_key]
+        non_entry_after_key = count_non_entry_lines(key_line_idx + 1, next_key_line_idx)
+        while (
+                insertion_index > 0
+                and non_entry_after_key > 0
+                and final_parsed_lines[insertion_index - 1].get('type') != 'entry'
+        ):
+            insertion_index -= 1
+            non_entry_after_key -= 1
+        return insertion_index
 
     # No anchor keys exist; append at end.
     return len(final_parsed_lines)

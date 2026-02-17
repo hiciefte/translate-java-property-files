@@ -179,6 +179,45 @@ class TestTranslationValidator(unittest.TestCase):
             os.remove(source_path)
             os.remove(target_path)
 
+    def test_key_synchronization_preserves_position_between_duplicate_comments(self):
+        source_content = (
+            "key.one=One\n"
+            "# suppress inspection \"UnusedProperty\"\n"
+            "key.two=Two\n"
+            "# suppress inspection \"UnusedProperty\"\n"
+            "key.three=Three\n"
+        )
+        target_content = (
+            "key.one=Uno\n"
+            "# suppress inspection \"UnusedProperty\"\n"
+            "# suppress inspection \"UnusedProperty\"\n"
+            "key.three=Tres\n"
+        )
+
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8') as f_source:
+            f_source.write(source_content)
+            source_path = f_source.name
+
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8') as f_target:
+            f_target.write(target_content)
+            target_path = f_target.name
+
+        try:
+            synchronize_keys(target_path, source_path)
+
+            with open(target_path, 'r', encoding='utf-8') as f_target_mod:
+                lines = f_target_mod.read().splitlines()
+
+            first_comment_idx = lines.index('# suppress inspection "UnusedProperty"')
+            second_comment_idx = lines.index('# suppress inspection "UnusedProperty"', first_comment_idx + 1)
+            key_idx = lines.index('key.two=Two')
+
+            self.assertLess(first_comment_idx, key_idx)
+            self.assertLess(key_idx, second_comment_idx)
+        finally:
+            os.remove(source_path)
+            os.remove(target_path)
+
 
 if __name__ == '__main__':
     unittest.main()
