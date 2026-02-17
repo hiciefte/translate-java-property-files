@@ -90,7 +90,8 @@ CVE-2025-47906
 #            is minimal given the controlled usage context. Vendors (especially Transifex with Go 1.16.15
 #            from 2022) are unlikely to release patched versions soon.
 # Added: 2025-11-06
-# Revisit by: 2026-01-15 (check for updated vendor releases)
+# Revalidated: 2026-02-17 (CI Trivy still reports embedded Go stdlib in vendor binaries)
+# Revisit by: 2026-04-15 (check for updated vendor releases)
 CVE-2025-47912
 CVE-2025-58183
 CVE-2025-58186

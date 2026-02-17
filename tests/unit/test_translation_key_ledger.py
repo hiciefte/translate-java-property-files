@@ -76,7 +76,7 @@ def test_save_translation_key_ledger_with_filename_only_path():
             os.chdir(old_cwd)
 
 
-def test_build_file_key_ledger_replaces_removed_keys():
+def test_build_file_key_ledger_produces_correct_hashes():
     source_translations = {
         "key.keep": "Source Keep",
         "key.new": "Source New"
@@ -91,3 +91,16 @@ def test_build_file_key_ledger_replaces_removed_keys():
     assert set(built.keys()) == {"key.keep", "key.new"}
     assert built["key.keep"]["source_hash"] == compute_ledger_hash("Source Keep")
     assert built["key.keep"]["target_hash"] == compute_ledger_hash("Ziel Keep")
+
+
+def test_build_file_key_ledger_marks_failed_keys():
+    source_translations = {"key.one": "Source One"}
+    final_translations = {"key.one": "Source One"}
+
+    built = build_file_key_ledger(
+        source_translations,
+        final_translations,
+        failed_keys={"key.one"}
+    )
+
+    assert built["key.one"]["status"] == "failed"

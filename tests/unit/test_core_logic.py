@@ -270,6 +270,32 @@ class TestCoreLogic(unittest.TestCase):
         self.assertEqual(indices, [0])
         self.assertEqual(keys, ['key_existing'])
 
+    def test_extract_texts_to_translate_retries_failed_ledger_keys(self):
+        """Keys marked failed in the ledger should be eligible for retranslation."""
+        parsed_lines = [
+            {'type': 'entry', 'key': 'key_existing', 'value': 'Source Existing', 'line_number': 0},
+        ]
+        target_translations = {'key_existing': 'Source Existing'}
+        source_translations = {'key_existing': 'Source Existing'}
+        file_ledger_entries = {
+            'key_existing': {
+                'source_hash': compute_ledger_hash('Source Existing'),
+                'target_hash': compute_ledger_hash('Source Existing'),
+                'status': 'failed'
+            }
+        }
+
+        texts, indices, keys = extract_texts_to_translate(
+            parsed_lines,
+            source_translations,
+            target_translations,
+            file_ledger_entries=file_ledger_entries
+        )
+
+        self.assertEqual(texts, ['Source Existing'])
+        self.assertEqual(indices, [0])
+        self.assertEqual(keys, ['key_existing'])
+
     def test_extract_texts_to_translate_logs_missing_ledger_baseline_skip(self):
         """Existing source-identical keys should log migration hint when no baseline hash exists."""
         parsed_lines = [

@@ -269,16 +269,21 @@ def save_translation_key_ledger(
 
 def build_file_key_ledger(
         source_translations: Dict[str, str],
-        final_translations: Dict[str, str]
+        final_translations: Dict[str, str],
+        failed_keys: Optional[Set[str]] = None
 ) -> Dict[str, Dict[str, str]]:
     """Build per-file ledger entries from source/target key-value maps."""
     file_ledger: Dict[str, Dict[str, str]] = {}
+    failed_keys = failed_keys or set()
     for key, target_value in final_translations.items():
         source_value = source_translations.get(key, "")
-        file_ledger[key] = {
+        entry = {
             "source_hash": compute_ledger_hash(source_value),
             "target_hash": compute_ledger_hash(target_value)
         }
+        if key in failed_keys:
+            entry["status"] = "failed"
+        file_ledger[key] = entry
     return file_ledger
 
 def extract_texts_to_translate(
@@ -327,6 +332,7 @@ def extract_texts_to_translate(
 
             is_source_identical = source_value.strip() == target_value.strip()
             ledger_entry = file_ledger_entries.get(key, {})
+            previous_status = ledger_entry.get("status")
             previous_source_hash = ledger_entry.get("source_hash")
             current_source_hash = compute_ledger_hash(source_value)
             should_translate_newly_added = key in newly_added_keys
@@ -334,6 +340,7 @@ def extract_texts_to_translate(
             should_translate_changed_source = (
                 previous_source_hash is not None and previous_source_hash != current_source_hash
             )
+            should_translate_failed_status = previous_status == "failed"
             should_translate_existing = (
                 # New keys synchronized in this run should always be translated.
                 should_translate_newly_added
@@ -341,6 +348,8 @@ def extract_texts_to_translate(
                 or should_translate_legacy_mode
                 # Source text changed since the last run for this key.
                 or should_translate_changed_source
+                # Keys previously reverted by validation should be retried.
+                or should_translate_failed_status
             )
 
             # Only newly synchronized source-identical keys are translated by default.
@@ -1783,12 +1792,15 @@ async def process_translation_queue(
             logger.info(f"Translated file saved to '{translated_file_path}'.\n")
 
         # Update and persist per-file key ledger after successful file processing.
-        key_ledger[translation_file] = build_file_key_ledger(source_translations, valid_translations)
+        key_ledger[translation_file] = build_file_key_ledger(
+            source_translations,
+            valid_translations,
+            failed_keys=set(failed_keys)
+        )
         save_translation_key_ledger(TRANSLATION_KEY_LEDGER_FILE_PATH, key_ledger)
 
         processed_files_count += 1
 
-    save_translation_key_ledger(TRANSLATION_KEY_LEDGER_FILE_PATH, key_ledger)
     return processed_files_count, skipped_files
 
 def archive_original_files(

@@ -54,6 +54,8 @@ class TestLoadAppConfig:
             "input_folder": "/custom/input",
             "model_name": "gpt-4o-mini",
             "dry_run": True,
+            "retranslate_identical_source_strings": True,
+            "translation_key_ledger_file_path": "/tmp/test-ledger.json",
             "supported_locales": [
                 {"code": "de", "name": "German"},
                 {"code": "es", "name": "Spanish"}
@@ -76,6 +78,8 @@ class TestLoadAppConfig:
         assert config.input_folder == "/custom/input"
         assert config.model_name == "gpt-4o-mini"
         assert config.dry_run is True
+        assert config.retranslate_identical_source_strings is True
+        assert config.translation_key_ledger_file_path == "/tmp/test-ledger.json"
         assert config.language_codes == {"de": "German", "es": "Spanish"}
         assert config.name_to_code == {"german": "de", "spanish": "es"}
 
