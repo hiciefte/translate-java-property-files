@@ -83,7 +83,7 @@ jobs:
         run: docker images
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.31.0
+        uses: aquasecurity/trivy-action@0.34.0
         with:
           image-ref: 'translator-app:ci-${{ github.sha }}'
           # Temporarily switch to 'table' format to identify the new CVEs causing the failure.
