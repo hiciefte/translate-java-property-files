@@ -353,6 +353,7 @@ class TestCoreLogic(unittest.TestCase):
             "diff --git a/mobile_pt_BR.properties b/mobile_pt_BR.properties\n"
             "@@ -1 +1,5 @@\n"
             "+mobile.bisqEasy.tradeWizard.amount.seller.limitInfo=Your maximum selling amount is {0} out of {1}.\n"
+            "+mobile.bisqEasy.colonKey:Value from colon separator\n"
             "+   # translated comment\n"
             "+! linter directive\n"
             "+mobile.bisqEasy.someOtherKey = Value\n"
@@ -368,6 +369,7 @@ class TestCoreLogic(unittest.TestCase):
         self.assertSetEqual(
             {
                 "mobile.bisqEasy.tradeWizard.amount.seller.limitInfo",
+                "mobile.bisqEasy.colonKey",
                 "mobile.bisqEasy.someOtherKey",
             },
             keys

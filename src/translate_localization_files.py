@@ -407,9 +407,17 @@ def _extract_properties_key_from_diff_line(diff_line: str) -> Optional[str]:
         return None
     if stripped_line.startswith('#') or stripped_line.startswith('!'):
         return None
-    if '=' not in diff_line:
+    equals_position = diff_line.find('=')
+    colon_position = diff_line.find(':')
+    if equals_position == -1 and colon_position == -1:
         return None
-    key = diff_line.split('=', 1)[0].strip()
+    if equals_position == -1:
+        separator_position = colon_position
+    elif colon_position == -1:
+        separator_position = equals_position
+    else:
+        separator_position = min(equals_position, colon_position)
+    key = diff_line[:separator_position].strip()
     return key or None
 
 
@@ -1686,7 +1694,8 @@ async def process_translation_queue(
 
         # Extract texts to translate
         file_ledger_entries = key_ledger.get(translation_file, {})
-        git_changed_keys = get_working_tree_changed_keys(translation_file_path, REPO_ROOT)
+        original_input_file_path = os.path.join(INPUT_FOLDER, translation_file)
+        git_changed_keys = get_working_tree_changed_keys(original_input_file_path, REPO_ROOT)
         newly_synchronized_keys = newly_added_keys.union(git_changed_keys)
         if git_changed_keys:
             logger.info(
