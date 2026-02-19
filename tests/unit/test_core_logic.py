@@ -16,6 +16,7 @@ from src.translate_localization_files import (
     normalize_value,
     compute_ledger_hash,
     extract_texts_to_translate,
+    get_working_tree_changed_keys,
     extract_language_from_filename,
     run_post_translation_validation
 )
@@ -345,6 +346,43 @@ class TestCoreLogic(unittest.TestCase):
         joined_logs = "\n".join(captured_logs.output)
         self.assertIn("Skipping key 'key_existing' (source==target)", joined_logs)
         self.assertIn("retranslate_identical_source_strings", joined_logs)
+
+    def test_get_working_tree_changed_keys_parses_added_entries(self):
+        """git diff added key/value lines should be parsed as newly synchronized keys."""
+        git_diff_output = (
+            "diff --git a/mobile_pt_BR.properties b/mobile_pt_BR.properties\n"
+            "@@ -1 +1,5 @@\n"
+            "+mobile.bisqEasy.tradeWizard.amount.seller.limitInfo=Your maximum selling amount is {0} out of {1}.\n"
+            "+mobile.bisqEasy.colonKey:Value from colon separator\n"
+            "+   # translated comment\n"
+            "+! linter directive\n"
+            "+mobile.bisqEasy.someOtherKey = Value\n"
+            "+this is not a properties assignment\n"
+        )
+        mocked_result = MagicMock(returncode=0, stdout=git_diff_output, stderr="")
+        with patch("src.translate_localization_files.subprocess.run", return_value=mocked_result):
+            keys = get_working_tree_changed_keys(
+                "/repo/mobile/mobile_pt_BR.properties",
+                "/repo"
+            )
+
+        self.assertSetEqual(
+            {
+                "mobile.bisqEasy.tradeWizard.amount.seller.limitInfo",
+                "mobile.bisqEasy.colonKey",
+                "mobile.bisqEasy.someOtherKey",
+            },
+            keys
+        )
+
+    def test_get_working_tree_changed_keys_returns_empty_on_command_failure(self):
+        """git diff inspection failures should fail open and return no changed keys."""
+        with patch("src.translate_localization_files.subprocess.run", side_effect=OSError("git missing")):
+            keys = get_working_tree_changed_keys(
+                "/repo/mobile/mobile_pt_BR.properties",
+                "/repo"
+            )
+        self.assertEqual(set(), keys)
 
     def test_extract_language_from_filename(self):
         """Tests that `extract_language_from_filename` correctly identifies language codes."""

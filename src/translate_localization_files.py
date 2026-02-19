@@ -298,6 +298,8 @@ def extract_texts_to_translate(
     Identifies which texts need to be translated. A text needs translation if:
     1. The key is new (exists in source, not in target).
     2. The key was newly synchronized in this run and currently equals the source.
+       This includes keys added by file key synchronization and keys changed in
+       the current git working tree (e.g., inserted by ``tx pull -t -f``).
     3. (Optional legacy mode) Existing keys with source-identical values are also
        translated when ``retranslate_identical_existing`` is enabled.
 
@@ -396,6 +398,66 @@ def extract_texts_to_translate(
         next_new_key_index += 1
 
     return texts_to_translate, indices, keys_to_translate
+
+
+def _extract_properties_key_from_diff_line(diff_line: str) -> Optional[str]:
+    """Extract a properties key from one added git diff line."""
+    stripped_line = diff_line.strip()
+    if not stripped_line:
+        return None
+    if stripped_line.startswith('#') or stripped_line.startswith('!'):
+        return None
+    equals_position = diff_line.find('=')
+    colon_position = diff_line.find(':')
+    if equals_position == -1 and colon_position == -1:
+        return None
+    if equals_position == -1:
+        separator_position = colon_position
+    elif colon_position == -1:
+        separator_position = equals_position
+    else:
+        separator_position = min(equals_position, colon_position)
+    key = diff_line[:separator_position].strip()
+    return key or None
+
+
+def get_working_tree_changed_keys(target_file_path: str, repo_root: str) -> Set[str]:
+    """
+    Return keys that were added/updated for ``target_file_path`` in git working tree.
+
+    This is used to capture keys that appear in locale files through ``tx pull``
+    before AI translation runs, so they can be treated as newly synchronized.
+    """
+    try:
+        relative_target_path = os.path.relpath(target_file_path, repo_root)
+        result = subprocess.run(
+            ['git', 'diff', '--unified=0', '--', relative_target_path],
+            cwd=repo_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False
+        )
+        if result.returncode != 0:
+            logger.debug(
+                "Unable to inspect git diff for '%s' (exit=%s): %s",
+                relative_target_path,
+                result.returncode,
+                result.stderr.strip()
+            )
+            return set()
+
+        changed_keys: Set[str] = set()
+        for line in result.stdout.splitlines():
+            if not line.startswith('+') or line.startswith('+++'):
+                continue
+            key = _extract_properties_key_from_diff_line(line[1:])
+            if key:
+                changed_keys.add(key)
+        return changed_keys
+    except Exception:
+        logger.debug("Failed to compute git-diff changed keys for '%s'.", target_file_path, exc_info=True)
+        return set()
 
 def count_tokens(text: str, model_name: str = 'gpt-3.5-turbo') -> int:
     """Count the number of tokens in ``text`` for ``model_name``.
@@ -1632,11 +1694,20 @@ async def process_translation_queue(
 
         # Extract texts to translate
         file_ledger_entries = key_ledger.get(translation_file, {})
+        original_input_file_path = os.path.join(INPUT_FOLDER, translation_file)
+        git_changed_keys = get_working_tree_changed_keys(original_input_file_path, REPO_ROOT)
+        newly_synchronized_keys = newly_added_keys.union(git_changed_keys)
+        if git_changed_keys:
+            logger.info(
+                "Detected %d git-diff key updates in '%s'; treating them as newly synchronized.",
+                len(git_changed_keys),
+                translation_file
+            )
         texts_to_translate, indices, keys_to_translate = extract_texts_to_translate(
             parsed_lines,
             source_translations,
             target_translations,
-            newly_added_keys=newly_added_keys,
+            newly_added_keys=newly_synchronized_keys,
             file_ledger_entries=file_ledger_entries,
             retranslate_identical_existing=RETRANSLATE_IDENTICAL_SOURCE_STRINGS
         )

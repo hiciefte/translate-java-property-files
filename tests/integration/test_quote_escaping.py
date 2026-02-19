@@ -27,9 +27,10 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
     @patch('src.translate_localization_files.run_pre_translation_validation')
     @patch('src.translate_localization_files.load_glossary')
     @patch('src.translate_localization_files.parse_properties_file')
+    @patch('src.translate_localization_files.get_working_tree_changed_keys')
     @patch('src.translate_localization_files.client.chat.completions.create', new_callable=AsyncMock)
-    async def test_single_quotes_are_escaped(self, mock_create, mock_parse_properties, mock_load_glossary, mock_pre_validator, mock_holistic_review, mock_post_validator):
-        from src.translate_localization_files import process_translation_queue, LANGUAGE_CODES, NAME_TO_CODE
+    async def test_single_quotes_are_escaped(self, mock_create, mock_git_changed_keys, mock_parse_properties, mock_load_glossary, mock_pre_validator, mock_holistic_review, mock_post_validator):
+        from src.translate_localization_files import process_translation_queue, LANGUAGE_CODES, NAME_TO_CODE, REPO_ROOT
 
         # Configure the mocks
         # The pre-validator returns (errors, newly_added_keys).
@@ -38,6 +39,7 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
         mock_post_validator.return_value = True # Post-validation is now mocked
         mock_holistic_review.return_value = None
         mock_load_glossary.return_value = {}  # Mock the glossary to be empty
+        mock_git_changed_keys.return_value = set()
 
         # 1. Mock the file system interactions for both source and target files
         # The first call to parse_properties_file is for the target file.
@@ -94,6 +96,10 @@ class TestQuoteEscaping(unittest.IsolatedAsyncioTestCase):
         # 2. For the source file
         # 3. To parse the temporary draft file for holistic review
         self.assertEqual(mock_parse_properties.call_count, 3)
+        mock_git_changed_keys.assert_called_once_with(
+            os.path.join(self.test_dir, 'app_de.properties'),
+            REPO_ROOT
+        )
 
         output_file_path = os.path.join(self.translated_dir, 'app_de.properties')
         self.assertTrue(os.path.exists(output_file_path))
