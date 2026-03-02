@@ -84,10 +84,11 @@ jobs:
 
       - name: Run Trivy vulnerability scanner
         run: |
+          TRIVY_IMAGE="aquasec/trivy:0.69.2@sha256:3d1f862cb6c4fe13c1506f96f816096030d8d5ccdb2380a3069f7bf07daa86aa"
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "${{ github.workspace }}:/workspace" \
-            aquasec/trivy:latest \
+            "${TRIVY_IMAGE}" \
             image \
             --format table \
             --exit-code 1 \
