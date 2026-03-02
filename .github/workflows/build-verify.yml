@@ -82,23 +82,32 @@ jobs:
       - name: Display Docker Image Info
         run: docker images
 
+      - name: Install Trivy
+        run: |
+          set -euo pipefail
+          TRIVY_VERSION="0.63.0"
+          TRIVY_TARBALL="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          TRIVY_CHECKSUMS="trivy_${TRIVY_VERSION}_checksums.txt"
+
+          curl -fsSL -o "${TRIVY_TARBALL}" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${TRIVY_TARBALL}"
+          curl -fsSL -o "${TRIVY_CHECKSUMS}" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${TRIVY_CHECKSUMS}"
+          grep " ${TRIVY_TARBALL}$" "${TRIVY_CHECKSUMS}" | sha256sum -c -
+
+          tar -xzf "${TRIVY_TARBALL}" trivy
+          mkdir -p "${HOME}/.local/bin"
+          install -m 0755 trivy "${HOME}/.local/bin/trivy"
+          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.31.0
-        with:
-          image-ref: 'translator-app:ci-${{ github.sha }}'
-          # Temporarily switch to 'table' format to identify the new CVEs causing the failure.
-          format: 'table'
-          # output: 'trivy-results.sarif'
-          # Fail the build if any critical or high severity vulnerabilities are found.
-          exit-code: '1'
-          # Ignore vulnerabilities that are not yet fixed by the base image maintainers, or that
-          # are deemed not applicable to our use case.
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
-          # Use a .trivyignore file to manage a persistent list of ignored CVEs.
-          # This provides a clear, version-controlled record of accepted risks.
-          trivyignores: '.trivyignore'
+        run: |
+          trivy image \
+            --format table \
+            --exit-code 1 \
+            --ignore-unfixed \
+            --vuln-type os,library \
+            --severity CRITICAL,HIGH \
+            --ignorefile .trivyignore \
+            "translator-app:ci-${{ github.sha }}"
 
       # - name: Upload Trivy scan results to GitHub Security tab
       #   uses: github/codeql-action/upload-sarif@v3
