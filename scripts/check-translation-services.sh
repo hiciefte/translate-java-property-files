@@ -6,7 +6,7 @@
 set -euo pipefail
 
 ALERT_FILE="/var/log/translation-service-alerts.log"
-GITHUB_TOKEN=$(grep '^GITHUB_TOKEN=' /opt/translate-java-property-files/docker/.env | cut -d= -f2)
+GITHUB_TOKEN=$(sed -n 's/^GITHUB_TOKEN=//p' /opt/translate-java-property-files/docker/.env 2>/dev/null | tail -n1 || true)
 
 log_alert() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] ALERT: $1" | tee -a "$ALERT_FILE"
@@ -16,11 +16,52 @@ log_ok() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] OK: $1"
 }
 
+if [ -z "${GITHUB_TOKEN:-}" ]; then
+    log_alert "GITHUB_TOKEN is missing; GitHub PR checks will return 0"
+fi
+
 count_open_translation_prs() {
     local repo="$1"
-    curl -s -H "Authorization: token $GITHUB_TOKEN" \
-        "https://api.github.com/repos/${repo}/pulls?state=open&per_page=100" \
-        | jq '[.[] | select(.head.ref | startswith("translation-updates-"))] | length'
+    local page=1
+    local total=0
+    local response page_count page_size
+
+    if [ -z "${GITHUB_TOKEN:-}" ]; then
+        echo 0
+        return 0
+    fi
+
+    while :; do
+        response=$(curl -fsS \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${repo}/pulls?state=open&per_page=100&page=${page}" \
+            2>/dev/null) || {
+            log_alert "Failed to fetch PRs for ${repo}"
+            echo 0
+            return 0
+        }
+
+        page_count=$(jq -re '
+          if type != "array" then error("unexpected payload")
+          else [.[] | select((.head.ref // "") | startswith("translation-updates-"))] | length
+          end
+        ' <<<"$response" 2>/dev/null) || {
+            log_alert "Unexpected GitHub API payload while counting PRs for ${repo}"
+            echo 0
+            return 0
+        }
+
+        page_size=$(jq -re 'if type=="array" then length else 0 end' <<<"$response" 2>/dev/null || echo 0)
+        total=$((total + page_count))
+
+        if [ "$page_size" -lt 100 ]; then
+            break
+        fi
+        page=$((page + 1))
+    done
+
+    echo "$total"
 }
 
 check_cron_log() {
@@ -66,8 +107,12 @@ check_cron_log() {
 # Check 1: Ensure systemd service is NOT running
 if systemctl is-active --quiet translator.service 2>/dev/null; then
     log_alert "translator.service is running - it should be disabled!"
-    systemctl stop translator.service
-    systemctl disable translator.service
+    if ! systemctl stop translator.service; then
+        log_alert "Failed to stop translator.service"
+    fi
+    if ! systemctl disable translator.service; then
+        log_alert "Failed to disable translator.service"
+    fi
 else
     log_ok "translator.service is not running"
 fi
