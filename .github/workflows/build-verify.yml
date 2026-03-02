@@ -82,31 +82,19 @@ jobs:
       - name: Display Docker Image Info
         run: docker images
 
-      - name: Install Trivy
-        run: |
-          set -euo pipefail
-          TRIVY_VERSION="0.63.0"
-          TRIVY_TARBALL="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
-          TRIVY_CHECKSUMS="trivy_${TRIVY_VERSION}_checksums.txt"
-
-          curl -fsSL -o "${TRIVY_TARBALL}" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${TRIVY_TARBALL}"
-          curl -fsSL -o "${TRIVY_CHECKSUMS}" "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${TRIVY_CHECKSUMS}"
-          grep " ${TRIVY_TARBALL}$" "${TRIVY_CHECKSUMS}" | sha256sum -c -
-
-          tar -xzf "${TRIVY_TARBALL}" trivy
-          mkdir -p "${HOME}/.local/bin"
-          install -m 0755 trivy "${HOME}/.local/bin/trivy"
-          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
-
       - name: Run Trivy vulnerability scanner
         run: |
-          trivy image \
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "${{ github.workspace }}:/workspace" \
+            aquasec/trivy:latest \
+            image \
             --format table \
             --exit-code 1 \
             --ignore-unfixed \
             --vuln-type os,library \
             --severity CRITICAL,HIGH \
-            --ignorefile .trivyignore \
+            --ignorefile /workspace/.trivyignore \
             "translator-app:ci-${{ github.sha }}"
 
       # - name: Upload Trivy scan results to GitHub Security tab
