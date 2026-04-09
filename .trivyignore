@@ -112,3 +112,10 @@ CVE-2025-61726
 CVE-2025-61728
 CVE-2025-61729
 CVE-2025-61730
+
+# CVE-2026-25679: Go net/url IPv6 host literals parsing vulnerability.
+# Affects: tx (Go v1.16.15), gosu (Go v1.18.2) — vendor-supplied binaries
+# Rationale: Controlled CI/CD context, no untrusted URL parsing.
+# Added: 2026-04-09
+# Revisit by: 2026-06-15
+CVE-2026-25679

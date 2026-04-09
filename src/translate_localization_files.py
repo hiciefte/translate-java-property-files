@@ -89,6 +89,24 @@ client = config.openai_client
 
 # --- End Config and Globals ---
 
+_SUPPRESS_PATTERN = re.compile(
+    r'#\s*suppress\s+inspection\s+"[^"]*$'
+)
+
+
+def _lint_comment_syntax(line: str, line_number: int) -> Optional[str]:
+    """Return an error string if ``line`` has a known malformed comment pattern.
+
+    Detects ``# suppress inspection "...`` missing the closing double-quote.
+    """
+    if _SUPPRESS_PATTERN.match(line):
+        return (
+            f'Linter Error: Malformed suppress comment missing closing '
+            f'quote on line {line_number}.'
+        )
+    return None
+
+
 def lint_properties_file(file_path: str) -> List[str]:
     """
     Lints a .properties file to check for common issues.
@@ -104,7 +122,13 @@ def lint_properties_file(file_path: str) -> List[str]:
         with open(file_path, 'r', encoding='utf-8') as f:
             for i, line in enumerate(f, 1):
                 line = line.strip()
-                if not line or line.startswith('#') or line.startswith('!'):
+                if not line:
+                    continue
+
+                if line.startswith('#') or line.startswith('!'):
+                    err = _lint_comment_syntax(line, i)
+                    if err:
+                        errors.append(err)
                     continue
 
                 if '=' in line or ':' in line:
@@ -1605,7 +1629,7 @@ async def process_translation_queue(
         translation_queue_folder: str,
         translated_queue_folder: str,
         glossary_file_path: str
-) -> Tuple[int, Dict[str, List[str]]]:
+) -> Tuple[int, List[str], Dict[str, List[str]], int]:
     """
     Process all .properties files in the translation queue folder.
 
@@ -1617,7 +1641,9 @@ async def process_translation_queue(
     Returns:
         A tuple containing:
         - The number of files successfully processed.
+        - List of successfully processed filenames.
         - A dictionary of skipped files, mapping filename to a list of error strings.
+        - Total number of keys translated across all files.
     """
     properties_files = []
     for root, _, files in os.walk(translation_queue_folder):
@@ -1641,6 +1667,8 @@ async def process_translation_queue(
     rate_limiter = AsyncLimiter(max_rate=rate_limit, time_period=rate_period)
 
     processed_files_count = 0
+    processed_filenames: List[str] = []
+    total_keys_translated = 0
     skipped_files: Dict[str, List[str]] = {}
 
     for translation_file in properties_files:
@@ -1900,8 +1928,10 @@ async def process_translation_queue(
         save_translation_key_ledger(TRANSLATION_KEY_LEDGER_FILE_PATH, key_ledger)
 
         processed_files_count += 1
+        processed_filenames.append(translation_file)
+        total_keys_translated += len(keys_to_translate)
 
-    return processed_files_count, skipped_files
+    return processed_files_count, processed_filenames, skipped_files, total_keys_translated
 
 def archive_original_files(
         changed_files: List[str],
@@ -1926,6 +1956,99 @@ def archive_original_files(
             os.makedirs(os.path.dirname(dest_path), exist_ok=True)
             shutil.copy2(source_path, dest_path)
             logger.info(f"Archived original file '{source_path}' to '{dest_path}'.")
+
+def generate_translation_summary(
+    summary_path: str,
+    processed_files: List[str],
+    new_keys_count: int,
+    updated_keys_count: int,
+    supported_codes: Optional[List[str]] = None,
+) -> None:
+    """Write a JSON summary consumed by the shell script for PR title/body.
+
+    Args:
+        summary_path: Where to write the JSON file.
+        processed_files: List of translated filenames (e.g. ``bisq_easy_de.properties``).
+        new_keys_count: Total number of newly added translation keys.
+        updated_keys_count: Total number of updated translation keys.
+        supported_codes: Language codes for locale extraction. Defaults to
+            ``LANGUAGE_CODES`` keys.
+    """
+    if supported_codes is None:
+        supported_codes = list(LANGUAGE_CODES.keys())
+    # Pre-sort once; extract_language_from_filename sorts on every call otherwise.
+    sorted_codes = sorted(supported_codes, key=len, reverse=True)
+    modules: set[str] = set()
+    locales: set[str] = set()
+
+    for filename in processed_files:
+        basename = os.path.basename(filename)
+        code = extract_language_from_filename(basename, sorted_codes)
+        if code:
+            locales.add(code)
+            suffix = f"_{code}.properties"
+            module = basename[:-len(suffix)]
+            if module:
+                modules.add(module)
+
+    sorted_modules = sorted(modules)
+    sorted_locales = sorted(locales)
+
+    title = _build_pr_title(sorted_modules, new_keys_count, updated_keys_count, len(sorted_locales))
+
+    summary = {
+        "title": title,
+        "files_count": len(processed_files),
+        "modules": sorted_modules,
+        "locales": sorted_locales,
+        "new_keys_count": new_keys_count,
+        "updated_keys_count": updated_keys_count,
+    }
+
+    os.makedirs(os.path.dirname(summary_path) or '.', exist_ok=True)
+    with open(summary_path, 'w', encoding='utf-8') as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
+
+
+def _build_pr_title(
+    modules: List[str],
+    new_keys: int,
+    updated_keys: int,
+    locale_count: int,
+) -> str:
+    """Build a concise, descriptive PR title (max 72 chars)."""
+    if not modules and not new_keys and not updated_keys:
+        return "Update translations"
+
+    parts: list[str] = []
+    if new_keys:
+        parts.append(f"{new_keys} new")
+    if updated_keys:
+        parts.append(f"{updated_keys} updated")
+    key_desc = ", ".join(parts)
+    key_segment = f" ({key_desc} keys)" if key_desc else ""
+
+    if len(modules) == 1:
+        mod_segment = f" in {modules[0]}"
+    elif len(modules) <= 3:
+        mod_segment = f" in {', '.join(modules)}"
+    else:
+        mod_segment = f" across {len(modules)} modules"
+
+    locale_segment = f" for {locale_count} locales" if locale_count else ""
+
+    # Try progressively shorter variants until under 72 chars.
+    candidates = [
+        f"Update translations{key_segment}{mod_segment}{locale_segment}",
+        f"Update translations{key_segment}{mod_segment}",
+        f"Update translations{key_segment}",
+    ]
+    for title in candidates:
+        if len(title) <= 72:
+            return title
+
+    return candidates[-1][:69] + "..."
+
 
 async def main():
     """
@@ -1958,7 +2081,7 @@ async def main():
     logger.info(f"Copied changed files to '{TRANSLATION_QUEUE_FOLDER}' for processing.")
 
     # Step 4: Process the files in the translation queue.
-    processed_files_count, skipped_files = await process_translation_queue(
+    processed_files_count, processed_filenames, skipped_files, total_keys_translated = await process_translation_queue(
         translation_queue_folder=TRANSLATION_QUEUE_FOLDER,
         translated_queue_folder=TRANSLATED_QUEUE_FOLDER,
         glossary_file_path=GLOSSARY_FILE_PATH
@@ -1990,7 +2113,16 @@ async def main():
         if os.path.exists(report_path):
             os.remove(report_path)
 
-    # Step 6: Copy translated files back to the input folder, overwriting the originals.
+    summary_path = os.path.join(PROJECT_ROOT_DIR, 'logs', 'translation_summary.json')
+    generate_translation_summary(
+        summary_path,
+        processed_files=processed_filenames,
+        new_keys_count=total_keys_translated,
+        updated_keys_count=0,
+    )
+    logger.info(f"Wrote translation summary to {summary_path}")
+
+    # Step 7: Copy translated files back to the input folder, overwriting the originals.
     copy_translated_files_back(TRANSLATED_QUEUE_FOLDER, INPUT_FOLDER)
     if processed_files_count > 0:
         logger.info("Copied translated files back to the input folder.")
