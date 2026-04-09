@@ -53,13 +53,13 @@ RUN set -eux; \
 
 # Download and install gosu for user switching
 RUN set -eux; \
-    GOSU_VERSION=1.17; \
+    GOSU_VERSION=1.19; \
     GOSU_ARCH="$(dpkg --print-architecture)"; \
     curl -sSL -o /usr/sbin/gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$GOSU_ARCH"; \
     if [ "$GOSU_ARCH" = "amd64" ]; then \
-        GOSU_SHA256="bbc4136d03ab138b1ad66fa4fc051bafc6cc7ffae632b069a53657279a450de3"; \
+        GOSU_SHA256="52c8749d0142edd234e9d6bd5237dff2d81e71f43537e2f4f66f75dd4b243dd0"; \
     elif [ "$GOSU_ARCH" = "arm64" ]; then \
-        GOSU_SHA256="c3805a85d17f4454c23d7059bcb97e1ec1af272b90126e79ed002342de08389b"; \
+        GOSU_SHA256="3a8ef022d82c0bc4a98bcb144e77da714c25fcfa64dccc57f6aba7ae47ff1a44"; \
     else \
         echo "Unsupported architecture: $GOSU_ARCH" >&2; \
         exit 1; \
