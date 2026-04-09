@@ -460,7 +460,10 @@ stage_and_submit_batch() {
         fi
     done
 
-    commit_staged_changes "$commit_msg"
+    if ! commit_staged_changes "$commit_msg"; then
+        log "Failed to commit changes for branch '$branch'." "ERROR"
+        return 1
+    fi
 
     if ! git push origin "$branch"; then
         log "Failed to push branch '$branch' to origin." "ERROR"
@@ -556,7 +559,10 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
         if [ "$TOTAL_FILES" -le "$MAX_FILES_PER_PR" ]; then
             BRANCH_NAME="${TRANSLATION_BRANCH_PREFIX}-$(date +%Y-%m-%d-%H%M%S)"
             BATCH_FILES=("${ALL_FILES[@]}")
-            stage_and_submit_batch "$BRANCH_NAME" "Automated translation update" "$BASE_PR_TITLE"
+            if ! stage_and_submit_batch "$BRANCH_NAME" "Automated translation update" "$BASE_PR_TITLE"; then
+                log "Failed to submit translation PR." "ERROR"
+                exit 1
+            fi
         else
             log "File count ($TOTAL_FILES) exceeds MAX_FILES_PER_PR ($MAX_FILES_PER_PR). Splitting into batches."
 
@@ -570,9 +576,11 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
                 if [ ${#BATCH_FILES[@]} -ge "$MAX_FILES_PER_PR" ]; then
                     BATCH_NUM=$((BATCH_NUM + 1))
                     BRANCH_NAME="${TRANSLATION_BRANCH_PREFIX}-${TIMESTAMP}-batch${BATCH_NUM}"
-                    stage_and_submit_batch "$BRANCH_NAME" \
+                    if ! stage_and_submit_batch "$BRANCH_NAME" \
                         "Automated translation update (batch $BATCH_NUM/$TOTAL_BATCHES)" \
-                        "$BASE_PR_TITLE (batch $BATCH_NUM/$TOTAL_BATCHES)"
+                        "$BASE_PR_TITLE (batch $BATCH_NUM/$TOTAL_BATCHES)"; then
+                        log "Batch $BATCH_NUM/$TOTAL_BATCHES failed; continuing with remaining batches." "WARNING"
+                    fi
                     BATCH_FILES=()
                 fi
             done
@@ -580,9 +588,11 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
             if [ ${#BATCH_FILES[@]} -gt 0 ]; then
                 BATCH_NUM=$((BATCH_NUM + 1))
                 BRANCH_NAME="${TRANSLATION_BRANCH_PREFIX}-${TIMESTAMP}-batch${BATCH_NUM}"
-                stage_and_submit_batch "$BRANCH_NAME" \
+                if ! stage_and_submit_batch "$BRANCH_NAME" \
                     "Automated translation update (batch $BATCH_NUM/$TOTAL_BATCHES)" \
-                    "$BASE_PR_TITLE (batch $BATCH_NUM/$TOTAL_BATCHES)"
+                    "$BASE_PR_TITLE (batch $BATCH_NUM/$TOTAL_BATCHES)"; then
+                    log "Batch $BATCH_NUM/$TOTAL_BATCHES failed." "WARNING"
+                fi
             fi
         fi
     fi
