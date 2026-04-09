@@ -1629,7 +1629,7 @@ async def process_translation_queue(
         translation_queue_folder: str,
         translated_queue_folder: str,
         glossary_file_path: str
-) -> Tuple[int, Dict[str, List[str]]]:
+) -> Tuple[int, List[str], Dict[str, List[str]], int]:
     """
     Process all .properties files in the translation queue folder.
 
@@ -1641,7 +1641,9 @@ async def process_translation_queue(
     Returns:
         A tuple containing:
         - The number of files successfully processed.
+        - List of successfully processed filenames.
         - A dictionary of skipped files, mapping filename to a list of error strings.
+        - Total number of keys translated across all files.
     """
     properties_files = []
     for root, _, files in os.walk(translation_queue_folder):
@@ -1665,6 +1667,8 @@ async def process_translation_queue(
     rate_limiter = AsyncLimiter(max_rate=rate_limit, time_period=rate_period)
 
     processed_files_count = 0
+    processed_filenames: List[str] = []
+    total_keys_translated = 0
     skipped_files: Dict[str, List[str]] = {}
 
     for translation_file in properties_files:
@@ -1924,8 +1928,10 @@ async def process_translation_queue(
         save_translation_key_ledger(TRANSLATION_KEY_LEDGER_FILE_PATH, key_ledger)
 
         processed_files_count += 1
+        processed_filenames.append(translation_file)
+        total_keys_translated += len(keys_to_translate)
 
-    return processed_files_count, skipped_files
+    return processed_files_count, processed_filenames, skipped_files, total_keys_translated
 
 def archive_original_files(
         changed_files: List[str],
@@ -2075,7 +2081,7 @@ async def main():
     logger.info(f"Copied changed files to '{TRANSLATION_QUEUE_FOLDER}' for processing.")
 
     # Step 4: Process the files in the translation queue.
-    processed_files_count, skipped_files = await process_translation_queue(
+    processed_files_count, processed_filenames, skipped_files, total_keys_translated = await process_translation_queue(
         translation_queue_folder=TRANSLATION_QUEUE_FOLDER,
         translated_queue_folder=TRANSLATED_QUEUE_FOLDER,
         glossary_file_path=GLOSSARY_FILE_PATH
@@ -2108,12 +2114,10 @@ async def main():
             os.remove(report_path)
 
     summary_path = os.path.join(PROJECT_ROOT_DIR, 'logs', 'translation_summary.json')
-    skipped_set = set(skipped_files)
-    processed_filenames = [f for f in changed_files if f not in skipped_set]
     generate_translation_summary(
         summary_path,
         processed_files=processed_filenames,
-        new_keys_count=0,
+        new_keys_count=total_keys_translated,
         updated_keys_count=0,
     )
     logger.info(f"Wrote translation summary to {summary_path}")

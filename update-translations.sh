@@ -493,6 +493,7 @@ This PR is from branch \`$branch\` on the \`${FORK_OWNER}/${FORK_REPO_NAME_SHORT
         log "Successfully created pull request: $PR_URL"
     else
         log "Error: Failed to create pull request. Check gh cli auth and GITHUB_TOKEN." "ERROR"
+        return 1
     fi
 }
 
@@ -531,10 +532,15 @@ if [ -n "$TRANSLATION_CHANGES" ]; then
 
         REL_INPUT_FOLDER="${ABSOLUTE_INPUT_FOLDER#"$TARGET_PROJECT_ROOT/"}"
 
-        # Collect all changed translation files once.
+        # Collect only git-changed translation files (not the entire tree).
         mapfile -t ALL_FILES < <(
-            find "$REL_INPUT_FOLDER" -type f \( -name '*.properties' -o -name '*.po' -o -name '*.mo' \) 2>/dev/null
-            git ls-files --deleted -- "$REL_INPUT_FOLDER" | grep -E '\.(properties|po|mo)$' || true
+            git status --porcelain -- "$REL_INPUT_FOLDER" \
+              | awk '{
+                    path = substr($0, 4)
+                    if (index(path, " -> ")) path = substr(path, index(path, " -> ") + 4)
+                    if (path ~ /\.(properties|po|mo)$/) print path
+                }' \
+              | sort -u
         )
         TOTAL_FILES=${#ALL_FILES[@]}
         log "Total translation files to commit: $TOTAL_FILES (split threshold: $MAX_FILES_PER_PR)"
