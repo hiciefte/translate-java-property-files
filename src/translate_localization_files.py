@@ -445,6 +445,43 @@ def _extract_properties_key_from_diff_line(diff_line: str) -> Optional[str]:
     return key or None
 
 
+def filter_git_changed_keys_by_source(
+        git_changed_keys: Set[str],
+        source_translations: Dict[str, str],
+        ledger_entries: Dict[str, Dict[str, str]],
+) -> Set[str]:
+    """Filter git-changed keys to only those whose source English value changed.
+
+    When ``tx pull -f`` downloads community translations from Transifex,
+    keys appear in ``git diff`` even though the English source didn't change.
+    Re-translating those keys creates an infinite cycle: our AI overwrites
+    the community version, Transifex serves the community version again next
+    run, and the key reappears in the diff.
+
+    This function breaks the cycle by keeping only keys where:
+    - The key has no ledger entry (truly new)
+    - The ledger entry has no source_hash (legacy/incomplete)
+    - The source value is missing (orphaned key, handled downstream)
+    - The current source hash differs from the ledger's source hash
+    """
+    if not git_changed_keys:
+        return set()
+
+    filtered: Set[str] = set()
+    for key in git_changed_keys:
+        ledger_entry = ledger_entries.get(key)
+        previous_source_hash = ledger_entry.get("source_hash") if ledger_entry else None
+        source_value = source_translations.get(key)
+
+        # Include key unless ledger proves the source is unchanged.
+        if (previous_source_hash is None
+                or source_value is None
+                or compute_ledger_hash(source_value) != previous_source_hash):
+            filtered.add(key)
+
+    return filtered
+
+
 def get_working_tree_changed_keys(target_file_path: str, repo_root: str) -> Set[str]:
     """
     Return keys that were added/updated for ``target_file_path`` in git working tree.
@@ -1724,10 +1761,16 @@ async def process_translation_queue(
         file_ledger_entries = key_ledger.get(translation_file, {})
         original_input_file_path = os.path.join(INPUT_FOLDER, translation_file)
         git_changed_keys = get_working_tree_changed_keys(original_input_file_path, REPO_ROOT)
+        # Only re-translate git-dirty keys if their English source actually changed.
+        # This prevents an infinite cycle where Transifex community translations
+        # are overwritten by AI, then Transifex re-serves the community version.
+        git_changed_keys = filter_git_changed_keys_by_source(
+            git_changed_keys, source_translations, file_ledger_entries
+        )
         newly_synchronized_keys = newly_added_keys.union(git_changed_keys)
         if git_changed_keys:
             logger.info(
-                "Detected %d git-diff key updates in '%s'; treating them as newly synchronized.",
+                "Detected %d git-diff key updates in '%s' with changed source; treating them as newly synchronized.",
                 len(git_changed_keys),
                 translation_file
             )

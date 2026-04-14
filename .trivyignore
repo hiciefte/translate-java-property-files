@@ -119,3 +119,11 @@ CVE-2025-61730
 # Added: 2026-04-09
 # Revisit by: 2026-06-15
 CVE-2026-25679
+
+# CVE-2026-32280, CVE-2026-32282: Go stdlib vulnerabilities in yq (Go v1.24.6)
+# Affects: yq binary — vendor-supplied, cannot rebuild
+# Rationale: Controlled CI/CD context, no untrusted certificate chain building or symlink traversal.
+# Added: 2026-04-14
+# Revisit by: 2026-06-15
+CVE-2026-32280
+CVE-2026-32282

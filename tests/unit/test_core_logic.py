@@ -16,6 +16,7 @@ from src.translate_localization_files import (
     normalize_value,
     compute_ledger_hash,
     extract_texts_to_translate,
+    filter_git_changed_keys_by_source,
     get_working_tree_changed_keys,
     extract_language_from_filename,
     run_post_translation_validation
@@ -814,6 +815,74 @@ class TestFileDetectionLogic(unittest.TestCase):
             files = get_changed_translation_files(input_folder, repo_root)
 
         self.assertEqual(sorted(files), ["mobile_de.properties", "mobile_es.properties"])
+
+
+class TestFilterGitChangedKeys(unittest.TestCase):
+    """Tests for filter_git_changed_keys_by_source, which prevents the
+    Transifex ↔ AI translation cycle by only re-translating keys whose
+    English source actually changed."""
+
+    def test_filters_out_keys_with_unchanged_source(self):
+        """Keys changed by Transifex community translators (source unchanged)
+        should NOT be treated as newly synchronized."""
+        source_translations = {
+            "key.stable": "Hello world",
+            "key.changed": "Updated greeting",
+        }
+        ledger_entries = {
+            "key.stable": {"source_hash": compute_ledger_hash("Hello world")},
+            "key.changed": {"source_hash": compute_ledger_hash("Old greeting")},
+        }
+        git_changed_keys = {"key.stable", "key.changed"}
+
+        result = filter_git_changed_keys_by_source(
+            git_changed_keys, source_translations, ledger_entries
+        )
+
+        self.assertIn("key.changed", result)
+        self.assertNotIn("key.stable", result)
+
+    def test_includes_keys_with_no_ledger_entry(self):
+        """Keys not in the ledger are new — always include them."""
+        source_translations = {"key.new": "Brand new key"}
+        ledger_entries = {}
+        git_changed_keys = {"key.new"}
+
+        result = filter_git_changed_keys_by_source(
+            git_changed_keys, source_translations, ledger_entries
+        )
+
+        self.assertIn("key.new", result)
+
+    def test_includes_keys_with_no_source_hash_in_ledger(self):
+        """Ledger entries without source_hash (legacy) should be included."""
+        source_translations = {"key.legacy": "Some value"}
+        ledger_entries = {"key.legacy": {"target_hash": "abc123"}}
+        git_changed_keys = {"key.legacy"}
+
+        result = filter_git_changed_keys_by_source(
+            git_changed_keys, source_translations, ledger_entries
+        )
+
+        self.assertIn("key.legacy", result)
+
+    def test_empty_git_changed_keys(self):
+        """No git changes means no keys to filter."""
+        result = filter_git_changed_keys_by_source(set(), {}, {})
+        self.assertEqual(result, set())
+
+    def test_preserves_keys_not_in_source(self):
+        """Keys in git diff but not in source translations should be included
+        (they'll be handled/skipped by downstream logic)."""
+        source_translations = {}
+        ledger_entries = {"key.orphan": {"source_hash": compute_ledger_hash("old")}}
+        git_changed_keys = {"key.orphan"}
+
+        result = filter_git_changed_keys_by_source(
+            git_changed_keys, source_translations, ledger_entries
+        )
+
+        self.assertIn("key.orphan", result)
 
 
 if __name__ == '__main__':
