@@ -1,4 +1,4 @@
-FROM golang:1.26.2-bookworm AS gh-builder
+FROM golang:1.26.2-bookworm@sha256:4f4ab2c90005e7e63cb631f0b4427f05422f241622ee3ec4727cc5febbf83e34 AS gh-builder
 
 ARG GH_VERSION=2.89.0
 ENV CGO_ENABLED=0
