@@ -79,7 +79,7 @@ log "Then add these keys to GitHub for the takahiro.nagasawa@proton.me account"
 # Clone the repository
 log "Clone the repository manually:"
 log "su - bisquser"
-log "git clone https://github.com/hiciefte/translate-java-property-files.git $PROJECT_DIR"
+log "git clone https://github.com/bisq-network/translate-java-property-files.git $PROJECT_DIR"
 
 # Set up Python virtual environment
 log "Setting up Python virtual environment"
