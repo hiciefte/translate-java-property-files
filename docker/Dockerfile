@@ -1,3 +1,10 @@
+FROM golang:1.26.2-bookworm AS gh-builder
+
+ARG GH_VERSION=2.89.0
+ENV CGO_ENABLED=0
+
+RUN GOBIN=/out go install github.com/cli/cli/v2/cmd/gh@v${GH_VERSION}
+
 FROM ubuntu:24.04
 
 # Set SHELL to fail on pipeline errors
@@ -17,12 +24,9 @@ RUN apt-get update && \
         gnupg \
         software-properties-common && \
     add-apt-repository ppa:deadsnakes/ppa && \
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
         build-essential \
-        gh \
         git \
         jq \
         python3.11 \
@@ -33,6 +37,9 @@ RUN apt-get update && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+COPY --from=gh-builder /out/gh /usr/bin/gh
+RUN gh --version
 
 # Download and install yq for YAML processing
 RUN set -eux; \
