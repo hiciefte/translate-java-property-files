@@ -110,3 +110,22 @@ def test_translation_system_prompt_warns_against_compound_splitting():
     assert "Adressenotat" in prompt
     assert "Adresse notat" in prompt
     assert "Do not mechanically join" in prompt
+
+
+def test_translation_system_prompt_warns_against_dangling_connective_fragments():
+    prompt = build_translation_system_prompt(
+        target_language="Hindi",
+        style_rules_text="",
+        project_context="",
+        localization_format=JAVA_PROPERTIES_FORMAT,
+    )
+
+    # Fragment labels that end on a preposition/connective are completed by an
+    # element the UI appends after them; the model must not invent a closing
+    # referent that orphans that element (bisq-mobile#1822 hi connectedVia
+    # regressed "connected via" to "connected through it").
+    assert "Keep trailing connective fragments open-ended" in prompt
+    assert "connected via the following" in prompt
+    assert "do not invent a demonstrative or pronoun referent" in prompt
+    # Guidance must stay product-agnostic; no concrete product names leak in.
+    assert "Bisq" not in prompt
