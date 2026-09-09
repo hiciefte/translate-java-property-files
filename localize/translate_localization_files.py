@@ -1320,6 +1320,9 @@ def run_per_key_validation_with_summary(
         filename: str,
         ignore_key_patterns: Optional[List[Pattern[str]]] = None,
         translation_glossary: Optional[Mapping[str, str]] = None,
+        existing_translations: Optional[Mapping[str, str]] = None,
+        file_ledger_entries: Optional[Mapping[str, Mapping[str, str]]] = None,
+        selected_keys: Optional[Set[str]] = None,
 ) -> Tuple[Dict[str, str], Dict[str, object]]:
     """
     Validates each translation key individually and selectively reverts failed keys.
@@ -1333,6 +1336,12 @@ def run_per_key_validation_with_summary(
         final_translations: Dictionary of translated key-value pairs to validate
         source_translations: Dictionary of source (English) key-value pairs
         filename: Name of the file being validated (for logging)
+        existing_translations: Original target values, used to preserve a
+            localized value when generated output falls back to the source.
+        file_ledger_entries: Baseline hashes proving that both the source and
+            previous target are unchanged.
+        selected_keys: Keys translated in this run. Source echoes for these
+            keys stay failed even if the original target was also the source.
 
     Returns:
         Tuple containing:
@@ -1345,8 +1354,11 @@ def run_per_key_validation_with_summary(
     placeholder_mismatch_keys = []
     empty_target_keys = []
     glossary_mismatch_keys = []
+    source_identical_keys = []
     ignore_key_patterns = ignore_key_patterns or []
     translation_glossary = translation_glossary or {}
+    existing_translations = existing_translations or {}
+    selected_keys = selected_keys or set()
 
     for key, target_value in final_translations.items():
         source_value = source_translations.get(key, "")
@@ -1363,6 +1375,32 @@ def run_per_key_validation_with_summary(
             )
             valid_translations[key] = source_value
             continue
+        existing_value = _ledger_verified_existing_translation(
+            key, source_translations, existing_translations, file_ledger_entries or {}
+        )
+        original_value = existing_translations.get(key)
+        if (
+                source_value.strip()
+                and normalize_value(source_value) == normalize_value(target_value)
+                and (
+                    key in selected_keys
+                    or (
+                        isinstance(original_value, str)
+                        and original_value.strip()
+                        and normalize_value(original_value) != normalize_value(source_value)
+                    )
+                )
+        ):
+            failed_keys.append(key)
+            source_identical_keys.append(key)
+            logger.warning(
+                "Key '%s' failed validation in '%s' - generated value matches the "
+                "source; only a ledger-verified target may be reused after validation.",
+                key,
+                filename,
+            )
+            if existing_value is not None:
+                target_value = existing_value
         control_character_findings = find_disallowed_control_characters(target_value)
 
         if control_character_findings:
@@ -1422,11 +1460,13 @@ def run_per_key_validation_with_summary(
             # Use source value for this failed key
             valid_translations[key] = source_value
 
+    # A rejected source echo and an invalid fallback can flag the same key.
+    failed_keys = list(dict.fromkeys(failed_keys))
     # Log summary if any keys failed
     if failed_keys:
         logger.warning(
             f"Validation failed for {len(failed_keys)} out of {len(final_translations)} keys in '{filename}'. "
-            f"Failed keys reverted to source: {', '.join(failed_keys[:5])}"
+            f"Failed keys retained a validated baseline or reverted to source: {', '.join(failed_keys[:5])}"
             f"{' ...' if len(failed_keys) > 5 else ''}"
         )
         logger.info(
@@ -1441,11 +1481,13 @@ def run_per_key_validation_with_summary(
         "placeholder_mismatch_keys": placeholder_mismatch_keys,
         "empty_target_keys": empty_target_keys,
         "glossary_mismatch_keys": glossary_mismatch_keys,
+        "source_identical_keys": source_identical_keys,
         "reverted_keys_count": len(failed_keys),
         "control_character_findings_count": len(control_character_keys),
         "placeholder_failures_count": len(placeholder_mismatch_keys),
         "empty_target_failures_count": len(empty_target_keys),
         "glossary_failures_count": len(glossary_mismatch_keys),
+        "source_identical_failures_count": len(source_identical_keys),
     }
     return valid_translations, summary
 
@@ -3016,6 +3058,9 @@ async def process_translation_queue(
                 translation_file,
                 ignore_key_patterns=IGNORE_KEY_PATTERNS,
                 translation_glossary=enforced_language_glossary,
+                existing_translations=original_target_translations,
+                file_ledger_entries=file_ledger_entries,
+                selected_keys=set(keys_to_translate),
             )
             failed_keys = set(per_key_summary["failed_keys"]).union(model_failed_keys)
             increment_run_metric(run_metrics, "model_translation_failed_count", len(failed_keys))
