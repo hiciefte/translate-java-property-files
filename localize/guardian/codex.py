@@ -409,6 +409,8 @@ def _parse_semantic_result(payload: Mapping[str, Any], *, attempts: int) -> Code
             )
 
         verdict = str(raw_decision["verdict"])
+        # Structured Outputs cannot express the conditional allOf/if/then
+        # constraint; enforce the verdict/replacement relationship locally.
         if verdict == "apply" and not replacements:
             raise CodexOutputError(
                 f"Codex apply verdict for {feedback_id!r} must include a replacement."
@@ -925,6 +927,11 @@ class CodexDriver:
                         raise CodexCapacityError(
                             "Codex capacity is unavailable; inspect plan allowance, "
                             "credits, or API billing limits."
+                        )
+                    if "invalid_json_schema" in diagnostic.casefold():
+                        raise CodexOutputError(
+                            "Codex rejected the configured output schema; "
+                            "retrying the same schema cannot repair it."
                         )
                     if attempt == self.max_attempts:
                         raise CodexTransientError(

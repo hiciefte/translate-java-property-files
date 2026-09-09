@@ -59,6 +59,45 @@ def _payload_with_duplicate_member() -> str:
     )
 
 
+def test_codex_output_schema_uses_supported_structured_output_keywords():
+    schema = json.loads(codex.RESULT_SCHEMA_PATH.read_text(encoding="utf-8"))
+    unsupported = {"allOf", "not", "dependentRequired", "dependentSchemas", "if", "then", "else"}
+
+    def check(node):
+        assert not unsupported.intersection(node)
+        assert "type" in node or "$ref" in node or "anyOf" in node
+        if node.get("type") == "object":
+            assert node.get("additionalProperties") is False
+            assert set(node["required"]) == set(node["properties"])
+        for collection in ("properties", "$defs"):
+            for child in node.get(collection, {}).values():
+                check(child)
+        if "items" in node:
+            check(node["items"])
+        for child in node.get("anyOf", []):
+            check(child)
+
+    check(schema)
+
+
+@pytest.mark.parametrize("channel", ["stdout", "stderr"])
+def test_codex_driver_does_not_retry_invalid_provider_schema(tmp_path, monkeypatch, channel):
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(
+            argv, 1, **{channel: '{"error":{"code":"invalid_json_schema"}}'}
+        )
+
+    monkeypatch.setattr(codex, "run_bounded_process", fake_run)
+    with pytest.raises(codex.CodexOutputError, match="schema"):
+        codex.CodexDriver(model="gpt-5.6-terra").run(
+            codex.CodexTask(prompt="Synthetic setup check", evidence_dir=tmp_path)
+        )
+    assert len(calls) == 1
+
+
 def test_codex_driver_uses_read_only_contract_and_scrubbed_environment(
     tmp_path, monkeypatch
 ):
@@ -495,7 +534,7 @@ def test_codex_driver_rejects_semantically_invalid_apply_result(tmp_path, monkey
 
     monkeypatch.setattr(codex, "run_bounded_process", fake_run)
 
-    with pytest.raises(codex.CodexOutputError, match="schema"):
+    with pytest.raises(codex.CodexOutputError, match="must include a replacement"):
         codex.CodexDriver(model="gpt-5.6-sol").run(
             codex.CodexTask(prompt="review", evidence_dir=evidence_dir)
         )
@@ -518,7 +557,7 @@ def test_codex_driver_rejects_replacements_for_non_apply_verdicts(
 
     monkeypatch.setattr(codex, "run_bounded_process", fake_run)
 
-    with pytest.raises(codex.CodexOutputError, match="schema"):
+    with pytest.raises(codex.CodexOutputError, match="must not include replacements"):
         codex.CodexDriver(model="gpt-5.6-sol").run(
             codex.CodexTask(prompt="review", evidence_dir=evidence_dir)
         )
