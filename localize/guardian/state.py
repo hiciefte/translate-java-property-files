@@ -5694,6 +5694,7 @@ class GuardianState:
         pr_number: int | None = None,
         locale: str | None = None,
         mode: GuardianMode | str | None = None,
+        policy_digest: str | None = None,
         limit: int = _MAX_PENDING_EVENT_WORKSET,
     ) -> tuple[EventRevision, ...]:
         """Return a bounded unresolved workset, oldest first.
@@ -5718,6 +5719,10 @@ class GuardianState:
         ):
             raise ValueError("pr_number must be a positive integer.")
 
+        if policy_digest is not None and not re.fullmatch(
+            r"[0-9a-f]{64}", policy_digest
+        ):
+            raise ValueError("policy_digest must be a lowercase SHA-256 digest.")
         terminal_statuses = tuple(sorted(_TERMINAL_ACTION_STATUSES))
         terminal_placeholders = ", ".join("?" for _ in terminal_statuses)
         parameters: list[Any] = list(terminal_statuses)
@@ -5729,6 +5734,15 @@ class GuardianState:
             placeholders = ", ".join("?" for _ in resolving_modes)
             mode_filter = f" AND r.mode IN ({placeholders})"
             parameters.extend(item.value for item in resolving_modes)
+        policy_filter = ""
+        if policy_digest is not None:
+            policy_filter = """ AND (
+                a.status != 'skipped'
+                OR json_extract(a.details_json, '$.outcome')
+                    IS NOT 'deterministic_policy_rejection'
+                OR json_extract(a.details_json, '$.policy_digest') IS ?
+            )"""
+            parameters.append(policy_digest)
         filters = [
             f"""NOT EXISTS (
                 SELECT 1 FROM actions AS a
@@ -5736,6 +5750,7 @@ class GuardianState:
                 WHERE a.event_revision_id = e.revision_id
                   AND a.status IN ({terminal_placeholders})
                   {mode_filter}
+                  {policy_filter}
             )"""
         ]
         if repository is not None:

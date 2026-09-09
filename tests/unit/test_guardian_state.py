@@ -809,6 +809,47 @@ def _event(
     )
 
 
+def test_policy_rejections_only_resolve_the_same_effective_policy(
+    tmp_path: Path,
+) -> None:
+    with GuardianState(tmp_path / "guardian.sqlite3") as state:
+        revision = state.record_feedback_event(_event())
+        run_id = state.start_run(
+            repository="acme/widgets",
+            locale="ru",
+            mode=GuardianMode.APPLY_OWNED_TRANSLATIONS,
+        )
+        state.record_action(
+            run_id=run_id,
+            event_revision_id=revision.revision_id,
+            action="apply-owned-translations",
+            status="skipped",
+            details={"outcome": "deterministic_policy_rejection"},
+        )
+        assert state.pending_event_revisions() == ()
+        assert state.pending_event_revisions(policy_digest="a" * 64)
+        state.record_action(
+            run_id=run_id,
+            event_revision_id=revision.revision_id,
+            action="apply-owned-translations",
+            status="skipped",
+            details={
+                "outcome": "deterministic_policy_rejection",
+                "policy_digest": "a" * 64,
+            },
+        )
+        assert state.pending_event_revisions(policy_digest="a" * 64) == ()
+        assert state.pending_event_revisions(policy_digest="b" * 64)
+        state.record_action(
+            run_id=run_id,
+            event_revision_id=revision.revision_id,
+            action="apply-owned-translations",
+            status="completed",
+            details={"outcome": "applied"},
+        )
+        assert state.pending_event_revisions(policy_digest="b" * 64) == ()
+
+
 def test_exact_duplicate_is_not_pending_but_edits_and_sha_changes_are(
     tmp_path: Path,
 ) -> None:

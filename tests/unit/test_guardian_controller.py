@@ -3902,6 +3902,32 @@ def test_mode_escalation_reuses_the_exact_cached_assessment(
         assert state.pending_event_revisions(mode=GuardianMode.PREPARE) == ()
 
 
+def test_changed_edit_limit_retries_policy_rejection_without_rebilling(
+    tmp_path: Path, runtime
+) -> None:
+    _base, _head, checkout, provider, broker, _sequence = runtime
+    driver = FakeCodexDriver()
+    config = _config(GuardianMode.APPLY_OWNED_TRANSLATIONS)
+    limited = replace(config, limits=replace(config.limits, max_value_edits_per_run=0))
+    with GuardianState(tmp_path / "state.sqlite3") as state:
+
+        def poll(settings):
+            return _controller(
+                tmp_path=tmp_path,
+                state=state,
+                config=settings,
+                checkout=checkout,
+                provider=provider,
+                driver=driver,
+                broker=broker,
+            ).poll_once()
+
+        assert poll(limited).applied_commits == ()
+        assert poll(limited).runs_started == 0
+        assert poll(config).applied_commits == (COMMIT_SHA,)
+        assert len(driver.calls) == 1
+
+
 def test_crash_after_model_success_reuses_durable_result_without_rebilling(
     tmp_path: Path,
     runtime,
@@ -7354,6 +7380,7 @@ def test_open_pull_processing_queries_only_its_pending_feedback_workset(
         pr_number: int | None = None,
         locale: str | None = None,
         mode: GuardianMode | str | None = None,
+        policy_digest: str | None = None,
         limit: int = 500,
     ):
         calls.append(pr_number)
@@ -7365,6 +7392,7 @@ def test_open_pull_processing_queries_only_its_pending_feedback_workset(
             pr_number=pr_number,
             locale=locale,
             mode=mode,
+            policy_digest=policy_digest,
             limit=limit,
         )
 

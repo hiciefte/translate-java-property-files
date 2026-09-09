@@ -844,6 +844,22 @@ def _canonical_digest(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _patch_policy_digest(
+    config: GuardianConfig, policy: RepositoryPolicy, scope: _TargetScope
+) -> str:
+    """Keep rejected proposals retryable when their trusted policy changes."""
+    return _canonical_digest(
+        {
+            "version": 1,
+            "repository_policy": policy,
+            "mode": config.mode,
+            "max_value_edits": config.limits.max_value_edits_per_run,
+            "minimum_confidence": config.limits.min_apply_confidence,
+            "pipeline_config_bundle": scope.config_bundle_digest,
+        }
+    )
+
+
 def _historical_pull_revision_digest(
     _policy: RepositoryPolicy,
     snapshot: PullRequestFeedbackSnapshot,
@@ -5579,6 +5595,7 @@ class GuardianController:
                     repository=policy.base_repo,
                     pr_number=snapshot.pull_request.number,
                     mode=self.config.mode,
+                    policy_digest=_patch_policy_digest(self.config, policy, scope),
                 )
             )
             current_revision_ids = {
@@ -6274,14 +6291,20 @@ class GuardianController:
             outcome.runs_completed += 1
         except (_AuthenticationCircuit, _ModelCircuit):
             raise
-        except PatchPolicyError:
+        except PatchPolicyError as exc:
             for revision in revisions:
                 self.state.record_action(
                     run_id=run_id,
                     event_revision_id=revision.revision_id,
                     action=self.config.mode.value,
                     status="skipped",
-                    details={"outcome": "deterministic_policy_rejection"},
+                    details={
+                        "outcome": "deterministic_policy_rejection",
+                        "reason": str(exc)[:512],
+                        "policy_digest": _patch_policy_digest(
+                            self.config, policy, scope
+                        ),
+                    },
                     occurred_at=observed_at,
                 )
             self.state.finish_run(
