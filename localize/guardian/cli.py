@@ -855,7 +855,9 @@ def _ssh_signing_key_configured(
                 public_key_path=signing_public_key,
                 expected_fingerprint=fingerprint,
                 signing_program=signing_program,
-                temporary_root=root,
+                # Use the runtime's snapshot parent. Nesting inside the probe
+                # can exceed macOS's Unix-socket path limit for agent.sock.
+                temporary_root=temporary_root if temporary_root is not None else root,
             ) as material:
                 signing_socket = ssh_agent_environment(
                     temporary_root=material.root,

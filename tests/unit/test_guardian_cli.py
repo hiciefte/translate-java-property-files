@@ -1537,6 +1537,9 @@ def test_ssh_signing_probe_uses_frozen_key_and_agent_only_for_commit(
     assert any(argument.startswith("-S") for argument in commit_call[0])
     assert captured_snapshot["public_key_path"] == "/keys/guardian.pub"
     assert captured_snapshot["expected_fingerprint"] == fingerprint
+    # Match the runtime layout: an extra nested probe directory can exceed
+    # macOS's Unix-socket path limit for the pinned agent socket.
+    assert captured_snapshot["temporary_root"] == tmp_path
 
 
 def test_ssh_signing_probe_rejects_wrong_verified_identity(
