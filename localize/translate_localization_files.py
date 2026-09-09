@@ -1320,6 +1320,7 @@ def run_per_key_validation_with_summary(
         filename: str,
         ignore_key_patterns: Optional[List[Pattern[str]]] = None,
         translation_glossary: Optional[Mapping[str, str]] = None,
+        existing_translations: Optional[Mapping[str, str]] = None,
 ) -> Tuple[Dict[str, str], Dict[str, object]]:
     """
     Validates each translation key individually and selectively reverts failed keys.
@@ -1333,6 +1334,8 @@ def run_per_key_validation_with_summary(
         final_translations: Dictionary of translated key-value pairs to validate
         source_translations: Dictionary of source (English) key-value pairs
         filename: Name of the file being validated (for logging)
+        existing_translations: Original target values, used to preserve a
+            localized value when generated output falls back to the source.
 
     Returns:
         Tuple containing:
@@ -1345,8 +1348,10 @@ def run_per_key_validation_with_summary(
     placeholder_mismatch_keys = []
     empty_target_keys = []
     glossary_mismatch_keys = []
+    source_identical_keys = []
     ignore_key_patterns = ignore_key_patterns or []
     translation_glossary = translation_glossary or {}
+    existing_translations = existing_translations or {}
 
     for key, target_value in final_translations.items():
         source_value = source_translations.get(key, "")
@@ -1362,6 +1367,24 @@ def run_per_key_validation_with_summary(
                 f"  Source: {source_value}"
             )
             valid_translations[key] = source_value
+            continue
+        existing_value = existing_translations.get(key)
+        if (
+                source_value.strip()
+                and normalize_value(source_value) == normalize_value(target_value)
+                and isinstance(existing_value, str)
+                and existing_value.strip()
+                and normalize_value(existing_value) != normalize_value(source_value)
+        ):
+            failed_keys.append(key)
+            source_identical_keys.append(key)
+            logger.warning(
+                "Key '%s' failed validation in '%s' - preserving the existing target "
+                "because the generated value matches the source.",
+                key,
+                filename,
+            )
+            valid_translations[key] = existing_value
             continue
         control_character_findings = find_disallowed_control_characters(target_value)
 
@@ -1441,11 +1464,13 @@ def run_per_key_validation_with_summary(
         "placeholder_mismatch_keys": placeholder_mismatch_keys,
         "empty_target_keys": empty_target_keys,
         "glossary_mismatch_keys": glossary_mismatch_keys,
+        "source_identical_keys": source_identical_keys,
         "reverted_keys_count": len(failed_keys),
         "control_character_findings_count": len(control_character_keys),
         "placeholder_failures_count": len(placeholder_mismatch_keys),
         "empty_target_failures_count": len(empty_target_keys),
         "glossary_failures_count": len(glossary_mismatch_keys),
+        "source_identical_failures_count": len(source_identical_keys),
     }
     return valid_translations, summary
 
@@ -3016,6 +3041,7 @@ async def process_translation_queue(
                 translation_file,
                 ignore_key_patterns=IGNORE_KEY_PATTERNS,
                 translation_glossary=enforced_language_glossary,
+                existing_translations=original_target_translations,
             )
             failed_keys = set(per_key_summary["failed_keys"]).union(model_failed_keys)
             increment_run_metric(run_metrics, "model_translation_failed_count", len(failed_keys))

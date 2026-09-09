@@ -874,6 +874,18 @@ class TestRetryHandling(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(valid["key.one"], "Source text")
         self.assertEqual(summary["empty_target_keys"], ["key.one"])
 
+    def test_per_key_validation_preserves_existing_target_when_generated_value_matches_source(self):
+        valid, summary = run_per_key_validation_with_summary(
+            {"key.one": "Open trade chat"},
+            {"key.one": "Open trade chat"},
+            "de.properties",
+            existing_translations={"key.one": "Handels-Chat öffnen"},
+        )
+
+        self.assertEqual(valid["key.one"], "Handels-Chat öffnen")
+        self.assertEqual(summary["source_identical_keys"], ["key.one"])
+        self.assertEqual(summary["source_identical_failures_count"], 1)
+
 
 class TestSourceFilenameExtraction(unittest.TestCase):
     """Tests for extracting source filename from translated filename."""
