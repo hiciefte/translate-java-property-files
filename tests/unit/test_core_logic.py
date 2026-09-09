@@ -901,6 +901,25 @@ class TestRetryHandling(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(valid["key"], "Wait 14 days")
         self.assertEqual(summary["failed_keys"], ["key"])
 
+    def test_selected_source_echo_stays_failed_when_old_target_is_also_source(self):
+        """Selected untranslated keys must remain retryable after a model echo."""
+        source = {"key": "Open trade chat"}
+        valid, summary = run_per_key_validation_with_summary(
+            source, source, "de.properties", existing_translations=source,
+            selected_keys={"key"},
+        )
+        self.assertEqual(valid, source)
+        self.assertEqual(summary["failed_keys"], ["key"])
+
+    def test_unselected_source_identical_values_are_not_new_failures(self):
+        """Whole-file validation must not mark untouched keys as new failures."""
+        source = {"key": "Bisq"}
+        _, summary = run_per_key_validation_with_summary(
+            source, source, "de.properties", existing_translations=source,
+            selected_keys=set(),
+        )
+        self.assertEqual(summary["failed_keys"], [])
+
     def test_source_echo_requires_matching_source_and_target_baseline(self):
         """Changed sources and edited targets cannot reuse an old baseline."""
         source = {"key": "Wait 14 days"}

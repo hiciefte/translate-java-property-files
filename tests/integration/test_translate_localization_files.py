@@ -481,6 +481,7 @@ async def test_failed_model_translation_preserves_ledger_verified_target(
         ("Open {0}", "Öffnen {0}", "Öffnen {0}"),
         ("Close {0}", "Schließen {0}", "Open {0}"),
         ("Open {0}", "Öffnen {1}", "Open {0}"),
+        ("Open {0}", "Open {0}", "Open {0}"),
     ],
 )
 async def test_source_echo_preserves_only_valid_current_source_baseline(

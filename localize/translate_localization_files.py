@@ -1322,6 +1322,7 @@ def run_per_key_validation_with_summary(
         translation_glossary: Optional[Mapping[str, str]] = None,
         existing_translations: Optional[Mapping[str, str]] = None,
         file_ledger_entries: Optional[Mapping[str, Mapping[str, str]]] = None,
+        selected_keys: Optional[Set[str]] = None,
 ) -> Tuple[Dict[str, str], Dict[str, object]]:
     """
     Validates each translation key individually and selectively reverts failed keys.
@@ -1339,6 +1340,8 @@ def run_per_key_validation_with_summary(
             localized value when generated output falls back to the source.
         file_ledger_entries: Baseline hashes proving that both the source and
             previous target are unchanged.
+        selected_keys: Keys translated in this run. Source echoes for these
+            keys stay failed even if the original target was also the source.
 
     Returns:
         Tuple containing:
@@ -1355,6 +1358,7 @@ def run_per_key_validation_with_summary(
     ignore_key_patterns = ignore_key_patterns or []
     translation_glossary = translation_glossary or {}
     existing_translations = existing_translations or {}
+    selected_keys = selected_keys or set()
 
     for key, target_value in final_translations.items():
         source_value = source_translations.get(key, "")
@@ -1378,9 +1382,14 @@ def run_per_key_validation_with_summary(
         if (
                 source_value.strip()
                 and normalize_value(source_value) == normalize_value(target_value)
-                and isinstance(original_value, str)
-                and original_value.strip()
-                and normalize_value(original_value) != normalize_value(source_value)
+                and (
+                    key in selected_keys
+                    or (
+                        isinstance(original_value, str)
+                        and original_value.strip()
+                        and normalize_value(original_value) != normalize_value(source_value)
+                    )
+                )
         ):
             failed_keys.append(key)
             source_identical_keys.append(key)
@@ -3051,6 +3060,7 @@ async def process_translation_queue(
                 translation_glossary=enforced_language_glossary,
                 existing_translations=original_target_translations,
                 file_ledger_entries=file_ledger_entries,
+                selected_keys=set(keys_to_translate),
             )
             failed_keys = set(per_key_summary["failed_keys"]).union(model_failed_keys)
             increment_run_metric(run_metrics, "model_translation_failed_count", len(failed_keys))
