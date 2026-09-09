@@ -868,7 +868,10 @@ class CodexDriver:
                         start_new_session=True,
                         limits=ProcessLimits.for_timeout(
                             effective_timeout,
-                            max_file_size_bytes=16 * 1024 * 1024,
+                            # The current CLI can exceed 16 MiB during a real
+                            # tool-using turn (SIGXFSZ on macOS). Keep a finite
+                            # runtime limit; result JSON remains capped at 2 MiB.
+                            max_file_size_bytes=128 * 1024 * 1024,
                             require_linux_cgroup=True,
                         ),
                         workspace_quota=workspace_quota,

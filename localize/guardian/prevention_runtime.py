@@ -2001,7 +2001,9 @@ class PreventionCodexAuthor:
             )
             process_limits = ProcessLimits.for_timeout(
                 process_timeout,
-                max_file_size_bytes=file_limit,
+                # CLI runtime files need the same headroom as assessment.
+                # The candidate workspace retains its smaller growth quota.
+                max_file_size_bytes=128 * 1024 * 1024,
                 require_linux_cgroup=True,
             )
             try:

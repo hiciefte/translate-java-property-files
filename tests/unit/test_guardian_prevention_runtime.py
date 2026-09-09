@@ -645,6 +645,7 @@ def test_prevention_author_uses_workspace_write_stdin_and_scrubs_write_credentia
     assert "Preserve indexed placeholders" not in argv
     assert kwargs["timeout"] == 17
     assert kwargs["limits"].require_linux_cgroup is True
+    assert kwargs["limits"].max_file_size_bytes == 128 * 1024 * 1024
     launch_environment = observed["launch_environment"]
     assert isinstance(launch_environment, dict)
     assert launch_environment["CODEX_API_KEY"] == "explicit-model-key"
