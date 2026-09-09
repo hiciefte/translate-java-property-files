@@ -1339,10 +1339,12 @@ class FakeWorkspace:
     sequence: list[str]
     commits: int = 0
     publications: int = 0
+    author_email: str | None = None
 
     def commit_validated_changes(self, **kwargs) -> CommitResult:
         self.sequence.append("commit")
         self.commits += 1
+        self.author_email = kwargs.get("author_email")
         assert kwargs["sign"] is True
         assert kwargs["expected_paths"] == (TARGET_PATH,)
         return CommitResult(
@@ -4083,6 +4085,9 @@ def test_apply_signs_then_reverifies_immediately_before_normal_publish_and_reply
 
         assert outcome.applied_commits == (COMMIT_SHA,)
         assert sequence == ["commit", "verify", "verify", "publish", "reply"]
+        assert [item.author_email for item in checkout.workspaces if item.commits] == [
+            "8+translation-service@users.noreply.github.com"
+        ]
         assert broker.verify_calls == [
             {
                 "pull_number": 12,

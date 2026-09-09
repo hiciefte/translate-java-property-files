@@ -3235,6 +3235,7 @@ def test_coordinator_batches_origins_into_one_signed_human_review_draft() -> Non
     assert outcome.deferred == 0
     assert len(workspace.commit_calls) == 1
     commit_call = workspace.commit_calls[0]
+    assert commit_call["author_email"] == "7+translator@users.noreply.github.com"
     assert commit_call["feedback_pull_numbers"] == (12, 13)
     assert commit_call["feedback_urls"] == tuple(sorted(FEEDBACK_URLS))
     assert commit_call["signing_key"] == "ABCDEF"

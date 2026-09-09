@@ -4240,6 +4240,10 @@ class PreventionCoordinator:
                         issued_credentials = ()
                     self._require_remaining()
                     commit = signing_workspace.commit_prevention_changes(
+                        author_email=(
+                            f"{prevention.publication_actor.id}+"
+                            f"{prevention.publication_actor.login}@users.noreply.github.com"
+                        ),
                         expected_paths=patch.paths,
                         evidence_hash=evidence_hash,
                         signing_key=self.signing_key,

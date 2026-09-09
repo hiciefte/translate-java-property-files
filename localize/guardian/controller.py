@@ -6411,6 +6411,9 @@ class GuardianController:
             revision.revision_id for _event, revision in selected
         )
         commit = workspace.commit_validated_changes(
+            author_email=(
+                f"{publication_actor.id}+{publication_actor.login}@users.noreply.github.com"
+            ),
             expected_paths=patch_result.changed_files,
             pull_number=snapshot.pull_request.number,
             feedback_urls=feedback_urls,

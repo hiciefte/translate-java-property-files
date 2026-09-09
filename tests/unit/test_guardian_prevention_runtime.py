@@ -2809,6 +2809,7 @@ class _FakeWorkspace:
         self.published = False
 
     def commit_prevention_changes(self, *, expected_paths, evidence_hash, **_kwargs):
+        assert _kwargs["author_email"] == "301+guardian-publisher@users.noreply.github.com"
         assert set(expected_paths) == {"localize/rules.py", "tests/unit/test_rules.py"}
         assert len(evidence_hash) == 64
         return CommitResult(

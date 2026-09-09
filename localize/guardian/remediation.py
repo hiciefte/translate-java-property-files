@@ -2603,6 +2603,10 @@ class RemediationCoordinator:
             return RemediationBatchOutcome(deferred=1)
         self._require_remaining()
         commit = workspace.commit_historical_remediation_changes(
+            author_email=(
+                f"{remediation.publication_actor.id}+"
+                f"{remediation.publication_actor.login}@users.noreply.github.com"
+            ),
             expected_paths=tuple(sorted(patch_result.changed_files)),
             feedback_repository=policy.base_repo,
             feedback_pull_numbers=tuple(item.pr_number for item in pulls),
