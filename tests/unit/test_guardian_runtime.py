@@ -830,6 +830,25 @@ def test_build_controller_wires_exact_runtime_policy_and_credentials(
         "signing_program": "/opt/bin/gpg",
         "timeout_seconds": 120.0,
     }
+    # Read-only PR bases need snapshot materialization even with backfill off.
+    historical = HistoricalRevision(
+        host="github.com", owner="acme", repository="widgets", sha="b" * 40
+    )
+    monkeypatch.setattr(
+        runtime,
+        "materialize_historical_checkout",
+        lambda incoming, **kwargs: (
+            captured.update(readonly_revision=incoming, readonly_kwargs=kwargs)
+            or sentinel
+        ),
+    )
+    assert controller_kwargs["checkout_factory"](historical) is sentinel
+    assert captured["readonly_revision"] == historical
+    assert captured["readonly_kwargs"] == {
+        "credential_environment": git_environment,
+        "git_binary": "/opt/bin/git",
+        "timeout_seconds": 120.0,
+    }
 
 
 @pytest.mark.parametrize("mode", [GuardianMode.OBSERVE, GuardianMode.PREPARE])

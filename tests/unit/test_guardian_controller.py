@@ -760,6 +760,19 @@ def _snapshot(
     )
 
 
+def test_open_pull_base_is_read_only_while_head_requires_current_ref() -> None:
+    """A moving base branch must not invalidate the reviewed base snapshot."""
+    snapshot = _snapshot()
+    base, head = guardian_controller._exact_revisions(
+        _policy(), snapshot, github_host="github.com"
+    )
+    assert isinstance(base, HistoricalRevision)
+    assert base.sha == snapshot.pull_request.base_sha
+    assert isinstance(head, guardian_controller.ExactRevision)
+    assert head.sha == snapshot.pull_request.head_sha
+    assert head.ref == f"refs/heads/{snapshot.pull_request.head_ref}"
+
+
 def _authorized_historical_digest(
     policy: RepositoryPolicy,
     snapshot: PullRequestFeedbackSnapshot,

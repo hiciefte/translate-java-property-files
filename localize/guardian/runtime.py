@@ -1209,7 +1209,9 @@ def _build_controller(
         **deadline_kwargs,
     )
 
-    def checkout_factory(revision: ExactRevision):
+    def checkout_factory(revision: ExactRevision | HistoricalRevision):
+        if isinstance(revision, HistoricalRevision):
+            return create_historical_checkout(revision)
         checkout_kwargs: dict[str, Any] = {
             "credential_environment": git_environment,
             "git_binary": config.runtime.git_executable,

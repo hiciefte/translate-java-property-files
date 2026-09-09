@@ -320,8 +320,8 @@ class CheckoutFactory(Protocol):
     """Materialize one exact base or head revision."""
 
     def __call__(
-        self, revision: ExactRevision
-    ) -> ContextManager[GuardianWorkspace]: ...
+        self, revision: ExactRevision | HistoricalRevision
+    ) -> ContextManager[GuardianWorkspace | HistoricalWorkspace]: ...
 
 
 class HistoricalSnapshotProvider(Protocol):
@@ -790,15 +790,14 @@ def _exact_revisions(
     snapshot: PullRequestFeedbackSnapshot,
     *,
     github_host: str,
-) -> tuple[ExactRevision, ExactRevision]:
+) -> tuple[HistoricalRevision, ExactRevision]:
     pull = snapshot.pull_request
     base_owner, base_name = _split_repository(policy.base_repo)
     head_owner, head_name = _split_repository(pull.head_repository)
-    base = ExactRevision(
+    base = HistoricalRevision(
         host=github_host,
         owner=base_owner,
         repository=base_name,
-        ref=f"refs/heads/{pull.base_ref}",
         sha=pull.base_sha,
     )
     head = ExactRevision(
@@ -5953,7 +5952,7 @@ class GuardianController:
         policy: RepositoryPolicy,
         snapshot: PullRequestFeedbackSnapshot,
         scope: _TargetScope,
-        base_workspace: GuardianWorkspace,
+        base_workspace: GuardianWorkspace | HistoricalWorkspace,
         head_workspace: GuardianWorkspace,
         actionable: Sequence[tuple[FeedbackEvent, EventRevision]],
         open_source: OpenPullAuthorityReference,
