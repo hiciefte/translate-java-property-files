@@ -113,6 +113,7 @@ def test_translation_system_prompt_warns_against_compound_splitting():
 
 
 def test_translation_system_prompt_warns_against_dangling_connective_fragments():
+    """Keep fragment guidance open-ended without product-specific instructions."""
     prompt = build_translation_system_prompt(
         target_language="Hindi",
         style_rules_text="",
