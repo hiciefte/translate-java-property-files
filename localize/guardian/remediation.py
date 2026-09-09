@@ -457,6 +457,19 @@ class RemediationGitHubBroker:
         self,
         client: httpx.Client,
     ) -> tuple[int, str]:
+        actor_id, actor_type, _login = self._authenticated_actor_identity(client)
+        return actor_id, actor_type
+
+    def publication_author_email(self) -> str:
+        """Use the current authenticated login after enforcing pinned actor authority."""
+        with self._client() as (client, _actor):
+            actor_id, _actor_type, login = self._authenticated_actor_identity(client)
+            return f"{actor_id}+{login}@users.noreply.github.com"
+
+    def _authenticated_actor_identity(
+        self,
+        client: httpx.Client,
+    ) -> tuple[int, str, str]:
         payload = _mapping(
             self._request(client, "GET", "/user"),
             label="authenticated actor",
@@ -479,7 +492,7 @@ class RemediationGitHubBroker:
             raise GitHubAuthenticationError(
                 "GitHub remediation actor is not allowed by policy."
             )
-        return actor_id, actor_type
+        return actor_id, actor_type, login
 
     @staticmethod
     def _publication_identity(
@@ -2603,10 +2616,7 @@ class RemediationCoordinator:
             return RemediationBatchOutcome(deferred=1)
         self._require_remaining()
         commit = workspace.commit_historical_remediation_changes(
-            author_email=(
-                f"{remediation.publication_actor.id}+"
-                f"{remediation.publication_actor.login}@users.noreply.github.com"
-            ),
+            author_email=broker.publication_author_email(),
             expected_paths=tuple(sorted(patch_result.changed_files)),
             feedback_repository=policy.base_repo,
             feedback_pull_numbers=tuple(item.pr_number for item in pulls),

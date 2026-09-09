@@ -235,6 +235,17 @@ def _broker(
     return broker
 
 
+def test_remediation_commit_email_uses_authenticated_renamed_actor() -> None:
+    """Keep immutable actor authority while using the current GitHub login."""
+    broker = _broker(
+        lambda request: pytest.fail(f"Unexpected request: {request.url.path}"),
+        actor={"login": "renamed-translator", "id": 7, "type": "User"},
+    )
+    assert broker.publication_author_email() == (
+        "7+renamed-translator@users.noreply.github.com"
+    )
+
+
 def test_remediation_broker_deadline_stops_trickling_response() -> None:
     clock = _FakeClock()
     payload = json.dumps(_repo("acme/translations", 42)).encode()
@@ -2601,6 +2612,10 @@ class _BrokerSpy:
         self.branches = branches if branches is not None else {}
         self.existing = existing if existing is not None else {}
         self.calls: list[tuple[str, dict[str, object]]] = []
+        self.actor_login = "translator"
+
+    def publication_author_email(self) -> str:
+        return f"7+{self.actor_login}@users.noreply.github.com"
 
     def capture_base(self) -> Any:
         self.calls.append(("capture_base", {}))
@@ -3219,11 +3234,15 @@ def _publish(
     )
 
 
-def test_coordinator_batches_origins_into_one_signed_human_review_draft() -> None:
+@pytest.mark.parametrize("actor_login", ["translator", "renamed-translator"])
+def test_coordinator_batches_origins_into_one_signed_human_review_draft(
+    actor_login: str,
+) -> None:
     order: list[str] = []
     base = _base_snapshot()
     state = _StateSpy(order=order)
     broker = _BrokerSpy(base, order=order)
+    broker.actor_login = actor_login
     workspace = _WorkspaceSpy(base, order=order)
     coordinator = _coordinator(state, broker)
 
@@ -3235,7 +3254,7 @@ def test_coordinator_batches_origins_into_one_signed_human_review_draft() -> Non
     assert outcome.deferred == 0
     assert len(workspace.commit_calls) == 1
     commit_call = workspace.commit_calls[0]
-    assert commit_call["author_email"] == "7+translator@users.noreply.github.com"
+    assert commit_call["author_email"] == f"7+{actor_login}@users.noreply.github.com"
     assert commit_call["feedback_pull_numbers"] == (12, 13)
     assert commit_call["feedback_urls"] == tuple(sorted(FEEDBACK_URLS))
     assert commit_call["signing_key"] == "ABCDEF"

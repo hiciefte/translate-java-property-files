@@ -324,6 +324,9 @@ def test_prevention_broker_does_not_treat_mutable_actor_login_as_authority(
     )
 
     assert broker.capture_base().revision.sha == BASE_SHA
+    assert broker.publication_author_email() == (
+        "301+renamed-guardian-bot@users.noreply.github.com"
+    )
 
 
 @pytest.mark.parametrize(
@@ -2809,7 +2812,7 @@ class _FakeWorkspace:
         self.published = False
 
     def commit_prevention_changes(self, *, expected_paths, evidence_hash, **_kwargs):
-        assert _kwargs["author_email"] == "301+guardian-publisher@users.noreply.github.com"
+        assert _kwargs["author_email"] == self.broker.publication_author_email()
         assert set(expected_paths) == {"localize/rules.py", "tests/unit/test_rules.py"}
         assert len(evidence_hash) == 64
         return CommitResult(
@@ -2921,6 +2924,10 @@ class _FakeBroker:
         self.capture_calls = 0
         self.verify_calls = 0
         self.open_calls = 0
+        self.actor_login = "guardian-publisher"
+
+    def publication_author_email(self) -> str:
+        return f"301+{self.actor_login}@users.noreply.github.com"
 
     def capture_base(self) -> PreventionBaseSnapshot:
         self.capture_calls += 1
@@ -3488,8 +3495,10 @@ def _historical_prevention_source(
     return source, revision.revision_id
 
 
+@pytest.mark.parametrize("actor_login", ["guardian-publisher", "renamed-publisher"])
 def test_coordinator_authors_proves_signs_publishes_draft_and_deduplicates(
     tmp_path: Path,
+    actor_login: str,
 ) -> None:
     now = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
     with GuardianState(tmp_path / "state.sqlite3") as state:
@@ -3500,6 +3509,7 @@ def test_coordinator_authors_proves_signs_publishes_draft_and_deduplicates(
             started_at=now,
         )
         broker = _FakeBroker()
+        broker.actor_login = actor_login
         author = _FakeAuthor()
         coordinator = _coordinator(
             state=state,
