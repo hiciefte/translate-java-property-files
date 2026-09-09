@@ -854,6 +854,7 @@ def _patch_policy_digest(
             "mode": config.mode,
             "max_value_edits": config.limits.max_value_edits_per_run,
             "minimum_confidence": config.limits.min_apply_confidence,
+            "replacement_locale_authority_version": 1,
             "pipeline_config_bundle": scope.config_bundle_digest,
         }
     )
@@ -1830,6 +1831,27 @@ def _localization_values(
                 str(values["target"]),
             )
     return result
+
+
+def _replacement_target_locales(
+    policy: RepositoryPolicy,
+    events: Sequence[FeedbackEvent],
+    path_locales: Mapping[str, str],
+) -> dict[str, dict[str, str]]:
+    """Bind target locales to the pinned author's per-locale permissions."""
+    authorized: dict[str, dict[str, str]] = {}
+    for event in events:
+        targets: dict[str, str] = {}
+        if event.author_id is not None:
+            for path, locale in path_locales.items():
+                actors = (
+                    policy.trusted_reviewer_by_id(locale, event.author_id),
+                    policy.trusted_bot_by_id(locale, event.author_id),
+                )
+                if any(actor is not None and actor.type == event.author_type for actor in actors):
+                    targets[path] = locale
+        authorized[event.feedback_id] = targets
+    return authorized
 
 
 def _eligible_replacements(
@@ -6114,6 +6136,9 @@ class GuardianController:
                     result,
                     feedback_events=events,
                     source_values=_source_values(bundle),
+                    target_locales_by_feedback=_replacement_target_locales(
+                        policy, events, scope.path_locales
+                    ),
                 )
 
             recurrence_candidates = tuple(

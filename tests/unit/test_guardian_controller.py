@@ -773,6 +773,30 @@ def test_open_pull_base_is_read_only_while_head_requires_current_ref() -> None:
     assert head.ref == f"refs/heads/{snapshot.pull_request.head_ref}"
 
 
+def test_replacement_locales_require_actor_authority_for_each_target() -> None:
+    """Cross-locale comments must not expand a reviewer's locale allowlist."""
+    event = FeedbackEvent(
+        repository="acme/widgets", pr_number=12, kind="review_comment", event_id="44",
+        author="native-reviewer", author_id=101, author_type="User", body="Fix both.",
+        head_sha=HEAD_SHA, base_sha=BASE_SHA, locale="ru",
+    )
+    paths = {"l10n/app_ru.properties": "ru", "l10n/app_cs.properties": "cs"}
+    policy = _policy()
+    assert guardian_controller._replacement_target_locales(policy, (event,), paths) == {
+        event.feedback_id: {"l10n/app_ru.properties": "ru"}
+    }
+    both = replace(policy, trusted_reviewers={
+        "ru": policy.trusted_reviewers["ru"], "cs": policy.trusted_reviewers["ru"]
+    })
+    assert guardian_controller._replacement_target_locales(both, (event,), paths) == {
+        event.feedback_id: paths
+    }
+    for invalid in (replace(event, author_id=None), replace(event, author_type="Bot")):
+        assert guardian_controller._replacement_target_locales(both, (invalid,), paths) == {
+            event.feedback_id: {}
+        }
+
+
 def _authorized_historical_digest(
     policy: RepositoryPolicy,
     snapshot: PullRequestFeedbackSnapshot,

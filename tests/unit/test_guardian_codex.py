@@ -893,7 +893,8 @@ def test_codex_driver_rejects_invalid_runtime_configuration(tmp_path):
         )
 
 
-def test_wire_result_conversion_uses_only_trusted_identity_locale_and_source():
+@pytest.mark.parametrize("anchor_locale", ["ru", "cs"])
+def test_wire_result_conversion_uses_only_trusted_identity_locale_and_source(anchor_locale):
     event = FeedbackEvent(
         repository="acme/widgets",
         pr_number=42,
@@ -905,7 +906,7 @@ def test_wire_result_conversion_uses_only_trusted_identity_locale_and_source():
         body="Please improve this translation.",
         head_sha="a" * 40,
         base_sha="b" * 40,
-        locale="ru",
+        locale=anchor_locale,
     )
     result = codex.CodexResult(
         schema_version=1,
@@ -939,6 +940,7 @@ def test_wire_result_conversion_uses_only_trusted_identity_locale_and_source():
     assessments = codex.to_guardian_assessments(
         result,
         feedback_events=(event,),
+        target_locales_by_feedback={event.feedback_id: {"l10n/Messages_ru.properties": "ru"}},
         source_values={
             ("l10n/Messages_ru.properties", "Dialog.title"): "Trusted English source"
         },
@@ -955,6 +957,12 @@ def test_wire_result_conversion_uses_only_trusted_identity_locale_and_source():
     assert replacement.locale == "ru"
     assert replacement.source_value == "Trusted English source"
     assert replacement.evidence == ("The new value is more idiomatic.",)
+    with pytest.raises(codex.CodexOutputError, match="not authorized"):
+        codex.to_guardian_assessments(
+            result, feedback_events=(event,),
+            source_values={("l10n/Messages_ru.properties", "Dialog.title"): "Source"},
+            target_locales_by_feedback={event.feedback_id: {}},
+        )
 
 
 @pytest.mark.parametrize("include_event", [False, True])

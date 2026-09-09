@@ -587,6 +587,7 @@ def to_guardian_assessments(
     *,
     feedback_events: Sequence[FeedbackEvent],
     source_values: Mapping[tuple[str, str], str],
+    target_locales_by_feedback: Mapping[str, Mapping[str, str]] | None = None,
 ) -> tuple[GuardianAssessment, ...]:
     """Combine wire decisions with trusted event and source metadata.
 
@@ -634,6 +635,16 @@ def to_guardian_assessments(
         decision = decisions_by_id[event.feedback_id]
         replacements: list[ProposedReplacement] = []
         for replacement in decision.replacements:
+            locale = event.locale
+            if target_locales_by_feedback is not None:
+                locale = target_locales_by_feedback.get(event.feedback_id, {}).get(
+                    replacement.path
+                )
+                if locale is None:
+                    raise CodexOutputError(
+                        f"Replacement path {replacement.path!r} is not authorized "
+                        "for this feedback author and target locale."
+                    )
             source_location = (replacement.path, replacement.key)
             if source_location not in source_values:
                 raise CodexOutputError(
@@ -645,7 +656,7 @@ def to_guardian_assessments(
                     feedback_id=event.feedback_id,
                     path=replacement.path,
                     key=replacement.key,
-                    locale=event.locale,
+                    locale=locale,
                     expected_value=replacement.expected_value,
                     proposed_value=replacement.proposed_value,
                     confidence=decision.confidence,
