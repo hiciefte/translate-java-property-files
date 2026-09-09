@@ -550,6 +550,19 @@ def _porcelain_status(runner: _GitRunner) -> tuple[tuple[str, str], ...]:
     return tuple(entries)
 
 
+def _initialize_exact_checkout(runner: _GitRunner) -> None:
+    runner.run(("init", "--quiet"))
+    if runner.deadline is not None:
+        runner.deadline.require_remaining()
+    # Review and commit stored blob bytes, not transformations selected by
+    # untrusted repository attributes. In particular, text attributes added
+    # without renormalization can make a fresh checkout appear dirty.
+    # info/attributes takes precedence without changing any tracked file.
+    attributes = runner.path / ".git" / "info" / "attributes"
+    with attributes.open("x", encoding="utf-8") as stream:
+        stream.write("* -text -filter -ident -working-tree-encoding\n")
+
+
 def _validate_regular_tracked_file(root: Path, runner: _GitRunner, relative_path: str) -> None:
     current = root
     for index, component in enumerate(PurePosixPath(relative_path).parts):
@@ -1570,7 +1583,7 @@ def materialize_exact_checkout(
             timeout_seconds=float(timeout_seconds),
             deadline=deadline,
         )
-        runner.run(("init", "--quiet"))
+        _initialize_exact_checkout(runner)
         runner.run(("remote", "add", "origin", validated_remote))
 
         fetch_environment: dict[str, str] = {}
@@ -1665,7 +1678,7 @@ def materialize_historical_checkout(
             timeout_seconds=float(timeout_seconds),
             deadline=deadline,
         )
-        runner.run(("init", "--quiet"))
+        _initialize_exact_checkout(runner)
         runner.run(("remote", "add", "origin", validated_remote))
 
         fetch_environment: dict[str, str] = {}
