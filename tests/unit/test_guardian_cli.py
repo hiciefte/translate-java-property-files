@@ -2220,6 +2220,7 @@ def test_status_summarizes_audit_metadata_without_raw_bodies_or_messages(
     assert "Guardian status" in output
     assert "mode: observe" in output
     assert "last completed run: 2026-08-30T09:01:00" in output
+    assert "last successful poll: none" in output
     assert "pending feedback revisions: 0" in output
     assert "actions: completed=1" in output
     assert "health: github=ok" in output
@@ -2229,6 +2230,24 @@ def test_status_summarizes_audit_metadata_without_raw_bodies_or_messages(
         "not_found=0, conflict=0"
     ) in output
     assert secret not in output
+
+
+def test_status_distinguishes_last_successful_poll_from_later_failure(tmp_path, capsys):
+    config_path = _init_config(tmp_path)
+    capsys.readouterr()
+    with GuardianState(cli.guardian_state_path(config_path)) as state:
+        state.record_health(
+            component="guardian", status="ok", message="Poll completed",
+            checked_at=datetime(2026, 9, 8, 8, 0, tzinfo=UTC),
+        )
+        state.record_health(
+            component="guardian", status="failed", message="Poll failed",
+            checked_at=datetime(2026, 9, 9, 8, 0, tzinfo=UTC),
+        )
+    assert cli.main(["status", "--config", str(config_path)]) == 0
+    output = capsys.readouterr().out
+    assert "last successful poll: 2026-09-08T08:00:00" in output
+    assert "health: guardian=failed" in output
 
 
 def test_status_is_read_only_when_no_state_database_exists(

@@ -652,6 +652,7 @@ class GuardianStateStatus:
     remote_closed_unmerged_remediations: int
     remote_not_found_remediations: int
     remote_conflict_remediations: int
+    last_successful_poll: str | None = None
 
 
 def _now() -> datetime:
@@ -9387,6 +9388,13 @@ class GuardianState:
             LIMIT 1
             """
         ).fetchone()
+        last_poll_row = self._connection.execute(
+            """
+            SELECT checked_at FROM health
+            WHERE component = 'guardian' AND status = 'ok'
+            ORDER BY checked_at DESC, health_id DESC LIMIT 1
+            """
+        ).fetchone()
         pending_row = self._connection.execute(
             f"""
             SELECT COUNT(*) AS pending_count FROM event_revisions AS e
@@ -9676,6 +9684,9 @@ class GuardianState:
         ):  # pragma: no cover - aggregates always return one row
             raise RuntimeError("Guardian status aggregation failed.")
         return GuardianStateStatus(
+            last_successful_poll=(
+                str(last_poll_row["checked_at"]) if last_poll_row else None
+            ),
             last_completed_run=(
                 str(last_run_row["finished_at"]) if last_run_row else None
             ),

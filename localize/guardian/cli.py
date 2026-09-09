@@ -1755,6 +1755,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
         return 0
 
     print(f"last completed run: {snapshot.last_completed_run or 'none'}")
+    print(f"last successful poll: {snapshot.last_successful_poll or 'none'}")
     print(f"pending feedback revisions: {snapshot.pending_revisions}")
     actions = ", ".join(f"{status}={count}" for status, count in snapshot.actions)
     print(f"actions: {actions or 'none'}")
