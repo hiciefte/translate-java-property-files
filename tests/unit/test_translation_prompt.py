@@ -55,6 +55,7 @@ def test_translation_system_prompt_mentions_format_metadata():
 
 
 def test_translation_system_prompt_requests_grammatical_number_agreement():
+    """Cover singular, plural, and count-neutral accessibility guidance."""
     prompt = build_translation_system_prompt(
         target_language="German",
         style_rules_text="",
@@ -73,6 +74,9 @@ def test_translation_system_prompt_requests_grammatical_number_agreement():
     assert "`.*`" in prompt
     assert "catch-all" in prompt
     assert "count-neutral" in prompt
+    assert "interpolated accessibility label" in prompt
+    assert "unread-item label" in prompt
+    assert "even without separate plural keys" in prompt
     assert "identical singular and plural target forms are acceptable" in prompt
     # The example must render a real placeholder, not a doubled f-string brace.
     assert "Used {0} time" in prompt
