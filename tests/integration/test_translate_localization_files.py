@@ -475,6 +475,63 @@ async def test_failed_model_translation_preserves_ledger_verified_target(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "previous_source,existing_value,expected_value",
+    [
+        ("Open {0}", "Öffnen {0}", "Öffnen {0}"),
+        ("Close {0}", "Schließen {0}", "Open {0}"),
+        ("Open {0}", "Öffnen {1}", "Open {0}"),
+    ],
+)
+async def test_source_echo_preserves_only_valid_current_source_baseline(
+    integration_test_environment, previous_source, existing_value, expected_value,
+):
+    """Echoes stay failed; only fresh, placeholder-safe old text reaches output."""
+    env = integration_test_environment
+    pipeline = localize.translate_localization_files
+    source_value = "Open {0}"
+    source_path = os.path.join(env['input_folder'], 'app.properties')
+    target_path = os.path.join(env['translation_queue_folder'], 'app_de.properties')
+    ledger_path = os.path.join(env['input_folder'], 'echo-ledger.json')
+    memory_path = os.path.join(env['input_folder'], 'echo-memory.json')
+    with open(source_path, 'w', encoding='utf-8') as stream:
+        stream.write(f"key.open={source_value}\n")
+    with open(target_path, 'w', encoding='utf-8') as stream:
+        stream.write(f"key.open={existing_value}\n")
+    pipeline.save_translation_key_ledger(ledger_path, {
+        "app_de.properties": pipeline.build_file_key_ledger(
+            {"key.open": previous_source}, {"key.open": existing_value},
+            failed_keys={"key.open"},
+        ),
+    })
+    summary = {}
+    with patch.object(pipeline, 'TRANSLATION_KEY_LEDGER_FILE_PATH', ledger_path), \
+         patch.object(pipeline, 'TRANSLATION_MEMORY_ENABLED', True), \
+         patch.object(pipeline, 'TRANSLATION_MEMORY_FILE_PATH', memory_path), \
+         patch.object(pipeline, 'get_working_tree_changed_keys', return_value=set()), \
+         patch.object(pipeline, 'translate_text_async', new_callable=AsyncMock) as translate, \
+         patch.object(pipeline, 'holistic_review_async', new_callable=AsyncMock) as review:
+        translate.return_value = (0, source_value, True)
+        review.return_value = {"key.open": source_value}
+        await pipeline.process_translation_queue(
+            env['translation_queue_folder'], env['translated_queue_folder'],
+            env['mock_glossary_path_resolved'], validation_summary=summary,
+        )
+    _, output = parse_properties_file(os.path.join(
+        env['translated_queue_folder'], 'app_de.properties'
+    ))
+    assert output["key.open"] == expected_value
+    assert summary["app_de.properties"]["source_identical_keys"] == ["key.open"]
+    assert summary["app_de.properties"]["reverted_keys_count"] == 1
+    ledger = pipeline.load_translation_key_ledger(ledger_path)
+    assert ledger["app_de.properties"]["key.open"]["status"] == "failed"
+    memory = load_translation_memory(memory_path)
+    assert memory.lookup(
+        source_value, locale="de", format_id=JAVA_PROPERTIES_FORMAT.id,
+    ) is None
+
+
+@pytest.mark.asyncio
 async def test_failed_holistic_review_marks_keys_failed(integration_test_environment):
     """A draft is not a successful two-pass translation when review failed."""
     env = integration_test_environment

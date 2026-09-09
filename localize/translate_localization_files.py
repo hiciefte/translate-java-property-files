@@ -1321,6 +1321,7 @@ def run_per_key_validation_with_summary(
         ignore_key_patterns: Optional[List[Pattern[str]]] = None,
         translation_glossary: Optional[Mapping[str, str]] = None,
         existing_translations: Optional[Mapping[str, str]] = None,
+        file_ledger_entries: Optional[Mapping[str, Mapping[str, str]]] = None,
 ) -> Tuple[Dict[str, str], Dict[str, object]]:
     """
     Validates each translation key individually and selectively reverts failed keys.
@@ -1336,6 +1337,8 @@ def run_per_key_validation_with_summary(
         filename: Name of the file being validated (for logging)
         existing_translations: Original target values, used to preserve a
             localized value when generated output falls back to the source.
+        file_ledger_entries: Baseline hashes proving that both the source and
+            previous target are unchanged.
 
     Returns:
         Tuple containing:
@@ -1368,24 +1371,27 @@ def run_per_key_validation_with_summary(
             )
             valid_translations[key] = source_value
             continue
-        existing_value = existing_translations.get(key)
+        existing_value = _ledger_verified_existing_translation(
+            key, source_translations, existing_translations, file_ledger_entries or {}
+        )
+        original_value = existing_translations.get(key)
         if (
                 source_value.strip()
                 and normalize_value(source_value) == normalize_value(target_value)
-                and isinstance(existing_value, str)
-                and existing_value.strip()
-                and normalize_value(existing_value) != normalize_value(source_value)
+                and isinstance(original_value, str)
+                and original_value.strip()
+                and normalize_value(original_value) != normalize_value(source_value)
         ):
             failed_keys.append(key)
             source_identical_keys.append(key)
             logger.warning(
-                "Key '%s' failed validation in '%s' - preserving the existing target "
-                "because the generated value matches the source.",
+                "Key '%s' failed validation in '%s' - generated value matches the "
+                "source; only a ledger-verified target may be reused after validation.",
                 key,
                 filename,
             )
-            valid_translations[key] = existing_value
-            continue
+            if existing_value is not None:
+                target_value = existing_value
         control_character_findings = find_disallowed_control_characters(target_value)
 
         if control_character_findings:
@@ -1445,11 +1451,13 @@ def run_per_key_validation_with_summary(
             # Use source value for this failed key
             valid_translations[key] = source_value
 
+    # A rejected source echo and an invalid fallback can flag the same key.
+    failed_keys = list(dict.fromkeys(failed_keys))
     # Log summary if any keys failed
     if failed_keys:
         logger.warning(
             f"Validation failed for {len(failed_keys)} out of {len(final_translations)} keys in '{filename}'. "
-            f"Failed keys reverted to source: {', '.join(failed_keys[:5])}"
+            f"Failed keys retained a validated baseline or reverted to source: {', '.join(failed_keys[:5])}"
             f"{' ...' if len(failed_keys) > 5 else ''}"
         )
         logger.info(
@@ -3042,6 +3050,7 @@ async def process_translation_queue(
                 ignore_key_patterns=IGNORE_KEY_PATTERNS,
                 translation_glossary=enforced_language_glossary,
                 existing_translations=original_target_translations,
+                file_ledger_entries=file_ledger_entries,
             )
             failed_keys = set(per_key_summary["failed_keys"]).union(model_failed_keys)
             increment_run_metric(run_metrics, "model_translation_failed_count", len(failed_keys))

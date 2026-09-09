@@ -20,6 +20,7 @@ from localize.translate_localization_files import (
     normalize_value,
     prefer_existing_translation_on_failure,
     compute_ledger_hash,
+    build_file_key_ledger,
     extract_texts_to_translate,
     filter_git_changed_keys_by_source,
     get_working_tree_changed_keys,
@@ -875,16 +876,65 @@ class TestRetryHandling(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(summary["empty_target_keys"], ["key.one"])
 
     def test_per_key_validation_preserves_existing_target_when_generated_value_matches_source(self):
+        """A matching baseline can retain validated localized text."""
         valid, summary = run_per_key_validation_with_summary(
             {"key.one": "Open trade chat"},
             {"key.one": "Open trade chat"},
             "de.properties",
             existing_translations={"key.one": "Handels-Chat öffnen"},
+            file_ledger_entries=build_file_key_ledger(
+                {"key.one": "Open trade chat"},
+                {"key.one": "Handels-Chat öffnen"},
+            ),
         )
 
         self.assertEqual(valid["key.one"], "Handels-Chat öffnen")
         self.assertEqual(summary["source_identical_keys"], ["key.one"])
         self.assertEqual(summary["source_identical_failures_count"], 1)
+
+    def test_source_echo_does_not_restore_unverified_old_meaning(self):
+        """An old number must not override the current English source."""
+        valid, summary = run_per_key_validation_with_summary(
+            {"key": "Wait 14 days"}, {"key": "Wait 14 days"}, "de.properties",
+            existing_translations={"key": "Warten Sie 7 Tage"},
+        )
+        self.assertEqual(valid["key"], "Wait 14 days")
+        self.assertEqual(summary["failed_keys"], ["key"])
+
+    def test_source_echo_requires_matching_source_and_target_baseline(self):
+        """Changed sources and edited targets cannot reuse an old baseline."""
+        source = {"key": "Wait 14 days"}
+        existing = {"key": "Warten Sie 7 Tage"}
+        for ledger in (
+            build_file_key_ledger({"key": "Wait 7 days"}, existing),
+            build_file_key_ledger(source, {"key": "Anderer Text"}),
+        ):
+            with self.subTest(ledger=ledger):
+                valid, _ = run_per_key_validation_with_summary(
+                    source, source, "de.properties", existing_translations=existing,
+                    file_ledger_entries=ledger,
+                )
+                self.assertEqual(valid, source)
+
+    def test_source_echo_fallback_still_checks_placeholders_controls_and_glossary(self):
+        """A matching baseline does not exempt old text from current validation."""
+        cases = (
+            ("Open {0}", "Öffnen {1}", {}, "placeholder_mismatch_keys"),
+            ("Open chat", "Chat\x00 öffnen", {}, "control_character_keys"),
+            ("Open account", "Konto öffnen", {"account": "Account"}, "glossary_mismatch_keys"),
+        )
+        for source_text, old_text, glossary, failure_category in cases:
+            with self.subTest(category=failure_category):
+                source, existing = {"key": source_text}, {"key": old_text}
+                valid, summary = run_per_key_validation_with_summary(
+                    source, source, "de.properties", existing_translations=existing,
+                    file_ledger_entries=build_file_key_ledger(source, existing),
+                    translation_glossary=glossary,
+                )
+                self.assertEqual(valid, source)
+                self.assertEqual(summary[failure_category], ["key"])
+                self.assertEqual(summary["failed_keys"], ["key"])
+                self.assertEqual(summary["reverted_keys_count"], 1)
 
 
 class TestSourceFilenameExtraction(unittest.TestCase):
