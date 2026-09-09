@@ -43,7 +43,7 @@ from localize.guardian.codex import (
     to_guardian_assessments,
 )
 from localize.guardian.deadline import PollDeadline, PollDeadlineExceeded
-from localize.guardian.evidence import EvidenceBundle, build_evidence_bundle
+from localize.guardian.evidence import EVIDENCE_CONTRACT_VERSION, EvidenceBundle, build_evidence_bundle
 from localize.guardian.github import (
     BaseRevisionSnapshot,
     ChangedFile,
@@ -855,6 +855,7 @@ def _patch_policy_digest(
             "max_value_edits": config.limits.max_value_edits_per_run,
             "minimum_confidence": config.limits.min_apply_confidence,
             "replacement_locale_authority_version": 1,
+            "evidence_contract_version": EVIDENCE_CONTRACT_VERSION,
             "pipeline_config_bundle": scope.config_bundle_digest,
         }
     )
