@@ -101,7 +101,7 @@ def test_open_phase_precedes_observe_history_using_current_values_without_writes
 
     policy = _historical_policy()
     with GuardianState(tmp_path / "state.sqlite3") as state:
-        outcome = _controller(
+        controller = _controller(
             tmp_path=tmp_path,
             state=state,
             config=_config(GuardianMode.OBSERVE, policies=(policy,)),
@@ -113,7 +113,20 @@ def test_open_phase_precedes_observe_history_using_current_values_without_writes
             historical_checkout_factory=historical_checkout,
             current_base_provider=current_provider,
             evidence_builder=evidence_spy,
-        ).poll_once()
+        )
+        convert = controller.assessment_converter
+        conversion_scopes = []
+
+        def authorized_conversion(*args, **kwargs):
+            """Require explicit locale authority on both open and historical paths."""
+            conversion_scopes.append(kwargs.get("target_locales_by_feedback"))
+            assert kwargs["target_locales_by_feedback"]
+            return convert(*args, **kwargs)
+
+        controller.assessment_converter = authorized_conversion
+        outcome = controller.poll_once()
+        assert len(conversion_scopes) == 2
+        assert conversion_scopes[1]["review_comment:45"][TARGET_PATH] == "ru"
 
     assert sequence.index("open-discovery") < sequence.index(
         "history:acme/widgets"

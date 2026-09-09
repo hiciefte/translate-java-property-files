@@ -285,7 +285,7 @@ def _rotate_policies_after_repository(
 
 
 _ASSESSMENT_CACHE_VERSION = 1
-_HISTORICAL_CONTROLLER_VERSION = 2
+_HISTORICAL_CONTROLLER_VERSION = 3
 
 
 def _assessment_cache_key(
@@ -4364,6 +4364,9 @@ class GuardianController:
                         result,
                         feedback_events=events,
                         source_values=_source_values(bundle),
+                        target_locales_by_feedback=_replacement_target_locales(
+                            policy, events, current_scope.path_locales,
+                        ),
                     )
                     replacements, deferred = _validated_historical_replacements(
                         assessments,
@@ -5539,6 +5542,14 @@ class GuardianController:
             pr_number=snapshot.pull_request.number,
         )
         with self.checkout_factory(base_revision) as base_workspace:
+            base_config_bundle_digest = (
+                _base_pipeline_config_bundle_digest(
+                    config_root=base_workspace.path,
+                    config_relative_path=policy.pipeline_config_path,
+                )
+                if policy.pipeline_config_source is PipelineConfigSource.BASE
+                else None
+            )
             scope = _target_scope(
                 base_root=base_workspace.path,
                 policy=policy,
@@ -5546,6 +5557,7 @@ class GuardianController:
                 operator_pipeline_config=self.operator_pipeline_configs.get(
                     policy.base_repo
                 ),
+                base_config_bundle_digest=base_config_bundle_digest,
             )
             authorized = authorize_feedback(
                 policy=policy,

@@ -3970,6 +3970,42 @@ def test_changed_edit_limit_retries_policy_rejection_without_rebilling(
         assert len(driver.calls) == 1
 
 
+@pytest.mark.parametrize("changed_file", ["config.yaml", "glossary.json"])
+def test_base_bundle_change_reconsiders_deterministic_patch_rejection(
+    tmp_path: Path, runtime, changed_file: str,
+) -> None:
+    """Bind rejected work to the actual trusted base config and glossary bytes."""
+    base, _head, checkout, provider, broker, _sequence = runtime
+    driver = FakeCodexDriver()
+    calls = []
+
+    def reject_first(**kwargs):
+        """Simulate a deterministic constraint that a config change corrects."""
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise guardian_controller.PatchPolicyError("test policy rejection")
+        return apply_replacements(**kwargs)
+
+    with GuardianState(tmp_path / "state.sqlite3") as state:
+        def poll():
+            """Reuse the durable rejection ledger across policy snapshots."""
+            controller = _controller(
+                tmp_path=tmp_path, state=state,
+                config=_config(GuardianMode.APPLY_OWNED_TRANSLATIONS),
+                checkout=checkout, provider=provider, driver=driver, broker=broker,
+                replacement_applier=reject_first,
+            )
+            return controller.poll_once()
+
+        assert poll().applied_commits == ()
+        assert poll().applied_commits == ()
+        assert len(calls) == 1
+        target = base / ".localize" / changed_file
+        target.write_text(target.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        assert poll().applied_commits == (COMMIT_SHA,)
+        assert len(calls) == 2
+
+
 def test_crash_after_model_success_reuses_durable_result_without_rebilling(
     tmp_path: Path,
     runtime,
