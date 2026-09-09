@@ -970,6 +970,7 @@ def _draft_text(
     paths: Sequence[str],
     focused_argv: Sequence[tuple[str, ...]],
 ) -> tuple[str, str]:
+    """Render bounded public evidence without disclosing private test commands."""
     title_prefix = "Prevent recurrence: "
     summary = _truncate_utf8(
         root_cause.replace("@", "＠"),

@@ -60,10 +60,12 @@ def _payload_with_duplicate_member() -> str:
 
 
 def test_codex_output_schema_uses_supported_structured_output_keywords():
+    """Reject schema constructs unsupported by the structured-output provider."""
     schema = json.loads(codex.RESULT_SCHEMA_PATH.read_text(encoding="utf-8"))
     unsupported = {"allOf", "not", "dependentRequired", "dependentSchemas", "if", "then", "else"}
 
     def check(node):
+        """Recursively check every schema branch for unsupported keywords."""
         assert not unsupported.intersection(node)
         assert "type" in node or "$ref" in node or "anyOf" in node
         if node.get("type") == "object":
@@ -82,9 +84,11 @@ def test_codex_output_schema_uses_supported_structured_output_keywords():
 
 @pytest.mark.parametrize("channel", ["stdout", "stderr"])
 def test_codex_driver_does_not_retry_invalid_provider_schema(tmp_path, monkeypatch, channel):
+    """A deterministic provider schema error must consume only one attempt."""
     calls = []
 
     def fake_run(argv, **kwargs):
+        """Simulate provider schema rejection on either output channel."""
         calls.append(argv)
         return subprocess.CompletedProcess(
             argv, 1, **{channel: '{"error":{"code":"invalid_json_schema"}}'}
@@ -101,6 +105,7 @@ def test_codex_driver_does_not_retry_invalid_provider_schema(tmp_path, monkeypat
 def test_codex_driver_uses_read_only_contract_and_scrubbed_environment(
     tmp_path, monkeypatch
 ):
+    """Restrict assessment execution and remove ambient write credentials."""
     evidence_dir = tmp_path / "evidence"
     evidence_dir.mkdir()
     hostile_comment = (
@@ -524,6 +529,7 @@ def test_codex_driver_rejects_non_standard_json_numbers(
 
 
 def test_codex_driver_rejects_semantically_invalid_apply_result(tmp_path, monkeypatch):
+    """Reject apply verdicts that lack a valid replacement contract."""
     evidence_dir = tmp_path / "evidence"
     evidence_dir.mkdir()
     payload = _valid_payload()
@@ -547,6 +553,7 @@ def test_codex_driver_rejects_replacements_for_non_apply_verdicts(
     monkeypatch,
     verdict,
 ):
+    """Prevent non-apply verdicts from carrying executable replacement proposals."""
     evidence_dir = tmp_path / "evidence"
     evidence_dir.mkdir()
     payload = _valid_payload()
@@ -895,6 +902,7 @@ def test_codex_driver_rejects_invalid_runtime_configuration(tmp_path):
 
 @pytest.mark.parametrize("anchor_locale", ["ru", "cs"])
 def test_wire_result_conversion_uses_only_trusted_identity_locale_and_source(anchor_locale):
+    """Resolve replacement authority from trusted data, not model-supplied identity."""
     event = FeedbackEvent(
         repository="acme/widgets",
         pr_number=42,

@@ -303,6 +303,7 @@ def test_prevention_broker_binds_credential_to_publication_actor(
 def test_prevention_broker_does_not_treat_mutable_actor_login_as_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Allow account renames without relaxing numeric actor authorization."""
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/user":
             return _response(
@@ -587,6 +588,7 @@ def test_prevention_author_uses_workspace_write_stdin_and_scrubs_write_credentia
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Limit authoring to its workspace and keep publication credentials absent."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     observed: dict[str, object] = {}
@@ -2812,6 +2814,7 @@ class _FakeWorkspace:
         self.published = False
 
     def commit_prevention_changes(self, *, expected_paths, evidence_hash, **_kwargs):
+        """Assert the prevention signer uses the broker-authenticated account identity."""
         assert _kwargs["author_email"] == self.broker.publication_author_email()
         assert set(expected_paths) == {"localize/rules.py", "tests/unit/test_rules.py"}
         assert len(evidence_hash) == 64
@@ -2918,6 +2921,7 @@ class _FakeBroker:
         private: bool = False,
         mutation_order: list[str] | None = None,
     ) -> None:
+        """Initialize a publication spy with independent actor and remote state."""
         self.private = private
         self.mutation_order = mutation_order
         self.branch_shas: dict[str, str] = {}
@@ -2927,6 +2931,7 @@ class _FakeBroker:
         self.actor_login = "guardian-publisher"
 
     def publication_author_email(self) -> str:
+        """Return the test broker's current authenticated noreply identity."""
         return f"301+{self.actor_login}@users.noreply.github.com"
 
     def capture_base(self) -> PreventionBaseSnapshot:
@@ -3500,6 +3505,7 @@ def test_coordinator_authors_proves_signs_publishes_draft_and_deduplicates(
     tmp_path: Path,
     actor_login: str,
 ) -> None:
+    """Exercise signed prevention publication, renamed actors, and duplicate suppression."""
     now = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
     with GuardianState(tmp_path / "state.sqlite3") as state:
         run_id = state.start_run(

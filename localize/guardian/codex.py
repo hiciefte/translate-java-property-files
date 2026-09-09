@@ -361,6 +361,7 @@ def _validate_repository_path(raw_path: str) -> None:
 
 
 def _parse_semantic_result(payload: Mapping[str, Any], *, attempts: int) -> CodexResult:
+    """Validate assessment semantics after checking the provider output schema."""
     summary = str(payload["summary"])
     _require_meaningful(summary, "summary")
 
@@ -793,6 +794,7 @@ class CodexDriver:
         attempt_observer: CodexAttemptObserver | None = None,
         success_observer: CodexSuccessObserver | None = None,
     ) -> CodexResult:
+        """Run bounded read-only assessment attempts with explicit usage accounting."""
         prompt = task.prompt
         evidence_dir = Path(task.evidence_dir).expanduser().resolve()
         if not prompt.strip():

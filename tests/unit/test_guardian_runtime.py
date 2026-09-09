@@ -735,6 +735,7 @@ def test_build_controller_wires_exact_runtime_policy_and_credentials(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Check runtime wiring for policy, checkout authority, and scoped credentials."""
     config = _config()
     captured: dict[str, object] = {}
 

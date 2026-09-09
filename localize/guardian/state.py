@@ -29,7 +29,7 @@ from localize.guardian.prevention import TestCommandResult, TestOutcome
 
 
 _UTC = timezone.utc
-_SCHEMA_VERSION = 9
+_SCHEMA_VERSION = 10
 _SUPPORTED_SCHEMA_VERSIONS = frozenset(range(_SCHEMA_VERSION + 1))
 _TERMINAL_ACTION_STATUSES = frozenset({"completed", "skipped"})
 _ACTION_STATUSES = _TERMINAL_ACTION_STATUSES | {"failed", "pending"}
@@ -70,7 +70,7 @@ _REMEDIATION_DRAFT_RUN_MODES = frozenset(
     }
 )
 _PUBLICATION_REPLY_TERMINAL_REASONS = frozenset(
-    {"remediation_closed_unmerged", "remediation_merged"}
+    {"remediation_closed_unmerged", "remediation_merged", "trusted_feedback_changed"}
 )
 _MAX_RUN_ID_BYTES = 128
 _MAX_REPOSITORY_BYTES = 512
@@ -1707,6 +1707,7 @@ class GuardianState:
         self._connection.close()
 
     def _initialize_schema(self, *, previous_version: int) -> None:
+        """Upgrade and verify the audit schema without partial migration commits."""
         self._connection.executescript(
             """
             BEGIN IMMEDIATE;
@@ -2492,7 +2493,8 @@ class GuardianState:
                 reason TEXT NOT NULL CHECK (
                     reason IN (
                         'remediation_closed_unmerged',
-                        'remediation_merged'
+                        'remediation_merged',
+                        'trusted_feedback_changed'
                     )
                 ),
                 occurred_at TEXT NOT NULL
@@ -2903,53 +2905,6 @@ class GuardianState:
             )
             BEGIN
                 SELECT RAISE(ABORT, 'abandoned publication requires failed plan');
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS publication_reply_terminals_no_update
-            BEFORE UPDATE ON publication_reply_terminal_events
-            BEGIN
-                SELECT RAISE(ABORT, 'publication reply terminals are immutable');
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS publication_reply_terminals_no_delete
-            BEFORE DELETE ON publication_reply_terminal_events
-            BEGIN
-                SELECT RAISE(ABORT, 'publication reply terminals are immutable');
-            END;
-
-            DROP TRIGGER IF EXISTS publication_reply_terminals_published;
-
-            CREATE TRIGGER publication_reply_terminals_published
-            BEFORE INSERT ON publication_reply_terminal_events
-            WHEN NOT EXISTS (
-                SELECT 1
-                FROM publication_events AS publication
-                JOIN remediation_successor_publications AS successor
-                  ON successor.publication_key = publication.publication_key
-                JOIN runs AS run ON run.run_id = publication.run_id
-                WHERE publication.publication_key = NEW.publication_key
-                  AND publication.phase = 'published'
-                  AND run.status = 'completed'
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM publication_completion_plan_items AS plan
-                      WHERE plan.publication_key = publication.publication_key
-                        AND NOT EXISTS (
-                            SELECT 1 FROM actions AS action
-                            WHERE action.run_id = plan.run_id
-                              AND action.event_revision_id
-                                  = plan.event_revision_id
-                              AND action.action = plan.action
-                              AND action.status = plan.status
-                              AND action.details_json = plan.details_json
-                        )
-                  )
-            )
-            BEGIN
-                SELECT RAISE(
-                    ABORT,
-                    'publication reply terminal requires published successor'
-                );
             END;
 
             CREATE TRIGGER IF NOT EXISTS prevention_draft_events_no_update
@@ -4950,6 +4905,24 @@ class GuardianState:
                 FROM prevention_draft_events
                 """
             )
+        if previous_version < 10:
+            # Widen only the reply-terminal reason enum, preserving every row.
+            for statement in (
+                """CREATE TABLE publication_reply_terminal_events_v10 (
+                    publication_key TEXT PRIMARY KEY,
+                    reason TEXT NOT NULL CHECK (reason IN (
+                        'remediation_closed_unmerged', 'remediation_merged',
+                        'trusted_feedback_changed'
+                    )),
+                    occurred_at TEXT NOT NULL
+                )""",
+                "INSERT INTO publication_reply_terminal_events_v10 "
+                "SELECT * FROM publication_reply_terminal_events",
+                "DROP TABLE publication_reply_terminal_events",
+                "ALTER TABLE publication_reply_terminal_events_v10 "
+                "RENAME TO publication_reply_terminal_events",
+            ):
+                self._connection.execute(statement)
         if previous_version < 8:
             self._audit_draft_event_ledgers()
         if previous_version < 5:
@@ -5021,9 +4994,52 @@ class GuardianState:
             END
             """
         )
+        self._install_publication_reply_triggers()
         self._verify_database_integrity()
         self._connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
         self._connection.commit()
+
+    def _install_publication_reply_triggers(self) -> None:
+        """Protect terminal accounting after transactional table migration."""
+        for operation in ("UPDATE", "DELETE"):
+            self._connection.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS publication_reply_terminals_no_{operation.lower()}
+                BEFORE {operation} ON publication_reply_terminal_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'publication reply terminals are immutable');
+                END
+            """)
+        self._connection.execute("DROP TRIGGER IF EXISTS publication_reply_terminals_published")
+        self._connection.execute("""
+            CREATE TRIGGER publication_reply_terminals_published
+            BEFORE INSERT ON publication_reply_terminal_events
+            WHEN NOT EXISTS (
+                SELECT 1 FROM publication_events AS publication
+                LEFT JOIN remediation_successor_publications AS successor
+                  ON successor.publication_key = publication.publication_key
+                JOIN runs AS run ON run.run_id = publication.run_id
+                WHERE publication.publication_key = NEW.publication_key
+                  AND publication.phase = 'published'
+                  AND run.status = 'completed'
+                  AND (NEW.reason = 'trusted_feedback_changed'
+                       OR successor.publication_key IS NOT NULL)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM publication_completion_plan_items AS plan
+                      WHERE plan.publication_key = publication.publication_key
+                        AND NOT EXISTS (
+                            SELECT 1 FROM actions AS action
+                            WHERE action.run_id = plan.run_id
+                              AND action.event_revision_id = plan.event_revision_id
+                              AND action.action = plan.action
+                              AND action.status = plan.status
+                              AND action.details_json = plan.details_json
+                        )
+                  )
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'publication reply terminal requires published successor');
+            END
+        """)
 
     def _backfill_publication_repository_ids(self) -> None:
         """Recover only bounded, exact modern publication repository IDs."""
@@ -10629,12 +10645,14 @@ class GuardianState:
             """
             SELECT terminal.reason, terminal.occurred_at
             FROM publication_reply_terminal_events AS terminal
-            JOIN remediation_successor_publications AS successor
+            LEFT JOIN remediation_successor_publications AS successor
               ON successor.publication_key = terminal.publication_key
             JOIN publication_events AS publication
               ON publication.publication_key = terminal.publication_key
              AND publication.phase = 'published'
             WHERE terminal.publication_key = ?
+              AND (terminal.reason = 'trusted_feedback_changed'
+                   OR successor.publication_key IS NOT NULL)
             LIMIT 2
             """,
             (publication_key,),
@@ -10687,13 +10705,15 @@ class GuardianState:
             """
             SELECT publication.occurred_at
             FROM publication_events AS publication
-            JOIN remediation_successor_publications AS successor
+            LEFT JOIN remediation_successor_publications AS successor
               ON successor.publication_key = publication.publication_key
             WHERE publication.publication_key = ?
               AND publication.phase = 'published'
+              AND (? = 'trusted_feedback_changed'
+                   OR successor.publication_key IS NOT NULL)
             LIMIT 2
             """,
-            (publication_key,),
+            (publication_key, reason),
         ).fetchall()
         if len(published) != 1:
             raise ValueError(
@@ -10751,13 +10771,15 @@ class GuardianState:
                 """
                 SELECT publication.*
                 FROM publication_events AS publication
-                JOIN remediation_successor_publications AS successor
+                LEFT JOIN remediation_successor_publications AS successor
                   ON successor.publication_key = publication.publication_key
                 WHERE publication.publication_key = ?
+                  AND (? = 'trusted_feedback_changed'
+                       OR successor.publication_key IS NOT NULL)
                 ORDER BY publication.publication_event_id DESC
                 LIMIT 2
                 """,
-                (publication_key,),
+                (publication_key, reason),
             ).fetchall()
             if not rows:
                 raise ValueError(

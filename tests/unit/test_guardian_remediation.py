@@ -2607,6 +2607,7 @@ class _BrokerSpy:
         branches: dict[str, str | None] | None = None,
         existing: dict[str, RemediationDraftResult] | None = None,
     ) -> None:
+        """Initialize a publication spy with independent actor and remote state."""
         self.base = base
         self.order = order
         self.branches = branches if branches is not None else {}
@@ -2615,6 +2616,7 @@ class _BrokerSpy:
         self.actor_login = "translator"
 
     def publication_author_email(self) -> str:
+        """Return the test broker's current authenticated noreply identity."""
         return f"7+{self.actor_login}@users.noreply.github.com"
 
     def capture_base(self) -> Any:
@@ -3238,6 +3240,7 @@ def _publish(
 def test_coordinator_batches_origins_into_one_signed_human_review_draft(
     actor_login: str,
 ) -> None:
+    """Batch historical evidence into one signed, deduplicated review candidate."""
     order: list[str] = []
     base = _base_snapshot()
     state = _StateSpy(order=order)

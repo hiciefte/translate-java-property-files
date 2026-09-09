@@ -952,6 +952,7 @@ class PreventionGitHubBroker:
         *,
         require_publication_actor: bool = True,
     ) -> tuple[int, str]:
+        """Return immutable actor authority independently of its mutable login."""
         actor_id, actor_type, _login = self._authenticated_actor_identity(
             client, require_publication_actor=require_publication_actor,
         )
@@ -969,6 +970,7 @@ class PreventionGitHubBroker:
         *,
         require_publication_actor: bool = True,
     ) -> tuple[int, str, str]:
+        """Validate the pinned credential actor and retain its current login."""
         payload = _mapping(
             self._request(client, "GET", "/user"),
             label="authenticated actor",
@@ -1955,6 +1957,7 @@ class PreventionCodexAuthor:
         policy: PreventionPolicy,
         api_key: str | None,
     ) -> PreventionAuthorResult:
+        """Author a bounded candidate in isolation without publication credentials."""
         workspace = workspace.resolve(strict=True)
         if not workspace.is_dir() or workspace.is_symlink():
             raise ValueError("Prevention author workspace must be a real directory.")
@@ -4185,6 +4188,7 @@ class PreventionCoordinator:
         ]
         | None,
     ) -> PreventionDraftResult:
+        """Author, test, sign, and publish one bounded prevention candidate."""
         evidence_hash = prevention_evidence_hash(
             root_cause=candidate.summary,
             evidence_feedback_ids=evidence_ids,

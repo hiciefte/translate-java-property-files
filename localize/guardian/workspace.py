@@ -551,6 +551,7 @@ def _porcelain_status(runner: _GitRunner) -> tuple[tuple[str, str], ...]:
 
 
 def _initialize_exact_checkout(runner: _GitRunner) -> None:
+    """Create a checkout whose Git attributes preserve exact repository bytes."""
     runner.run(("init", "--quiet"))
     if runner.deadline is not None:
         runner.deadline.require_remaining()

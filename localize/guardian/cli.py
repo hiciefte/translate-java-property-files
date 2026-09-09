@@ -1737,6 +1737,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
+    """Report bounded audit metadata without disclosing review text or credentials."""
     config_path = _resolved_config_path(args.config)
     try:
         config = _load_config_or_raise(config_path)

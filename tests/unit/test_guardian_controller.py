@@ -131,7 +131,7 @@ def _insert_legacy_publication(
     )
     publication_key = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
         # Restore the pre-v8 table shape while the production connection is
         # closed. The next GuardianState open performs the real v7 -> v8
         # migration and reinstalls every dropped production trigger.
@@ -1379,6 +1379,7 @@ class FakeWorkspace:
     author_email: str | None = None
 
     def commit_validated_changes(self, **kwargs) -> CommitResult:
+        """Capture the signing contract and return the deterministic test commit."""
         self.sequence.append("commit")
         self.commits += 1
         self.author_email = kwargs.get("author_email")
@@ -3051,6 +3052,7 @@ def test_recovers_successor_lineage_after_remediation_closes_without_reply(
 def test_refuses_to_infer_actor_or_lineage_for_a_legacy_prepared_push(
     tmp_path: Path,
 ) -> None:
+    """Legacy records must not gain inferred publication or successor authority."""
     sequence: list[str] = []
     broker = FakeBroker(sequence)
     database = tmp_path / "state.sqlite3"
@@ -3098,7 +3100,7 @@ def test_refuses_to_infer_actor_or_lineage_for_a_legacy_prepared_push(
             state._connection.execute(  # noqa: SLF001
                 "PRAGMA user_version"
             ).fetchone()[0]
-            == 9
+            == 10
         )
         installed_triggers = {
             row["name"]
@@ -3164,6 +3166,7 @@ def test_refuses_to_infer_actor_or_lineage_for_a_legacy_prepared_push(
 def test_refuses_to_infer_actor_or_open_authority_for_a_legacy_publication(
     tmp_path: Path,
 ) -> None:
+    """Fail closed when a legacy publication lacks durable actor and PR evidence."""
     sequence: list[str] = []
     broker = FakeBroker(sequence)
     database = tmp_path / "state.sqlite3"
@@ -3208,7 +3211,7 @@ def test_refuses_to_infer_actor_or_open_authority_for_a_legacy_publication(
             state._connection.execute(  # noqa: SLF001
                 "PRAGMA user_version"
             ).fetchone()[0]
-            == 9
+            == 10
         )
         installed_triggers = {
             row["name"]
@@ -3942,6 +3945,7 @@ def test_mode_escalation_reuses_the_exact_cached_assessment(
 def test_changed_edit_limit_retries_policy_rejection_without_rebilling(
     tmp_path: Path, runtime
 ) -> None:
+    """Reuse a paid assessment when changed policy permits a previously rejected patch."""
     _base, _head, checkout, provider, broker, _sequence = runtime
     driver = FakeCodexDriver()
     config = _config(GuardianMode.APPLY_OWNED_TRANSLATIONS)
@@ -3949,6 +3953,7 @@ def test_changed_edit_limit_retries_policy_rejection_without_rebilling(
     with GuardianState(tmp_path / "state.sqlite3") as state:
 
         def poll(settings):
+            """Run the same retained evidence under a supplied policy configuration."""
             return _controller(
                 tmp_path=tmp_path,
                 state=state,
@@ -4133,6 +4138,7 @@ def test_prepare_validates_in_ephemeral_checkout_without_remote_writes(
 def test_apply_signs_then_reverifies_immediately_before_normal_publish_and_reply(
     tmp_path: Path, runtime
 ) -> None:
+    """Bind signing, publication, and reply to their independent authority checks."""
     _base, _head, checkout, provider, broker, sequence = runtime
     driver = FakeCodexDriver()
     with GuardianState(tmp_path / "state.sqlite3") as state:
@@ -4565,6 +4571,7 @@ def test_recovery_never_replies_after_trusted_feedback_authority_changes(
     tmp_path: Path,
     runtime,
 ) -> None:
+    """Preserve the published result while suppressing a now-unauthorized reply."""
     _base, _head, checkout, provider, broker, _sequence = runtime
     broker.reply_error = RuntimeError("connection dropped after publication")
     with GuardianState(tmp_path / "state.sqlite3") as state:
@@ -4639,6 +4646,45 @@ def test_recovery_never_replies_after_trusted_feedback_authority_changes(
 
         assert len(broker.reply_calls) == replies_before_recovery
         assert state.pending_publications() == ()
+        assert state.get_run(pending.run_id).status == "completed"
+        assert state.publication_reply_terminal_reason(pending.publication_key) == (
+            "trusted_feedback_changed"
+        )
+
+
+def test_feedback_edit_after_push_completes_commit_without_claiming_reply(
+    tmp_path: Path, runtime,
+) -> None:
+    """A bot acknowledgement race must not turn an applied commit into failed work."""
+    _base, _head, checkout, provider, broker, _sequence = runtime
+    original_reply = broker.post_commit_reply
+
+    def change_feedback_before_reply(**kwargs):
+        """Simulate a reviewer acknowledgement arriving after the signed push."""
+        snapshot = provider.snapshots[0]
+        provider.snapshots = (replace(
+            snapshot,
+            feedback=(replace(snapshot.feedback[0], body="Fixed, thank you."),),
+        ),)
+        return original_reply(**kwargs)
+
+    broker.post_commit_reply = change_feedback_before_reply
+    with GuardianState(tmp_path / "state.sqlite3") as state:
+        outcome = _controller(
+            tmp_path=tmp_path, state=state,
+            config=_config(GuardianMode.APPLY_OWNED_TRANSLATIONS),
+            checkout=checkout, provider=provider,
+            driver=FakeCodexDriver(), broker=broker,
+        ).poll_once()
+        assert outcome.runs_failed == 0
+        assert outcome.applied_commits == (COMMIT_SHA,)
+        assert state.pending_publications() == ()
+        assert state._connection.execute(
+            "SELECT COUNT(*) FROM publication_events WHERE phase='replied'"
+        ).fetchone()[0] == 0
+        assert state._connection.execute(
+            "SELECT reason FROM publication_reply_terminal_events"
+        ).fetchone()[0] == "trusted_feedback_changed"
 
 
 def test_recovery_abandons_publication_when_the_base_revision_moved(
@@ -7406,6 +7452,7 @@ def test_open_pull_processing_queries_only_its_pending_feedback_workset(
     runtime,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Avoid cross-PR pending-work scans while processing an exact pull."""
     _base, _head, checkout, provider, broker, _sequence = runtime
     original = GuardianState.pending_event_revisions
     calls: list[int | None] = []
@@ -7420,6 +7467,7 @@ def test_open_pull_processing_queries_only_its_pending_feedback_workset(
         policy_digest: str | None = None,
         limit: int = 500,
     ):
+        """Record the exact PR boundary used for pending-feedback selection."""
         calls.append(pr_number)
         if repository is not None and pr_number is None:
             raise AssertionError("repository-wide pending feedback was loaded")

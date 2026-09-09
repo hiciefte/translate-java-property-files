@@ -457,6 +457,7 @@ class RemediationGitHubBroker:
         self,
         client: httpx.Client,
     ) -> tuple[int, str]:
+        """Return immutable actor authority independently of its mutable login."""
         actor_id, actor_type, _login = self._authenticated_actor_identity(client)
         return actor_id, actor_type
 
@@ -470,6 +471,7 @@ class RemediationGitHubBroker:
         self,
         client: httpx.Client,
     ) -> tuple[int, str, str]:
+        """Validate the pinned credential actor and retain its current login."""
         payload = _mapping(
             self._request(client, "GET", "/user"),
             label="authenticated actor",

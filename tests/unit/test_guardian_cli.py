@@ -1480,6 +1480,7 @@ def test_ssh_signing_probe_uses_frozen_key_and_agent_only_for_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Confine signing material to the probe commit and approved snapshot path."""
     fingerprint = "SHA256:" + "A" * 43
     calls: list[tuple[list[str], dict[str, str]]] = []
     captured_snapshot: dict[str, object] = {}
@@ -2171,6 +2172,7 @@ def test_status_summarizes_audit_metadata_without_raw_bodies_or_messages(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Keep human-readable status useful without exposing stored review text."""
     config_path = _init_config(tmp_path)
     capsys.readouterr()
     state_path = cli.guardian_state_path(config_path)
@@ -2236,6 +2238,7 @@ def test_status_summarizes_audit_metadata_without_raw_bodies_or_messages(
 
 
 def test_status_distinguishes_last_successful_poll_from_later_failure(tmp_path, capsys):
+    """Do not let a later failed attempt replace the successful-poll timestamp."""
     config_path = _init_config(tmp_path)
     capsys.readouterr()
     with GuardianState(cli.guardian_state_path(config_path)) as state:

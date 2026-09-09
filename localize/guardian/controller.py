@@ -114,6 +114,12 @@ from localize.localization_profiles import (
 
 
 _UTC = timezone.utc
+
+
+class _PublishedFeedbackChanged(PreventionSourceAuthorityError):
+    """The exact published PR is still authorized, but its review text changed."""
+
+
 _SUPPORTED_CHANGED_FILE_STATUSES = frozenset({"added", "modified"})
 _ASSESSMENT_PROMPT = (
     "Read INSTRUCTIONS.md and the complete sanitized evidence bundle. "
@@ -791,6 +797,7 @@ def _exact_revisions(
     *,
     github_host: str,
 ) -> tuple[HistoricalRevision, ExactRevision]:
+    """Pin a read-only historical base and a live-authorized writable head."""
     pull = snapshot.pull_request
     base_owner, base_name = _split_repository(policy.base_repo)
     head_owner, head_name = _split_repository(pull.head_repository)
@@ -3012,6 +3019,17 @@ class GuardianController:
             and current.base_sha == source.base_sha
         )
         if not (same_original_authority or same_feedback_after_guardian_push):
+            if (
+                expected_head != source.head_sha
+                and current.repository == source.repository
+                and current.repository_id == source.repository_id
+                and current.pull_id == source.pull_id
+                and current.pr_number == source.pr_number
+                and current.base_sha == source.base_sha
+            ):
+                raise _PublishedFeedbackChanged(
+                    "Trusted feedback changed after the confirmed Guardian push."
+                )
             raise PreventionSourceAuthorityError(
                 "The open prevention source changed after assessment."
             )
@@ -5436,6 +5454,15 @@ class GuardianController:
                     require_live_lease=lambda: self._require_live_lease(lease_owner),
                     expected_current_head_sha=publication.commit_sha,
                 )
+            except _PublishedFeedbackChanged:
+                self._require_live_lease(lease_owner)
+                self.state.finalize_publication_reply_terminal(
+                    publication_key=publication.publication_key,
+                    reason="trusted_feedback_changed",
+                    summary="Recovered published correction; changed feedback suppressed reply.",
+                    occurred_at=observed_at,
+                )
+                continue
             except PreventionSourceAuthorityError:
                 abandon("trusted_feedback_changed_before_reply")
                 continue
@@ -5500,6 +5527,7 @@ class GuardianController:
         lease_owner: str,
         outcome: _PollAccumulator,
     ) -> None:
+        """Authorize and process one exact PR under the shared poll lease."""
         self._require_live_lease(lease_owner)
         base_revision, head_revision = _exact_revisions(
             policy,
@@ -5986,6 +6014,7 @@ class GuardianController:
         lease_owner: str,
         outcome: _PollAccumulator,
     ) -> None:
+        """Assess trusted feedback and apply only policy-validated replacements."""
         events = tuple(event for event, _revision in actionable)
         revisions = tuple(revision for _event, revision in actionable)
         event_locales = {event.locale for event in events}
@@ -6405,6 +6434,7 @@ class GuardianController:
         lease_owner: str,
         observed_at: datetime | None = None,
     ) -> str:
+        """Publish signed edits and separately account for the authorized status reply."""
         if (
             self.write_broker_factory is None
         ):  # Constructor enforces this mode boundary.
@@ -6640,16 +6670,26 @@ class GuardianController:
             )
 
         self._require_live_lease(lease_owner)
-        broker.post_commit_reply(
-            pull_number=snapshot.pull_request.number,
-            expected_head_sha=publication.commit_sha,
-            expected_base_sha=snapshot.pull_request.base_sha,
-            commit_sha=publication.commit_sha,
-            action_id=publication_key,
-            event_revision_id=str(marker_revision),
-            expected_actor=publication_actor,
-            before_create=revalidate_reply_authority,
-        )
+        try:
+            broker.post_commit_reply(
+                pull_number=snapshot.pull_request.number,
+                expected_head_sha=publication.commit_sha,
+                expected_base_sha=snapshot.pull_request.base_sha,
+                commit_sha=publication.commit_sha,
+                action_id=publication_key,
+                event_revision_id=str(marker_revision),
+                expected_actor=publication_actor,
+                before_create=revalidate_reply_authority,
+            )
+        except _PublishedFeedbackChanged:
+            self._require_live_lease(lease_owner)
+            self.state.finalize_publication_reply_terminal(
+                publication_key=publication_key,
+                reason="trusted_feedback_changed",
+                summary="Published correction; changed feedback suppressed reply.",
+                occurred_at=publication_time,
+            )
+            return publication.commit_sha
         self._require_live_lease(lease_owner)
         self.state.finalize_replied_publication(
             publication_key=publication_key,

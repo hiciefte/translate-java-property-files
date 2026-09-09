@@ -1210,6 +1210,7 @@ def _build_controller(
     )
 
     def checkout_factory(revision: ExactRevision | HistoricalRevision):
+        """Keep historical bases read-only and signing authority scoped to live heads."""
         if isinstance(revision, HistoricalRevision):
             return create_historical_checkout(revision)
         checkout_kwargs: dict[str, Any] = {
