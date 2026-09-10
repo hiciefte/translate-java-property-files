@@ -108,6 +108,37 @@ fails closed and is reconsidered on a later run. The separate, opt-in prevention
 author may change executable pipeline code only within its explicit code/test
 allowlists and the additional controls described below.
 
+Oversized open-PR correction proposals are applied in bounded batches, never by
+raising `max_value_edits_per_run`. Each run publishes at most that many eligible
+value edits; a later poll reassesses the remainder against the fresh PR head.
+This also supports a single review comment requesting more edits than the cap.
+Partially corrected and wholly deferred comments remain pending, including after
+publication-reply recovery. Duplicate targets still reject the proposal before
+batch selection; all selected edits retain the normal validation and signing gates.
+A zero edit limit disables edits without repeatedly retrying unchanged policy.
+Progressive batching applies only to `apply-owned-translations` and
+`propose-prevention`. `prepare` retains no patch or changed head, so it keeps its
+single-pass bounded validation: an oversized proposal is rejected once under
+the current policy, not repeatedly prepared in identical partial batches.
+
+Poll outcomes and the latest Guardian health record expose `deferred_value_edits`,
+`deferred_feedback_items`, and `translation_policy_rejections` separately from
+failed runs. A successful bounded poll does not mean every correction is finished.
+Audit rows use `translation_batch_deferred` with the actual changed/deferred counts
+and published commit where applicable. State schema 11 prevents older runtimes
+from silently treating these skipped-but-pending rows as resolved. Back up the
+idle database before upgrading; do not downgrade a schema-11 database.
+
+Assessment explicitly considers recurring failures, including untranslated
+source-identical text and lost safety warnings, as well as individual corrections.
+Candidates must cite trusted feedback and describe a possible regression test;
+the prevention author must verify any hypothesized root cause against current
+pipeline code. Empty candidate lists require an explanation in the assessment
+summary. This is model assessment, not a guarantee that every systemic defect
+will be detected. Project-specific terminology remains distinct from generic
+pipeline fixes; legitimate source-identical brand or shared-language terms must
+not be changed merely to make them different.
+
 ### Reviewer authorization
 
 Trust is set per repository and locale. Put native human reviewers under

@@ -29,7 +29,9 @@ from localize.guardian.prevention import TestCommandResult, TestOutcome
 
 
 _UTC = timezone.utc
-_SCHEMA_VERSION = 10
+# Version 11 prevents older runtimes from mistaking skipped partial batches for
+# resolved feedback. The ledger shape is unchanged; its resolution semantics are not.
+_SCHEMA_VERSION = 11
 _SUPPORTED_SCHEMA_VERSIONS = frozenset(range(_SCHEMA_VERSION + 1))
 _TERMINAL_ACTION_STATUSES = frozenset({"completed", "skipped"})
 _ACTION_STATUSES = _TERMINAL_ACTION_STATUSES | {"failed", "pending"}
@@ -5767,6 +5769,8 @@ class GuardianState:
                 JOIN runs AS r ON r.run_id = a.run_id
                 WHERE a.event_revision_id = e.revision_id
                   AND a.status IN ({terminal_placeholders})
+                  AND json_extract(a.details_json, '$.outcome')
+                      IS NOT 'translation_batch_deferred'
                   {mode_filter}
                   {policy_filter}
             )"""
@@ -8832,7 +8836,7 @@ class GuardianState:
         details: Mapping[str, Any] | None = None,
         occurred_at: datetime | None = None,
     ) -> int:
-        """Append an auditable action; completed/skipped actions resolve a revision."""
+        """Append an action; batch deferrals remain pending despite skipped status."""
 
         if status not in _ACTION_STATUSES:
             raise ValueError(f"Unsupported action status {status!r}.")
@@ -9436,6 +9440,8 @@ class GuardianState:
                 JOIN runs AS r ON r.run_id = a.run_id
                 WHERE a.event_revision_id = e.revision_id
                   AND a.status IN ('completed', 'skipped')
+                  AND json_extract(a.details_json, '$.outcome')
+                      IS NOT 'translation_batch_deferred'
                   AND r.mode IN ({placeholders})
             )
             """,
@@ -10115,6 +10121,23 @@ class GuardianState:
         ).issubset(item[0] for item in canonical):
             raise RuntimeError("Publication completion plan is missing or malformed.")
         return canonical
+
+    def publication_deferred_revision_ids(
+        self, publication: PublicationRecord,
+    ) -> frozenset[int]:
+        """Keep partially corrected reviews actionable on the published head."""
+        exists = self._connection.execute(
+            "SELECT 1 FROM publication_completion_plan_items "
+            "WHERE publication_key = ? LIMIT 1", (publication.publication_key,),
+        ).fetchone()
+        if exists is None:
+            # Pre-plan legacy publications did not support partial batches.
+            return frozenset()
+        plan = self._publication_completion_plan_in_transaction(publication)
+        return frozenset(
+            revision_id for revision_id, _status, details in plan
+            if loads_bounded_json(details).get("outcome") == "translation_batch_deferred"
+        )
 
     def _record_publication_completion_plan_in_transaction(
         self,
