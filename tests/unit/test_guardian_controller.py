@@ -3918,6 +3918,7 @@ def test_edited_feedback_is_a_new_revision_and_reassessed(
 def test_mode_escalation_reuses_the_exact_cached_assessment(
     tmp_path: Path, runtime
 ) -> None:
+    """Reuse exact assessments when authorized mode escalation enables writes."""
     _base, _head, checkout, provider, broker, _sequence = runtime
     driver = FakeCodexDriver()
     with GuardianState(tmp_path / "state.sqlite3") as state:
@@ -4014,6 +4015,7 @@ def test_crash_after_model_success_reuses_durable_result_without_rebilling(
     tmp_path: Path,
     runtime,
 ) -> None:
+    """Recover a persisted model result without charging another session."""
     _base, _head, checkout, provider, broker, _sequence = runtime
     driver = FakeCodexDriver()
     with GuardianState(tmp_path / "state.sqlite3") as state:
@@ -4758,6 +4760,7 @@ def test_feedback_edit_after_push_completes_commit_without_claiming_reply(
 def test_recovery_abandons_publication_when_the_base_revision_moved(
     tmp_path: Path, runtime
 ) -> None:
+    """Keep a changed base fail-closed during publication recovery."""
     _base, _head, checkout, provider, broker, _sequence = runtime
     driver = FakeCodexDriver()
     broker.reply_error = RuntimeError("connection dropped after publication")

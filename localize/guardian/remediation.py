@@ -502,6 +502,7 @@ class RemediationGitHubBroker:
         *,
         repository_id: int,
     ) -> _RepositoryPublicationIdentity:
+        """Validate privacy and fork-network metadata used for publication authority."""
         private = repository.get("private")
         fork = repository.get("fork")
         if type(private) is not bool or type(fork) is not bool:

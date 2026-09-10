@@ -1392,6 +1392,7 @@ def test_signing_probe_signs_and_verifies_with_exact_key_in_isolated_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Verify signing uses only the configured identity in its isolated context."""
     gnupg_home = tmp_path / "gnupg"
     gnupg_home.mkdir()
     gnupg_home.chmod(0o700)
@@ -1549,6 +1550,7 @@ def test_ssh_signing_probe_rejects_wrong_verified_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Reject a successful signature made by an unexpected SSH identity."""
     fingerprint = "SHA256:" + "A" * 43
 
     @contextmanager
@@ -2262,6 +2264,7 @@ def test_status_is_read_only_when_no_state_database_exists(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Do not create state merely to report that Guardian has not run."""
     config_path = _init_config(tmp_path)
     capsys.readouterr()
     state_path = cli.guardian_state_path(config_path)

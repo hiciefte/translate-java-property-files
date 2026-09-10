@@ -656,6 +656,7 @@ class GuardianStateStatus:
 
 
 def _now() -> datetime:
+    """Return an aware UTC timestamp for audit operations."""
     return datetime.now(_UTC)
 
 
@@ -1704,6 +1705,7 @@ class GuardianState:
         self.close()
 
     def close(self) -> None:
+        """Release this audit database connection."""
         self._connection.close()
 
     def _initialize_schema(self, *, previous_version: int) -> None:
