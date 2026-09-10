@@ -327,7 +327,9 @@ class CheckoutFactory(Protocol):
 
     def __call__(
         self, revision: ExactRevision | HistoricalRevision
-    ) -> ContextManager[GuardianWorkspace | HistoricalWorkspace]: ...
+    ) -> ContextManager[GuardianWorkspace | HistoricalWorkspace]:
+        """Materialize a snapshot with the authority carried by its revision type."""
+        ...
 
 
 class HistoricalSnapshotProvider(Protocol):
@@ -3089,6 +3091,19 @@ class GuardianController:
             final_fresh.pull_request.head_sha != expected_head
             or final_current != current
         ):
+            if (
+                expected_head != source.head_sha
+                and final_fresh.pull_request.head_sha == expected_head
+                and final_current.repository == source.repository
+                and final_current.repository_id == source.repository_id
+                and final_current.pull_id == source.pull_id
+                and final_current.pr_number == source.pr_number
+                and final_current.base_sha == source.base_sha
+                and final_current.feedback_digest != current.feedback_digest
+            ):
+                raise _PublishedFeedbackChanged(
+                    "Trusted feedback changed during final publication validation."
+                )
             raise PreventionSourceAuthorityError(
                 "The open prevention source changed during authority validation."
             )
@@ -4162,6 +4177,7 @@ class GuardianController:
         outcome: _PollAccumulator,
         require_current_base_unchanged: Callable[[], None],
     ) -> _HistoricalAssessment:
+        """Assess closed-PR evidence only against current authorized locale targets."""
         assert self.historical_checkout_factory is not None
         historical_head = intake.historical_head
         self._require_live_lease(lease_owner)
@@ -5301,6 +5317,7 @@ class GuardianController:
             }
 
             def abandon(reason: str) -> None:
+                """Retire a publication whose current PR authority no longer permits recovery."""
                 self._require_live_lease(lease_owner)
                 self.state.finalize_abandoned_publication(
                     publication_key=publication.publication_key,
@@ -5473,6 +5490,7 @@ class GuardianController:
             broker = self.write_broker_factory(policy)
 
             def revalidate_reply_authority() -> None:
+                """Recheck exact PR and feedback authority immediately before a status reply."""
                 self._require_live_lease(lease_owner)
                 if remediation_draft is not None:
                     assert self.remediation_runner is not None
@@ -5504,16 +5522,26 @@ class GuardianController:
                 )
 
             self._require_live_lease(lease_owner)
-            broker.post_commit_reply(
-                pull_number=publication.pr_number,
-                expected_head_sha=publication.commit_sha,
-                expected_base_sha=publication.base_sha,
-                commit_sha=publication.commit_sha,
-                action_id=publication.publication_key,
-                event_revision_id=str(min(publication.event_revision_ids)),
-                expected_actor=publication_actor,
-                before_create=revalidate_reply_authority,
-            )
+            try:
+                broker.post_commit_reply(
+                    pull_number=publication.pr_number,
+                    expected_head_sha=publication.commit_sha,
+                    expected_base_sha=publication.base_sha,
+                    commit_sha=publication.commit_sha,
+                    action_id=publication.publication_key,
+                    event_revision_id=str(min(publication.event_revision_ids)),
+                    expected_actor=publication_actor,
+                    before_create=revalidate_reply_authority,
+                )
+            except _PublishedFeedbackChanged:
+                self._require_live_lease(lease_owner)
+                self.state.finalize_publication_reply_terminal(
+                    publication_key=publication.publication_key,
+                    reason="trusted_feedback_changed",
+                    summary="Recovered published correction; changed feedback suppressed reply.",
+                    occurred_at=observed_at,
+                )
+                continue
             self._require_live_lease(lease_owner)
             self.state.finalize_replied_publication(
                 publication_key=publication.publication_key,
@@ -6598,6 +6626,7 @@ class GuardianController:
         )
 
         def revalidate_before_push() -> None:
+            """Recheck source authority immediately before the leased branch update."""
             self._require_live_lease(lease_owner)
             broker.verify_pull(
                 pull_number=snapshot.pull_request.number,
@@ -6654,6 +6683,7 @@ class GuardianController:
         marker_revision = min(revision.revision_id for _event, revision in selected)
 
         def revalidate_reply_authority() -> None:
+            """Recheck exact PR and feedback authority immediately before a status reply."""
             if remediation_draft is not None:
                 assert self.remediation_runner is not None
                 self.remediation_runner.revalidate_successor_pull(

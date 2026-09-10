@@ -4328,6 +4328,7 @@ class PreventionCoordinator:
                     )
 
                     def require_sources() -> None:
+                        """Reauthenticate the exact open or historical evidence before mutation."""
                         if open_source is not None:
                             if require_exact_open_source_authority is None:
                                 raise PreventionSourceAuthorityError(
@@ -4355,6 +4356,7 @@ class PreventionCoordinator:
                     slot_consumed = False
 
                     def consume_publication_slot() -> None:
+                        """Charge the shared publication slot before a potentially successful remote write."""
                         nonlocal slot_consumed
                         require_current_base_unchanged()
                         require_sources()
@@ -4373,6 +4375,7 @@ class PreventionCoordinator:
                         slot_consumed = True
 
                     def before_push() -> None:
+                        """Revalidate publication capacity and exact authority at the push boundary."""
                         _require_live_prevention_lease(require_live_lease)
                         require_current_base_unchanged()
                         self._require_remaining()
@@ -4384,6 +4387,7 @@ class PreventionCoordinator:
                         consume_publication_slot()
 
                     def before_post() -> None:
+                        """Revalidate source authority immediately before opening the candidate PR."""
                         require_sources()
                         _require_live_prevention_lease(require_live_lease)
                         self._require_pending_candidate(draft_key)

@@ -1403,6 +1403,7 @@ def test_signing_probe_signs_and_verifies_with_exact_key_in_isolated_context(
     fingerprint = "A" * 40
 
     def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Record the signing probe invocation and return its configured test result."""
         calls.append((argv, dict(kwargs["env"])))  # type: ignore[arg-type]
         stderr = f"[GNUPG:] VALIDSIG {fingerprint}\n" if "verify-commit" in argv else ""
         return subprocess.CompletedProcess(argv, 0, "", stderr)
@@ -1487,6 +1488,7 @@ def test_ssh_signing_probe_uses_frozen_key_and_agent_only_for_commit(
 
     @contextmanager
     def fake_snapshot(**kwargs: object):
+        """Yield frozen SSH signing material without exposing a real private key."""
         captured_snapshot.update(kwargs)
         root = Path(kwargs["temporary_root"])
         yield SSHSigningMaterial(

@@ -1662,10 +1662,12 @@ def test_historical_remediation_repository_order_rotates_after_last_publisher() 
 
 class FakeBroker:
     def __init__(self, sequence: list[str]) -> None:
+        """Record injected test dependencies without accessing external services."""
         self.sequence = sequence
         self.verify_calls = []
         self.verify_error_on_call: int | None = None
         self.reply_calls = []
+        self.posted_replies = []
         self.reply_error: Exception | None = None
 
     def verify_pull(self, **kwargs):
@@ -1676,6 +1678,7 @@ class FakeBroker:
         return _pull()
 
     def post_commit_reply(self, **kwargs):
+        """Separate attempted replies from posts that pass the final authority callback."""
         self.sequence.append("reply")
         self.reply_calls.append(kwargs)
         if self.reply_error is not None:
@@ -1683,6 +1686,7 @@ class FakeBroker:
         kwargs["before_create"]()
         assert kwargs["expected_head_sha"] == COMMIT_SHA
         assert kwargs["commit_sha"] == COMMIT_SHA
+        self.posted_replies.append(kwargs)
         return object()
 
 
@@ -4602,8 +4606,10 @@ def test_repository_route_alias_preserves_open_authority_hashes() -> None:
 
 
 @pytest.mark.parametrize("race", ("edited", "deleted", "added"))
+@pytest.mark.parametrize("change_on_read", [1, 2, 3, 4])
 def test_recovery_never_replies_after_trusted_feedback_authority_changes(
     race: str,
+    change_on_read: int,
     tmp_path: Path,
     runtime,
 ) -> None:
@@ -4655,7 +4661,21 @@ def test_recovery_never_replies_after_trusted_feedback_authority_changes(
             ),
             feedback=tuple(feedback),
         )
+        original_feedback = provider.snapshots[0].feedback
         provider.snapshots = (raced,)
+        if change_on_read > 1:
+            provider.snapshots = (replace(raced, feedback=original_feedback),)
+            revalidate = provider.revalidate_open_pull_request
+            reads = []
+
+            def change_second_read(*args):
+                """Race the final authority read without changing the pinned PR."""
+                reads.append(None)
+                if len(reads) == change_on_read:
+                    provider.snapshots = (raced,)
+                return revalidate(*args)
+
+            provider.revalidate_open_pull_request = change_second_read
         replies_before_recovery = len(broker.reply_calls)
         broker.reply_error = None
         assert state.acquire_lease(
@@ -4680,7 +4700,8 @@ def test_recovery_never_replies_after_trusted_feedback_authority_changes(
             lease_owner="test-owner",
         )
 
-        assert len(broker.reply_calls) == replies_before_recovery
+        assert len(broker.reply_calls) == replies_before_recovery + int(change_on_read >= 3)
+        assert broker.posted_replies == []
         assert state.pending_publications() == ()
         assert state.get_run(pending.run_id).status == "completed"
         assert state.publication_reply_terminal_reason(pending.publication_key) == (
@@ -4688,8 +4709,9 @@ def test_recovery_never_replies_after_trusted_feedback_authority_changes(
         )
 
 
+@pytest.mark.parametrize("change_on_read", [1, 2])
 def test_feedback_edit_after_push_completes_commit_without_claiming_reply(
-    tmp_path: Path, runtime,
+    tmp_path: Path, runtime, change_on_read: int,
 ) -> None:
     """A bot acknowledgement race must not turn an applied commit into failed work."""
     _base, _head, checkout, provider, broker, _sequence = runtime
@@ -4697,11 +4719,21 @@ def test_feedback_edit_after_push_completes_commit_without_claiming_reply(
 
     def change_feedback_before_reply(**kwargs):
         """Simulate a reviewer acknowledgement arriving after the signed push."""
-        snapshot = provider.snapshots[0]
-        provider.snapshots = (replace(
-            snapshot,
-            feedback=(replace(snapshot.feedback[0], body="Fixed, thank you."),),
-        ),)
+        revalidate = provider.revalidate_open_pull_request
+        reads = []
+
+        def changed_read(*args):
+            """Change only the review body on the selected post-push read."""
+            reads.append(None)
+            if len(reads) == change_on_read:
+                snapshot = provider.snapshots[0]
+                provider.snapshots = (replace(
+                    snapshot,
+                    feedback=(replace(snapshot.feedback[0], body="Fixed, thank you."),),
+                ),)
+            return revalidate(*args)
+
+        provider.revalidate_open_pull_request = changed_read
         return original_reply(**kwargs)
 
     broker.post_commit_reply = change_feedback_before_reply

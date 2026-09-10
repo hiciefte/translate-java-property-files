@@ -740,6 +740,7 @@ def test_build_controller_wires_exact_runtime_policy_and_credentials(
     captured: dict[str, object] = {}
 
     def git_environment() -> dict[str, str]:
+        """Yield the isolated Git credential environment used by the runtime fixture."""
         return {"GIT_ASKPASS": "/private/helper"}
 
     github_credential = SimpleNamespace(argv=config.runtime.github_token_command)
@@ -747,11 +748,13 @@ def test_build_controller_wires_exact_runtime_policy_and_credentials(
 
     class FakeCodexDriver:
         def __init__(self, **kwargs: object) -> None:
+            """Record injected test dependencies without accessing external services."""
             captured["codex"] = kwargs
             self.model = str(kwargs["model"])
 
     class FakeController:
         def __init__(self, **kwargs: object) -> None:
+            """Record injected test dependencies without accessing external services."""
             captured["controller"] = kwargs
 
     monkeypatch.setattr(runtime, "CodexDriver", FakeCodexDriver)
@@ -763,6 +766,7 @@ def test_build_controller_wires_exact_runtime_policy_and_credentials(
     )
 
     def resolve_model_key(helper: object) -> str:
+        """Resolve the test model key through the injected credential provider."""
         captured["model_helper"] = helper
         return "model-secret"
 

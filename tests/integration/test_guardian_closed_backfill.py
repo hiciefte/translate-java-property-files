@@ -55,6 +55,7 @@ def test_open_phase_precedes_observe_history_using_current_values_without_writes
 
     class OrderedOpenProvider(FakeSnapshotProvider):
         def __call__(self, policy, previous_feedback):
+            """Record open discovery before delegating to the snapshot fixture."""
             sequence.append("open-discovery")
             return super().__call__(policy, previous_feedback)
 
@@ -89,6 +90,7 @@ def test_open_phase_precedes_observe_history_using_current_values_without_writes
     evidence: list[tuple[str, str, str]] = []
 
     def evidence_spy(**kwargs):
+        """Capture source and target evidence while retaining the real bundle builder."""
         bundle = build_evidence_bundle(**kwargs)
         localization = json.loads(
             (bundle.root / "localization.json").read_text(encoding="utf-8")

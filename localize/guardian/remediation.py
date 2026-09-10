@@ -2236,6 +2236,7 @@ class RemediationCoordinator:
         repository_identity = (policy.base_repo, policy.base_repo_id)
 
         def publication_capacity_available() -> bool:
+            """Check the bounded creation allowance without consuming a slot."""
             return bool(
                 self._publication_slots_used < self.max_drafts
                 and repository_identity not in self._publication_repositories_used
@@ -2323,6 +2324,7 @@ class RemediationCoordinator:
         require_live_lease()
 
         def require_current_evidence() -> None:
+            """Reauthenticate current source evidence before publishing remediation."""
             current_hash = self.state.validate_current_historical_remediation_evidence(
                 source_pulls=pulls,
                 event_revision_ids=revision_ids,
@@ -2523,6 +2525,7 @@ class RemediationCoordinator:
                         consumed = [False]
 
                         def before_recovered_create() -> None:
+                            """Revalidate recovered candidate authority before creating its missing PR."""
                             require_live_lease()
                             require_no_open_translation_overlap(
                                 changed_paths,
@@ -2675,6 +2678,7 @@ class RemediationCoordinator:
         consumed = [False]
 
         def consume_slot() -> None:
+            """Consume capacity once before a remote operation that may succeed."""
             self._consume_slot(
                 repository_identity=repository_identity,
                 require_live_lease=require_live_lease,
@@ -2682,6 +2686,7 @@ class RemediationCoordinator:
             )
 
         def before_push() -> None:
+            """Revalidate publication capacity and exact authority at the push boundary."""
             require_live_lease()
             require_no_open_translation_overlap(changed_paths, None)
             require_live_lease()
@@ -2702,6 +2707,7 @@ class RemediationCoordinator:
             require_exact_sources_still_closed(pulls, revision_ids)
 
         def before_create() -> None:
+            """Recheck source and publication authority immediately before PR creation."""
             require_live_lease()
             require_no_open_translation_overlap(changed_paths, None)
             require_live_lease()

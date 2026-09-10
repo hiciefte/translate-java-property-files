@@ -284,6 +284,7 @@ def test_prevention_broker_binds_credential_to_publication_actor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
+        """Serve pinned GitHub actor and repository responses for the broker test."""
         if request.url.path == "/user":
             return _response(request, authenticated_actor)
         raise AssertionError("repository authority must not be read for a wrong actor")
@@ -594,6 +595,7 @@ def test_prevention_author_uses_workspace_write_stdin_and_scrubs_write_credentia
     observed: dict[str, object] = {}
 
     def fake_run(argv, **kwargs):
+        """Return controlled subprocess output without executing external commands."""
         observed["argv"] = list(argv)
         observed["kwargs"] = kwargs
         observed["launch_environment"] = dict(kwargs["env"])

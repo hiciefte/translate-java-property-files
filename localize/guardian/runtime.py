@@ -1244,6 +1244,7 @@ def _build_controller(
     )
 
     def create_historical_checkout(revision: HistoricalRevision):
+        """Materialize a pinned historical snapshot without writable-head authority."""
         checkout_kwargs: dict[str, Any] = {
             "credential_environment": git_environment,
             "git_binary": config.runtime.git_executable,
@@ -1257,6 +1258,7 @@ def _build_controller(
     )
 
     def model_credential_provider() -> str | None:
+        """Resolve model credentials only for the configured authentication mode."""
         if config.runtime.codex_auth_mode is CodexAuthMode.CHATGPT:
             return None
         if model_credential is None:
@@ -1278,6 +1280,7 @@ def _build_controller(
     if config.mode in _WRITE_MODES:
 
         def create_write_broker(policy: RepositoryPolicy) -> GitHubWriteBroker:
+            """Construct the narrowly scoped broker for owned translation PR writes."""
             if policy.publication_actor is None:  # pragma: no cover - config invariant
                 raise GuardianRuntimeError(
                     "Write-capable repository lacks a publication actor."
@@ -1299,6 +1302,7 @@ def _build_controller(
         def create_prevention_broker(
             policy: PreventionPolicy,
         ) -> PreventionGitHubBroker:
+            """Construct the broker bound to the configured prevention repositories."""
             return PreventionGitHubBroker(
                 policy=policy,
                 credential=github_credential,
@@ -1349,6 +1353,7 @@ def _build_controller(
         def create_remediation_broker(
             policy: RepositoryPolicy,
         ) -> RemediationGitHubBroker:
+            """Construct the broker bound to historical-remediation publication policy."""
             return RemediationGitHubBroker(
                 policy=policy,
                 credential=github_credential,

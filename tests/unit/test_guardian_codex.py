@@ -116,6 +116,7 @@ def test_codex_driver_uses_read_only_contract_and_scrubbed_environment(
     observed: dict[str, object] = {}
 
     def fake_run(argv, **kwargs):
+        """Return controlled subprocess output without executing external commands."""
         observed["argv"] = list(argv)
         observed["kwargs"] = kwargs
         observed["home_mode"] = Path(kwargs["env"]["HOME"]).stat().st_mode & 0o777
@@ -458,6 +459,7 @@ def test_codex_driver_rejects_recurrence_worksets_above_schema_bound(
         payload["recurrence_candidates"] = [candidate]
 
     def fake_run(argv, **_kwargs):
+        """Return controlled subprocess output without executing external commands."""
         _write_result(list(argv), payload)
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
@@ -494,6 +496,7 @@ def test_codex_driver_accepts_exact_recurrence_schema_bound(tmp_path, monkeypatc
     ]
 
     def fake_run(argv, **_kwargs):
+        """Return controlled subprocess output without executing external commands."""
         _write_result(list(argv), payload)
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
