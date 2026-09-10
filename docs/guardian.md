@@ -283,8 +283,8 @@ supports one. It is invoked as an argv array with `shell=False`, a timeout, and
 redacted errors. The token is retained only in memory for the bounded Guardian
 operation; temporary Git askpass material is removed afterward. Write scopes
 are used only for an authorized translation branch update and status reply, an
-explicitly configured prevention branch and draft PR, or an explicitly
-configured current-base remediation branch and draft PR. Historical remediation
+explicitly configured prevention branch and PR, or an explicitly
+configured current-base remediation branch and PR. Historical remediation
 publication is available in `apply-owned-translations` or
 `propose-prevention`; prevention publication is available only in
 `propose-prevention`.
@@ -598,11 +598,11 @@ batch; conflicting proposals for the same target, ambiguous evidence, and
 other unsafe cases remain deferred.
 
 An authorized, still-valid finding that is uncovered and selected for
-remediation is published only through a new bot-marked draft correction PR
-against the configured current base. That draft contains a signed commit and
+remediation is published only through a new bot-marked, ready-for-review correction PR
+against the configured current base. That PR contains a signed commit and
 links to the closed source PR and validated feedback. The Guardian leaves the
 historical PR and its branch untouched. This translation correction is separate
-from any optional pipeline-prevention draft.
+from any optional pipeline-prevention proposal.
 
 `observe` and `prepare` perform no GitHub writes for closed-PR work. `observe`
 records the bounded assessment and completion checkpoint. `prepare` may also
@@ -652,7 +652,7 @@ rewritten draft text, or a different allowlisted author fails closed.
 
 For an actionable batch, the Guardian revalidates the exact current target base
 and push repository, creates a signed commit on the deterministic new branch,
-and opens a new bot-marked draft pull request for human review. The exact
+and opens a new bot-marked pull request ready for human and automated review. The exact
 `[Localize Guardian bot]` title prefix and body text identify it as
 bot-generated; this marker is not a GitHub label. Before creation it performs a
 coherent sequential pass: after local preparation it rechecks the destination
@@ -762,8 +762,8 @@ permit that executable, the Guardian's Python used by the probe, their required
 runtime libraries, and the disposable workspace—without granting broader host
 or network access.
 
-The Guardian pushes only the bounded signed branch needed to open a draft pull
-request for human review; it does not merge or deploy that draft. Immediately
+The Guardian pushes only the bounded signed branch needed to open a pull
+request ready for review; it does not merge or deploy that proposal. Immediately
 before a branch push or draft-creation POST, it checks the live poll lease and
 consumes a non-refundable per-poll publication slot. A lost response therefore
 does not make that slot available to another prevention mutation. Runtime
@@ -815,9 +815,9 @@ in the consuming project's own config or glossary.
 
 Prevention recovery also requires the canonical GitHub URL; exact generated
 title and full body including its marker; exact head, base, and candidate; and
-`maintainer_can_modify: false`. Only an untouched open draft, its one-way
-draft-to-ready transition, and a terminal close-unmerged from either draft or
-ready state are accepted. A reopen, redraft, rewritten metadata, or over-bound
+`maintainer_can_modify: false`. Ready-created PRs, untouched legacy open drafts,
+their one-way draft-to-ready transition, and a terminal close-unmerged from either
+draft or ready state are accepted. A reopen, redraft, rewritten metadata, or over-bound
 event history fails closed and is never adopted as Guardian-owned state.
 
 ## Durable state, budgets, and recovery

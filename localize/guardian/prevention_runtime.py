@@ -797,7 +797,7 @@ def _network_canaries() -> Iterator[tuple[str, int, str]]:
 
 
 class PreventionGitHubBroker:
-    """Revalidate exact repositories and create draft PRs, never merges."""
+    """Revalidate exact repositories and create review PRs, never merges."""
 
     def __init__(
         self,
@@ -1325,6 +1325,7 @@ class PreventionGitHubBroker:
         require_new_draft: bool,
         recovery_history: tuple[str, ...] | None,
     ) -> None:
+        """Require the requested creation state or an unmodified recoverable lifecycle."""
         state = pull.get("state")
         draft = pull.get("draft")
         if state not in {"open", "closed"} or type(draft) is not bool:

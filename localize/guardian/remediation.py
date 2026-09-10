@@ -973,6 +973,7 @@ class RemediationGitHubBroker:
         pull: RemediationDraftResult,
         history: tuple[str, ...],
     ) -> None:
+        """Accept ready creation or legacy drafts, retaining reopen and redraft vetoes."""
         state = "open"
         # Ready-created PRs have no ready_for_review event. Legacy drafts may
         # still be recovered, but a redraft or reopen remains a human veto.
@@ -1183,7 +1184,7 @@ class RemediationGitHubBroker:
         before_create: Callable[[], None],
         before_post: Callable[[], None],
     ) -> RemediationDraftResult:
-        """Recover an exact prior PR or create one new human-review draft."""
+        """Recover an exact prior PR or create one in the requested review state."""
 
         if not callable(before_create) or not callable(before_post):
             raise TypeError("draft publication guards must be callable")
