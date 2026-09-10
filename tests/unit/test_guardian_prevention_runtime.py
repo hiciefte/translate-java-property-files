@@ -556,6 +556,7 @@ def _recovery_broker(
     listed_pull: dict[str, object] | None = None,
     create_as_draft: bool = True,
 ) -> PreventionGitHubBroker:
+    """Mock exact remote PR metadata and paginated lifecycle recovery events."""
     pull_number = int((listed_pull or exact_pull)["number"])
     event_pages = event_pages or {1: []}
 
@@ -2046,6 +2047,7 @@ def test_github_broker_recovers_only_allowed_terminal_lifecycles(
     monkeypatch: pytest.MonkeyPatch,
     create_as_draft: bool,
 ) -> None:
+    """Recover only exact legacy-draft lifecycle states under either creation mode."""
     branch = "guardian/prevention-" + "1" * 64
     evidence_hash = "1" * 64
     marker = PreventionGitHubBroker._marker(evidence_hash, CANDIDATE_SHA)
@@ -2149,6 +2151,7 @@ def test_github_broker_rejects_modified_or_reopened_lifecycle(
     monkeypatch: pytest.MonkeyPatch,
     create_as_draft: bool,
 ) -> None:
+    """Reject redrafted, reopened, or merged prevention PRs in either mode."""
     branch = "guardian/prevention-" + "2" * 64
     evidence_hash = "2" * 64
     marker = PreventionGitHubBroker._marker(evidence_hash, CANDIDATE_SHA)

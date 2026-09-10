@@ -216,6 +216,7 @@ def _broker(
     deadline: PollDeadline | None = None,
     create_as_draft: bool = True,
 ) -> RemediationGitHubBroker:
+    """Construct a mock GitHub broker with explicit actor and publication state."""
     authenticated_actor = (
         {"login": "translator", "id": 7, "type": "User"} if actor is None else actor
     )
@@ -814,6 +815,7 @@ def test_find_draft_preserves_exact_remote_lifecycle(
     create_as_draft: bool,
     annotated: bool,
 ) -> None:
+    """Recover exact remediation lifecycle states with or without review notes."""
     policy = replace(
         _policy(),
         allowed_pr_authors=(TrustedActor("existing-pr-bot", 77, "Bot"),),

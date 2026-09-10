@@ -344,6 +344,7 @@ def test_guardian_guide_documents_untrusted_inputs_and_secret_brokerage():
 
 
 def test_guardian_guide_documents_audit_cost_retention_and_safe_prevention():
+    """Document audit retention, session accounting, and prevention authority."""
     guide = _guide_text()
     lowered = _normalized_guide()
 
@@ -392,6 +393,7 @@ def test_guardian_guide_documents_audit_cost_retention_and_safe_prevention():
 
 
 def test_guardian_guide_documents_bounded_closed_pr_history_without_legacy_writes():
+    """Distinguish bounded historical intake from new ready correction PRs."""
     guide = _guide_text()
     normalized = _normalized_guide()
 
@@ -460,6 +462,8 @@ def test_guardian_guide_documents_bounded_closed_pr_history_without_legacy_write
     assert "one remediation batch per repository per poll" in normalized
     assert "global per-poll cap" in normalized
     assert "new bot-marked pull request ready for human and automated review" in normalized
+    assert "bounded current-base correction prs ready for review" in normalized
+    assert "bounded current-base correction drafts" not in normalized
     assert "`[localize guardian bot]`" in normalized
     assert "title prefix and body text identify it as bot-generated" in normalized
     assert "signed commit" in normalized
