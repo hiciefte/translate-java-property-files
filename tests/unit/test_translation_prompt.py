@@ -5,6 +5,7 @@ from localize.translation_prompts import build_translation_system_prompt
 
 
 def test_translation_system_prompt_is_generic_without_project_context():
+    """Keep the default prompt independent of any specific product."""
     prompt = build_translation_system_prompt(
         target_language="German",
         style_rules_text="",
@@ -18,6 +19,7 @@ def test_translation_system_prompt_is_generic_without_project_context():
 
 
 def test_translation_system_prompt_includes_configured_project_context():
+    """Include product context only when the operator supplies it."""
     prompt = build_translation_system_prompt(
         target_language="German",
         style_rules_text="",
@@ -30,6 +32,7 @@ def test_translation_system_prompt_includes_configured_project_context():
 
 
 def test_translation_system_prompt_describes_prompt_only_glossary_as_lemmas():
+    """Allow grammatical inflection of prompt-only terminology guidance."""
     prompt = build_translation_system_prompt(
         target_language="Russian",
         style_rules_text="",
@@ -44,6 +47,7 @@ def test_translation_system_prompt_describes_prompt_only_glossary_as_lemmas():
 
 
 def test_translation_system_prompt_mentions_format_metadata():
+    """Tell the translator which localization format it must preserve."""
     prompt = build_translation_system_prompt(
         target_language="German",
         style_rules_text="",
@@ -84,6 +88,7 @@ def test_translation_system_prompt_requests_grammatical_number_agreement():
 
 
 def test_translation_system_prompt_requests_ui_label_cross_reference_consistency():
+    """Require named controls to match the existing localized UI labels."""
     prompt = build_translation_system_prompt(
         target_language="German",
         style_rules_text="",
@@ -101,6 +106,7 @@ def test_translation_system_prompt_requests_ui_label_cross_reference_consistency
 
 
 def test_translation_system_prompt_warns_against_compound_splitting():
+    """Preserve idiomatic compounds without blindly joining separate words."""
     prompt = build_translation_system_prompt(
         target_language="Norwegian",
         style_rules_text="",
@@ -114,3 +120,23 @@ def test_translation_system_prompt_warns_against_compound_splitting():
     assert "Adressenotat" in prompt
     assert "Adresse notat" in prompt
     assert "Do not mechanically join" in prompt
+
+
+def test_translation_system_prompt_warns_against_dangling_connective_fragments():
+    """Keep fragment guidance open-ended without product-specific instructions."""
+    prompt = build_translation_system_prompt(
+        target_language="Hindi",
+        style_rules_text="",
+        project_context="",
+        localization_format=JAVA_PROPERTIES_FORMAT,
+    )
+
+    # Fragment labels that end on a preposition/connective are completed by an
+    # element the UI appends after them; the model must not invent a closing
+    # referent that orphans that element (bisq-mobile#1822 hi connectedVia
+    # regressed "connected via" to "connected through it").
+    assert "Keep trailing connective fragments open-ended" in prompt
+    assert "connected via the following" in prompt
+    assert "do not invent a demonstrative or pronoun referent" in prompt
+    # Guidance must stay product-agnostic; no concrete product names leak in.
+    assert "Bisq" not in prompt
