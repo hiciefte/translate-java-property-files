@@ -61,7 +61,33 @@ def _event(**overrides) -> FeedbackEvent:
     return FeedbackEvent(**values)
 
 
+@pytest.mark.parametrize("diff_bytes", [3_500_000, 4 * 1024 * 1024])
+def test_default_evidence_limit_supports_large_polls_but_remains_bounded(
+    tmp_path, diff_bytes
+):
+    """Accept measured multi-locale evidence sizes, never unbounded input."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config = _write_project(repo)
+    destination = tmp_path / "evidence"
+    kwargs = dict(
+        destination=destination, repo_root=repo,
+        trusted_pipeline_config_path=config, repository="acme/widgets",
+        pr_number=12, head_sha="a" * 40, base_sha="b" * 40,
+        feedback=(_event(),), changed_paths=("l10n/messages_ru.properties",),
+        allowed_path_globs=("l10n/*.properties",), diff_text="x" * diff_bytes,
+    )
+    if diff_bytes < 4 * 1024 * 1024:
+        result = build_evidence_bundle(**kwargs)
+        assert result.root == destination.resolve()
+    else:
+        with pytest.raises(EvidenceError, match="size limit"):
+            build_evidence_bundle(**kwargs)
+        assert not destination.exists()
+
+
 def test_builds_minimal_machine_readable_bundle_with_untrusted_feedback(tmp_path):
+    """Keep review text explicitly untrusted within a minimal evidence bundle."""
     repo = tmp_path / "repo"
     repo.mkdir()
     config = _write_project(repo)
@@ -184,6 +210,7 @@ def test_glossary_evidence_keeps_path_and_size_boundaries(tmp_path, unsafe):
 def test_pipeline_config_bundle_digest_is_manifested_and_keys_the_evidence(
     tmp_path: Path,
 ) -> None:
+    """Bind the evidence identity to the trusted pipeline configuration bundle."""
     repo = tmp_path / "repo"
     repo.mkdir()
     config = _write_project(repo)

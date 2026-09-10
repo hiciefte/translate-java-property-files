@@ -527,6 +527,7 @@ def _split_nul_paths(output: str) -> tuple[str, ...]:
 
 
 def _porcelain_status(runner: _GitRunner) -> tuple[tuple[str, str], ...]:
+    """Decode NUL-delimited tracked, untracked, and ignored working-tree status."""
     output = runner.run(
         ("status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching")
     ).stdout
@@ -565,6 +566,7 @@ def _initialize_exact_checkout(runner: _GitRunner) -> None:
 
 
 def _validate_regular_tracked_file(root: Path, runner: _GitRunner, relative_path: str) -> None:
+    """Reject links and non-regular paths before accepting a tracked file."""
     current = root
     for index, component in enumerate(PurePosixPath(relative_path).parts):
         current = current / component

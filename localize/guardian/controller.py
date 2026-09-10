@@ -295,6 +295,7 @@ def _assessment_cache_key(
     reasoning_effort: str,
     prompt: str,
 ) -> str:
+    """Bind reusable assessments to exact evidence, model, prompt, and schema."""
     schema_hash = hashlib.sha256(RESULT_SCHEMA_PATH.read_bytes()).hexdigest()
     identity = json.dumps(
         {
@@ -843,6 +844,7 @@ def _canonical_digest_value(value: object) -> object:
 
 
 def _canonical_digest(value: object) -> str:
+    """Hash a deterministic encoding of the supported authority value types."""
     encoded = json.dumps(
         _canonical_digest_value(value),
         ensure_ascii=True,
@@ -1870,6 +1872,7 @@ def _eligible_replacements(
     minimum_confidence: float,
     excluded_feedback_ids: frozenset[str] = frozenset(),
 ) -> tuple[ProposedReplacement, ...]:
+    """Select non-excluded apply verdicts meeting both confidence thresholds."""
     return tuple(
         replacement
         for assessment in assessments

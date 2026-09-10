@@ -304,7 +304,7 @@ def build_evidence_bundle(
     changed_paths: Iterable[str],
     allowed_path_globs: Sequence[str],
     diff_text: str,
-    max_bytes: int = 2 * 1024 * 1024,
+    max_bytes: int = 4 * 1024 * 1024,
     trusted_config_root: Path | None = None,
     trusted_source_root: Path | None = None,
     expected_source_locale: str | None = None,

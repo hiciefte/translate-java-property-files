@@ -283,6 +283,7 @@ def test_prevention_broker_binds_credential_to_publication_actor(
     authenticated_actor: dict[str, object],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Reject publication credentials belonging to a different numeric actor."""
     def handler(request: httpx.Request) -> httpx.Response:
         """Serve pinned GitHub actor and repository responses for the broker test."""
         if request.url.path == "/user":

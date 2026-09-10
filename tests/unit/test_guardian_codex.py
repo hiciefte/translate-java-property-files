@@ -444,6 +444,7 @@ def test_codex_driver_rejects_recurrence_worksets_above_schema_bound(
     monkeypatch,
     oversized_field,
 ):
+    """Reject recurrence worksets exceeding the response schema bound."""
     evidence_dir = tmp_path / "evidence"
     evidence_dir.mkdir()
     payload = _valid_payload()
@@ -472,6 +473,7 @@ def test_codex_driver_rejects_recurrence_worksets_above_schema_bound(
 
 
 def test_codex_driver_accepts_exact_recurrence_schema_bound(tmp_path, monkeypatch):
+    """Accept a recurrence workset exactly at its schema limit."""
     evidence_dir = tmp_path / "evidence"
     evidence_dir.mkdir()
     payload = _valid_payload()
@@ -886,6 +888,7 @@ def test_codex_driver_never_treats_non_finite_usage_as_a_known_cost(
 
 
 def test_codex_driver_rejects_invalid_runtime_configuration(tmp_path):
+    """Reject invalid runtime options before invoking the model."""
     evidence_dir = tmp_path / "evidence"
     evidence_dir.mkdir()
 

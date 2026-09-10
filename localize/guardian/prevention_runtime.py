@@ -1008,6 +1008,7 @@ class PreventionGitHubBroker:
         full_name: str,
         repository_id: int,
     ) -> Mapping[str, object]:
+        """Fetch a repository only when both its name and numeric identity match."""
         payload = _mapping(
             self._request(client, "GET", f"/repos/{full_name}"),
             label="repository",
