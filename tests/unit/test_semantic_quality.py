@@ -155,6 +155,56 @@ def test_retained_source_word_allowlist_is_locale_scoped():
     assert "personal" in findings[0].reason
 
 
+def test_retained_source_words_use_language_allowlists_for_regional_locales():
+    changes = [
+        TranslationChange(
+            file="resources/mobile_ru_RU.properties",
+            locale_code="ru_RU",
+            key="mobile.offerbook.open",
+            source_value="Open Offerbook",
+            old_value="Открыть книгу предложений",
+            new_value="Открыть Offerbook",
+        ),
+        TranslationChange(
+            file="resources/mobile_vi_VN.properties",
+            locale_code="vi_VN",
+            key="mobile.offer.take",
+            source_value="Select take-offer",
+            old_value="Chọn đề nghị",
+            new_value="Chọn take-offer",
+        ),
+        TranslationChange(
+            file="resources/mobile_vi_VN.properties",
+            locale_code="vi_VN",
+            key="mobile.lightning",
+            source_value="Use Lightning",
+            old_value="Dùng Lightning",
+            new_value="Sử dụng Lightning",
+        ),
+        TranslationChange(
+            file="resources/mobile_vi_VN.properties",
+            locale_code="vi_VN",
+            key="mobile.personal",
+            source_value="Personal information",
+            old_value="Thông tin cá nhân",
+            new_value="Thông tin personal",
+        ),
+    ]
+
+    findings = evaluate_retained_source_words(
+        changes=changes,
+        brand_glossary=["Lightning"],
+        retained_source_word_allowlist={"vi": ["personal"]},
+    )
+
+    assert [finding.key for finding in findings] == [
+        "mobile.offerbook.open",
+        "mobile.offer.take",
+    ]
+    assert "Offerbook" in findings[0].reason
+    assert "take-offer" in findings[1].reason
+
+
 def test_semantic_warnings_do_not_block_unless_configured(tmp_path):
     repo_root = tmp_path
     input_folder = repo_root / "resources"
