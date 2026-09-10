@@ -12,6 +12,7 @@
   ],
   "properties": {
     "schema_version": {
+      "type": "integer",
       "const": 1
     },
     "summary": {
@@ -67,31 +68,7 @@
     "feedback_decision": {
       "type": "object",
       "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "verdict": {
-                "const": "apply"
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "replacements": {
-                "minItems": 1
-              }
-            }
-          },
-          "else": {
-            "properties": {
-              "replacements": {
-                "maxItems": 0
-              }
-            }
-          }
-        }
-      ],
+      "description": "Apply requires at least one replacement; reject and needs_human require none. Guardian also enforces this locally.",
       "required": [
         "feedback_id",
         "verdict",
@@ -106,6 +83,7 @@
           "maxLength": 500
         },
         "verdict": {
+          "type": "string",
           "enum": [
             "apply",
             "reject",
@@ -140,6 +118,7 @@
       ],
       "properties": {
         "scope": {
+          "type": "string",
           "enum": [
             "project_config",
             "pipeline_code",

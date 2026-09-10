@@ -952,6 +952,25 @@ class PreventionGitHubBroker:
         *,
         require_publication_actor: bool = True,
     ) -> tuple[int, str]:
+        """Return immutable actor authority independently of its mutable login."""
+        actor_id, actor_type, _login = self._authenticated_actor_identity(
+            client, require_publication_actor=require_publication_actor,
+        )
+        return actor_id, actor_type
+
+    def publication_author_email(self) -> str:
+        """Use the current authenticated login after enforcing pinned actor authority."""
+        with self._client() as (client, _actor):
+            actor_id, _actor_type, login = self._authenticated_actor_identity(client)
+            return f"{actor_id}+{login}@users.noreply.github.com"
+
+    def _authenticated_actor_identity(
+        self,
+        client: httpx.Client,
+        *,
+        require_publication_actor: bool = True,
+    ) -> tuple[int, str, str]:
+        """Validate the pinned credential actor and retain its current login."""
         payload = _mapping(
             self._request(client, "GET", "/user"),
             label="authenticated actor",
@@ -976,7 +995,7 @@ class PreventionGitHubBroker:
             raise GitHubAuthenticationError(
                 "GitHub prevention actor is not allowed by policy."
             )
-        return actor_id, actor_type
+        return actor_id, actor_type, login
 
     def _repository(
         self,
@@ -985,6 +1004,7 @@ class PreventionGitHubBroker:
         full_name: str,
         repository_id: int,
     ) -> Mapping[str, object]:
+        """Fetch a repository only when both its name and numeric identity match."""
         payload = _mapping(
             self._request(client, "GET", f"/repos/{full_name}"),
             label="repository",
@@ -1938,6 +1958,7 @@ class PreventionCodexAuthor:
         policy: PreventionPolicy,
         api_key: str | None,
     ) -> PreventionAuthorResult:
+        """Author a bounded candidate in isolation without publication credentials."""
         workspace = workspace.resolve(strict=True)
         if not workspace.is_dir() or workspace.is_symlink():
             raise ValueError("Prevention author workspace must be a real directory.")
@@ -2001,7 +2022,9 @@ class PreventionCodexAuthor:
             )
             process_limits = ProcessLimits.for_timeout(
                 process_timeout,
-                max_file_size_bytes=file_limit,
+                # CLI runtime files need the same headroom as assessment.
+                # The candidate workspace retains its smaller growth quota.
+                max_file_size_bytes=128 * 1024 * 1024,
                 require_linux_cgroup=True,
             )
             try:
@@ -4166,6 +4189,7 @@ class PreventionCoordinator:
         ]
         | None,
     ) -> PreventionDraftResult:
+        """Author, test, sign, and publish one bounded prevention candidate."""
         evidence_hash = prevention_evidence_hash(
             root_cause=candidate.summary,
             evidence_feedback_ids=evidence_ids,
@@ -4238,6 +4262,7 @@ class PreventionCoordinator:
                         issued_credentials = ()
                     self._require_remaining()
                     commit = signing_workspace.commit_prevention_changes(
+                        author_email=broker.publication_author_email(),
                         expected_paths=patch.paths,
                         evidence_hash=evidence_hash,
                         signing_key=self.signing_key,
@@ -4304,6 +4329,7 @@ class PreventionCoordinator:
                     )
 
                     def require_sources() -> None:
+                        """Reauthenticate the exact open or historical evidence before mutation."""
                         if open_source is not None:
                             if require_exact_open_source_authority is None:
                                 raise PreventionSourceAuthorityError(
@@ -4331,6 +4357,7 @@ class PreventionCoordinator:
                     slot_consumed = False
 
                     def consume_publication_slot() -> None:
+                        """Charge the shared publication slot before a potentially successful remote write."""
                         nonlocal slot_consumed
                         require_current_base_unchanged()
                         require_sources()
@@ -4349,6 +4376,7 @@ class PreventionCoordinator:
                         slot_consumed = True
 
                     def before_push() -> None:
+                        """Revalidate publication capacity and exact authority at the push boundary."""
                         _require_live_prevention_lease(require_live_lease)
                         require_current_base_unchanged()
                         self._require_remaining()
@@ -4360,6 +4388,7 @@ class PreventionCoordinator:
                         consume_publication_slot()
 
                     def before_post() -> None:
+                        """Revalidate source authority immediately before opening the candidate PR."""
                         require_sources()
                         _require_live_prevention_lease(require_live_lease)
                         self._require_pending_candidate(draft_key)

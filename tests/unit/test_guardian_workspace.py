@@ -215,6 +215,31 @@ def test_materializes_base_and_head_as_detached_exact_sha_checkouts(tmp_path):
         assert _git(head.path, "rev-parse", "HEAD") == head_sha
 
 
+@pytest.mark.parametrize("historical", [False, True])
+def test_checkout_preserves_blobs_despite_later_line_ending_attributes(tmp_path, historical):
+    """Adding text attributes without renormalizing must not dirty a checkout."""
+    remote, _, _ = _create_remote(tmp_path)
+    source = tmp_path / "source"
+    original = b"@echo off\r\necho wrapper\r\n"
+    (source / "gradlew.bat").write_bytes(original)
+    _git(source, "-c", "core.autocrlf=false", "add", "gradlew.bat")
+    _git(source, "commit", "-m", "Add CRLF wrapper")
+    (source / ".gitattributes").write_text("gradlew.bat text eol=crlf\n", encoding="utf-8")
+    _git(source, "add", ".gitattributes")
+    _git(source, "commit", "-m", "Set attributes without renormalizing old blobs")
+    sha = _git(source, "rev-parse", "HEAD")
+    _git(source, "push", str(remote), "HEAD:refs/heads/translation-review")
+    materialize = materialize_historical_checkout if historical else materialize_exact_checkout
+    revision = (
+        _historical_revision(sha=sha)
+        if historical else _revision(ref="refs/heads/translation-review", sha=sha)
+    )
+    with materialize(revision, remote_url=remote.as_uri(), allow_file_remote=True) as workspace:
+        assert (workspace.path / "gradlew.bat").read_bytes() == original
+        assert _git(workspace.path, "status", "--porcelain") == ""
+        assert _git(workspace.path, "rev-parse", "HEAD") == sha
+
+
 def test_materialization_fails_closed_when_ref_does_not_resolve_to_expected_sha(
     tmp_path,
 ):

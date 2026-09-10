@@ -457,6 +457,21 @@ class RemediationGitHubBroker:
         self,
         client: httpx.Client,
     ) -> tuple[int, str]:
+        """Return immutable actor authority independently of its mutable login."""
+        actor_id, actor_type, _login = self._authenticated_actor_identity(client)
+        return actor_id, actor_type
+
+    def publication_author_email(self) -> str:
+        """Use the current authenticated login after enforcing pinned actor authority."""
+        with self._client() as (client, _actor):
+            actor_id, _actor_type, login = self._authenticated_actor_identity(client)
+            return f"{actor_id}+{login}@users.noreply.github.com"
+
+    def _authenticated_actor_identity(
+        self,
+        client: httpx.Client,
+    ) -> tuple[int, str, str]:
+        """Validate the pinned credential actor and retain its current login."""
         payload = _mapping(
             self._request(client, "GET", "/user"),
             label="authenticated actor",
@@ -479,7 +494,7 @@ class RemediationGitHubBroker:
             raise GitHubAuthenticationError(
                 "GitHub remediation actor is not allowed by policy."
             )
-        return actor_id, actor_type
+        return actor_id, actor_type, login
 
     @staticmethod
     def _publication_identity(
@@ -487,6 +502,7 @@ class RemediationGitHubBroker:
         *,
         repository_id: int,
     ) -> _RepositoryPublicationIdentity:
+        """Validate privacy and fork-network metadata used for publication authority."""
         private = repository.get("private")
         fork = repository.get("fork")
         if type(private) is not bool or type(fork) is not bool:
@@ -2221,6 +2237,7 @@ class RemediationCoordinator:
         repository_identity = (policy.base_repo, policy.base_repo_id)
 
         def publication_capacity_available() -> bool:
+            """Check the bounded creation allowance without consuming a slot."""
             return bool(
                 self._publication_slots_used < self.max_drafts
                 and repository_identity not in self._publication_repositories_used
@@ -2308,6 +2325,7 @@ class RemediationCoordinator:
         require_live_lease()
 
         def require_current_evidence() -> None:
+            """Reauthenticate current source evidence before publishing remediation."""
             current_hash = self.state.validate_current_historical_remediation_evidence(
                 source_pulls=pulls,
                 event_revision_ids=revision_ids,
@@ -2508,6 +2526,7 @@ class RemediationCoordinator:
                         consumed = [False]
 
                         def before_recovered_create() -> None:
+                            """Revalidate recovered candidate authority before creating its missing PR."""
                             require_live_lease()
                             require_no_open_translation_overlap(
                                 changed_paths,
@@ -2603,6 +2622,7 @@ class RemediationCoordinator:
             return RemediationBatchOutcome(deferred=1)
         self._require_remaining()
         commit = workspace.commit_historical_remediation_changes(
+            author_email=broker.publication_author_email(),
             expected_paths=tuple(sorted(patch_result.changed_files)),
             feedback_repository=policy.base_repo,
             feedback_pull_numbers=tuple(item.pr_number for item in pulls),
@@ -2659,6 +2679,7 @@ class RemediationCoordinator:
         consumed = [False]
 
         def consume_slot() -> None:
+            """Consume capacity once before a remote operation that may succeed."""
             self._consume_slot(
                 repository_identity=repository_identity,
                 require_live_lease=require_live_lease,
@@ -2666,6 +2687,7 @@ class RemediationCoordinator:
             )
 
         def before_push() -> None:
+            """Revalidate publication capacity and exact authority at the push boundary."""
             require_live_lease()
             require_no_open_translation_overlap(changed_paths, None)
             require_live_lease()
@@ -2686,6 +2708,7 @@ class RemediationCoordinator:
             require_exact_sources_still_closed(pulls, revision_ids)
 
         def before_create() -> None:
+            """Recheck source and publication authority immediately before PR creation."""
             require_live_lease()
             require_no_open_translation_overlap(changed_paths, None)
             require_live_lease()

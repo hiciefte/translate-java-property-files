@@ -361,6 +361,7 @@ def _validate_repository_path(raw_path: str) -> None:
 
 
 def _parse_semantic_result(payload: Mapping[str, Any], *, attempts: int) -> CodexResult:
+    """Validate assessment semantics after checking the provider output schema."""
     summary = str(payload["summary"])
     _require_meaningful(summary, "summary")
 
@@ -409,6 +410,8 @@ def _parse_semantic_result(payload: Mapping[str, Any], *, attempts: int) -> Code
             )
 
         verdict = str(raw_decision["verdict"])
+        # Structured Outputs cannot express the conditional allOf/if/then
+        # constraint; enforce the verdict/replacement relationship locally.
         if verdict == "apply" and not replacements:
             raise CodexOutputError(
                 f"Codex apply verdict for {feedback_id!r} must include a replacement."
@@ -585,6 +588,7 @@ def to_guardian_assessments(
     *,
     feedback_events: Sequence[FeedbackEvent],
     source_values: Mapping[tuple[str, str], str],
+    target_locales_by_feedback: Mapping[str, Mapping[str, str]] | None = None,
 ) -> tuple[GuardianAssessment, ...]:
     """Combine wire decisions with trusted event and source metadata.
 
@@ -632,6 +636,16 @@ def to_guardian_assessments(
         decision = decisions_by_id[event.feedback_id]
         replacements: list[ProposedReplacement] = []
         for replacement in decision.replacements:
+            locale = event.locale
+            if target_locales_by_feedback is not None:
+                locale = target_locales_by_feedback.get(event.feedback_id, {}).get(
+                    replacement.path
+                )
+                if locale is None:
+                    raise CodexOutputError(
+                        f"Replacement path {replacement.path!r} is not authorized "
+                        "for this feedback author and target locale."
+                    )
             source_location = (replacement.path, replacement.key)
             if source_location not in source_values:
                 raise CodexOutputError(
@@ -643,7 +657,7 @@ def to_guardian_assessments(
                     feedback_id=event.feedback_id,
                     path=replacement.path,
                     key=replacement.key,
-                    locale=event.locale,
+                    locale=locale,
                     expected_value=replacement.expected_value,
                     proposed_value=replacement.proposed_value,
                     confidence=decision.confidence,
@@ -780,6 +794,7 @@ class CodexDriver:
         attempt_observer: CodexAttemptObserver | None = None,
         success_observer: CodexSuccessObserver | None = None,
     ) -> CodexResult:
+        """Run bounded read-only assessment attempts with explicit usage accounting."""
         prompt = task.prompt
         evidence_dir = Path(task.evidence_dir).expanduser().resolve()
         if not prompt.strip():
@@ -866,7 +881,10 @@ class CodexDriver:
                         start_new_session=True,
                         limits=ProcessLimits.for_timeout(
                             effective_timeout,
-                            max_file_size_bytes=16 * 1024 * 1024,
+                            # The current CLI can exceed 16 MiB during a real
+                            # tool-using turn (SIGXFSZ on macOS). Keep a finite
+                            # runtime limit; result JSON remains capped at 2 MiB.
+                            max_file_size_bytes=128 * 1024 * 1024,
                             require_linux_cgroup=True,
                         ),
                         workspace_quota=workspace_quota,
@@ -925,6 +943,11 @@ class CodexDriver:
                         raise CodexCapacityError(
                             "Codex capacity is unavailable; inspect plan allowance, "
                             "credits, or API billing limits."
+                        )
+                    if "invalid_json_schema" in diagnostic.casefold():
+                        raise CodexOutputError(
+                            "Codex rejected the configured output schema; "
+                            "retrying the same schema cannot repair it."
                         )
                     if attempt == self.max_attempts:
                         raise CodexTransientError(

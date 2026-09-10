@@ -1392,6 +1392,7 @@ def test_signing_probe_signs_and_verifies_with_exact_key_in_isolated_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Verify signing uses only the configured identity in its isolated context."""
     gnupg_home = tmp_path / "gnupg"
     gnupg_home.mkdir()
     gnupg_home.chmod(0o700)
@@ -1403,6 +1404,7 @@ def test_signing_probe_signs_and_verifies_with_exact_key_in_isolated_context(
     fingerprint = "A" * 40
 
     def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Record the signing probe invocation and return its configured test result."""
         calls.append((argv, dict(kwargs["env"])))  # type: ignore[arg-type]
         stderr = f"[GNUPG:] VALIDSIG {fingerprint}\n" if "verify-commit" in argv else ""
         return subprocess.CompletedProcess(argv, 0, "", stderr)
@@ -1480,12 +1482,14 @@ def test_ssh_signing_probe_uses_frozen_key_and_agent_only_for_commit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Confine signing material to the probe commit and approved snapshot path."""
     fingerprint = "SHA256:" + "A" * 43
     calls: list[tuple[list[str], dict[str, str]]] = []
     captured_snapshot: dict[str, object] = {}
 
     @contextmanager
     def fake_snapshot(**kwargs: object):
+        """Yield frozen SSH signing material without exposing a real private key."""
         captured_snapshot.update(kwargs)
         root = Path(kwargs["temporary_root"])
         yield SSHSigningMaterial(
@@ -1537,12 +1541,16 @@ def test_ssh_signing_probe_uses_frozen_key_and_agent_only_for_commit(
     assert any(argument.startswith("-S") for argument in commit_call[0])
     assert captured_snapshot["public_key_path"] == "/keys/guardian.pub"
     assert captured_snapshot["expected_fingerprint"] == fingerprint
+    # Match the runtime layout: an extra nested probe directory can exceed
+    # macOS's Unix-socket path limit for the pinned agent socket.
+    assert captured_snapshot["temporary_root"] == tmp_path
 
 
 def test_ssh_signing_probe_rejects_wrong_verified_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Reject a successful signature made by an unexpected SSH identity."""
     fingerprint = "SHA256:" + "A" * 43
 
     @contextmanager
@@ -2168,6 +2176,7 @@ def test_status_summarizes_audit_metadata_without_raw_bodies_or_messages(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Keep human-readable status useful without exposing stored review text."""
     config_path = _init_config(tmp_path)
     capsys.readouterr()
     state_path = cli.guardian_state_path(config_path)
@@ -2220,6 +2229,7 @@ def test_status_summarizes_audit_metadata_without_raw_bodies_or_messages(
     assert "Guardian status" in output
     assert "mode: observe" in output
     assert "last completed run: 2026-08-30T09:01:00" in output
+    assert "last successful poll: none" in output
     assert "pending feedback revisions: 0" in output
     assert "actions: completed=1" in output
     assert "health: github=ok" in output
@@ -2231,10 +2241,30 @@ def test_status_summarizes_audit_metadata_without_raw_bodies_or_messages(
     assert secret not in output
 
 
+def test_status_distinguishes_last_successful_poll_from_later_failure(tmp_path, capsys):
+    """Do not let a later failed attempt replace the successful-poll timestamp."""
+    config_path = _init_config(tmp_path)
+    capsys.readouterr()
+    with GuardianState(cli.guardian_state_path(config_path)) as state:
+        state.record_health(
+            component="guardian", status="ok", message="Poll completed",
+            checked_at=datetime(2026, 9, 8, 8, 0, tzinfo=UTC),
+        )
+        state.record_health(
+            component="guardian", status="failed", message="Poll failed",
+            checked_at=datetime(2026, 9, 9, 8, 0, tzinfo=UTC),
+        )
+    assert cli.main(["status", "--config", str(config_path)]) == 0
+    output = capsys.readouterr().out
+    assert "last successful poll: 2026-09-08T08:00:00" in output
+    assert "health: guardian=failed" in output
+
+
 def test_status_is_read_only_when_no_state_database_exists(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """Do not create state merely to report that Guardian has not run."""
     config_path = _init_config(tmp_path)
     capsys.readouterr()
     state_path = cli.guardian_state_path(config_path)

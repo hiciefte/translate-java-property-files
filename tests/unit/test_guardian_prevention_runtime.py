@@ -283,7 +283,9 @@ def test_prevention_broker_binds_credential_to_publication_actor(
     authenticated_actor: dict[str, object],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Reject publication credentials belonging to a different numeric actor."""
     def handler(request: httpx.Request) -> httpx.Response:
+        """Serve pinned GitHub actor and repository responses for the broker test."""
         if request.url.path == "/user":
             return _response(request, authenticated_actor)
         raise AssertionError("repository authority must not be read for a wrong actor")
@@ -303,6 +305,7 @@ def test_prevention_broker_binds_credential_to_publication_actor(
 def test_prevention_broker_does_not_treat_mutable_actor_login_as_authority(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Allow account renames without relaxing numeric actor authorization."""
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/user":
             return _response(
@@ -324,6 +327,9 @@ def test_prevention_broker_does_not_treat_mutable_actor_login_as_authority(
     )
 
     assert broker.capture_base().revision.sha == BASE_SHA
+    assert broker.publication_author_email() == (
+        "301+renamed-guardian-bot@users.noreply.github.com"
+    )
 
 
 @pytest.mark.parametrize(
@@ -584,11 +590,13 @@ def test_prevention_author_uses_workspace_write_stdin_and_scrubs_write_credentia
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Limit authoring to its workspace and keep publication credentials absent."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     observed: dict[str, object] = {}
 
     def fake_run(argv, **kwargs):
+        """Return controlled subprocess output without executing external commands."""
         observed["argv"] = list(argv)
         observed["kwargs"] = kwargs
         observed["launch_environment"] = dict(kwargs["env"])
@@ -645,6 +653,7 @@ def test_prevention_author_uses_workspace_write_stdin_and_scrubs_write_credentia
     assert "Preserve indexed placeholders" not in argv
     assert kwargs["timeout"] == 17
     assert kwargs["limits"].require_linux_cgroup is True
+    assert kwargs["limits"].max_file_size_bytes == 128 * 1024 * 1024
     launch_environment = observed["launch_environment"]
     assert isinstance(launch_environment, dict)
     assert launch_environment["CODEX_API_KEY"] == "explicit-model-key"
@@ -2808,6 +2817,8 @@ class _FakeWorkspace:
         self.published = False
 
     def commit_prevention_changes(self, *, expected_paths, evidence_hash, **_kwargs):
+        """Assert the prevention signer uses the broker-authenticated account identity."""
+        assert _kwargs["author_email"] == self.broker.publication_author_email()
         assert set(expected_paths) == {"localize/rules.py", "tests/unit/test_rules.py"}
         assert len(evidence_hash) == 64
         return CommitResult(
@@ -2913,12 +2924,18 @@ class _FakeBroker:
         private: bool = False,
         mutation_order: list[str] | None = None,
     ) -> None:
+        """Initialize a publication spy with independent actor and remote state."""
         self.private = private
         self.mutation_order = mutation_order
         self.branch_shas: dict[str, str] = {}
         self.capture_calls = 0
         self.verify_calls = 0
         self.open_calls = 0
+        self.actor_login = "guardian-publisher"
+
+    def publication_author_email(self) -> str:
+        """Return the test broker's current authenticated noreply identity."""
+        return f"301+{self.actor_login}@users.noreply.github.com"
 
     def capture_base(self) -> PreventionBaseSnapshot:
         self.capture_calls += 1
@@ -3486,9 +3503,12 @@ def _historical_prevention_source(
     return source, revision.revision_id
 
 
+@pytest.mark.parametrize("actor_login", ["guardian-publisher", "renamed-publisher"])
 def test_coordinator_authors_proves_signs_publishes_draft_and_deduplicates(
     tmp_path: Path,
+    actor_login: str,
 ) -> None:
+    """Exercise signed prevention publication, renamed actors, and duplicate suppression."""
     now = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
     with GuardianState(tmp_path / "state.sqlite3") as state:
         run_id = state.start_run(
@@ -3498,6 +3518,7 @@ def test_coordinator_authors_proves_signs_publishes_draft_and_deduplicates(
             started_at=now,
         )
         broker = _FakeBroker()
+        broker.actor_login = actor_login
         author = _FakeAuthor()
         coordinator = _coordinator(
             state=state,

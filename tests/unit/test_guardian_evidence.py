@@ -61,7 +61,33 @@ def _event(**overrides) -> FeedbackEvent:
     return FeedbackEvent(**values)
 
 
+@pytest.mark.parametrize("diff_bytes", [3_500_000, 4 * 1024 * 1024])
+def test_default_evidence_limit_supports_large_polls_but_remains_bounded(
+    tmp_path, diff_bytes
+):
+    """Accept measured multi-locale evidence sizes, never unbounded input."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config = _write_project(repo)
+    destination = tmp_path / "evidence"
+    kwargs = dict(
+        destination=destination, repo_root=repo,
+        trusted_pipeline_config_path=config, repository="acme/widgets",
+        pr_number=12, head_sha="a" * 40, base_sha="b" * 40,
+        feedback=(_event(),), changed_paths=("l10n/messages_ru.properties",),
+        allowed_path_globs=("l10n/*.properties",), diff_text="x" * diff_bytes,
+    )
+    if diff_bytes < 4 * 1024 * 1024:
+        result = build_evidence_bundle(**kwargs)
+        assert result.root == destination.resolve()
+    else:
+        with pytest.raises(EvidenceError, match="size limit"):
+            build_evidence_bundle(**kwargs)
+        assert not destination.exists()
+
+
 def test_builds_minimal_machine_readable_bundle_with_untrusted_feedback(tmp_path):
+    """Keep review text explicitly untrusted within a minimal evidence bundle."""
     repo = tmp_path / "repo"
     repo.mkdir()
     config = _write_project(repo)
@@ -120,9 +146,71 @@ def test_builds_minimal_machine_readable_bundle_with_untrusted_feedback(tmp_path
     )
 
 
+def test_evidence_includes_scoped_glossary_rules_and_invalidates_cached_assessment(tmp_path):
+    """The model must see the exact glossary enforced by the publication gate."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config = _write_project(repo)
+    config_data = yaml.safe_load(config.read_text())
+    config_data.update(brand_technical_glossary=["Brand"], translation_glossary_enforcement="exact")
+    config.write_text(yaml.safe_dump(config_data))
+    glossary = config.parent / "glossary.json"
+    glossary.write_text(json.dumps({
+        "ru": {"Source": "Источник"}, "de": {"private": "not-in-scope"},
+        "_comment": "private metadata must not reach the model",
+    }))
+    common = dict(
+        repo_root=repo, trusted_pipeline_config_path=config, repository="acme/widgets",
+        pr_number=12, head_sha="a" * 40, base_sha="b" * 40, feedback=(_event(),),
+        changed_paths=("l10n/messages_ru.properties",),
+        allowed_path_globs=("l10n/*.properties",), diff_text="safe diff",
+    )
+    first = build_evidence_bundle(destination=tmp_path / "first", **common)
+    rules = json.loads((first.root / "validation-rules.json").read_text())
+    assert rules == {
+        "translation_glossary_enforcement": "exact",
+        "brand_technical_glossary": ["Brand"],
+        "glossary": {"ru": {"Source": "Источник"}},
+    }
+    assert "validation-rules.json" in first.prompt_path.read_text()
+    assert str(config.parent) not in json.dumps(rules)
+    glossary.write_text(json.dumps({"ru": {"Source": "Исходник"}}))
+    second = build_evidence_bundle(destination=tmp_path / "second", **common)
+    assert second.evidence_hash != first.evidence_hash
+
+
+@pytest.mark.parametrize("unsafe", ["parent", "symlink", "oversized"])
+def test_glossary_evidence_keeps_path_and_size_boundaries(tmp_path, unsafe):
+    """Supplying glossary rules must not widen filesystem or evidence authority."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config = _write_project(repo)
+    config_data = yaml.safe_load(config.read_text())
+    config_data["glossary_file_path"] = "glossary.json"
+    if unsafe == "parent":
+        config_data["glossary_file_path"] = "../outside.json"
+    elif unsafe == "symlink":
+        outside = tmp_path / "outside.json"
+        outside.write_text('{"ru": {"secret": "do-not-copy"}}')
+        (config.parent / "glossary.json").symlink_to(outside)
+    else:
+        (config.parent / "glossary.json").write_text("x" * 4097)
+    config.write_text(yaml.safe_dump(config_data))
+    with pytest.raises(EvidenceError):
+        build_evidence_bundle(
+            destination=tmp_path / "bundle", repo_root=repo,
+            trusted_pipeline_config_path=config, repository="acme/widgets",
+            pr_number=12, head_sha="a" * 40, base_sha="b" * 40,
+            feedback=(_event(),), changed_paths=("l10n/messages_ru.properties",),
+            allowed_path_globs=("l10n/*.properties",), diff_text="safe diff", max_bytes=4096,
+        )
+    assert not (tmp_path / "bundle").exists()
+
+
 def test_pipeline_config_bundle_digest_is_manifested_and_keys_the_evidence(
     tmp_path: Path,
 ) -> None:
+    """Bind the evidence identity to the trusted pipeline configuration bundle."""
     repo = tmp_path / "repo"
     repo.mkdir()
     config = _write_project(repo)

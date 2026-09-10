@@ -855,7 +855,9 @@ def _ssh_signing_key_configured(
                 public_key_path=signing_public_key,
                 expected_fingerprint=fingerprint,
                 signing_program=signing_program,
-                temporary_root=root,
+                # Use the runtime's snapshot parent. Nesting inside the probe
+                # can exceed macOS's Unix-socket path limit for agent.sock.
+                temporary_root=temporary_root if temporary_root is not None else root,
             ) as material:
                 signing_socket = ssh_agent_environment(
                     temporary_root=material.root,
@@ -1735,6 +1737,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
+    """Report bounded audit metadata without disclosing review text or credentials."""
     config_path = _resolved_config_path(args.config)
     try:
         config = _load_config_or_raise(config_path)
@@ -1755,6 +1758,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
         return 0
 
     print(f"last completed run: {snapshot.last_completed_run or 'none'}")
+    print(f"last successful poll: {snapshot.last_successful_poll or 'none'}")
     print(f"pending feedback revisions: {snapshot.pending_revisions}")
     actions = ", ".join(f"{status}={count}" for status, count in snapshot.actions)
     print(f"actions: {actions or 'none'}")

@@ -527,6 +527,7 @@ def _split_nul_paths(output: str) -> tuple[str, ...]:
 
 
 def _porcelain_status(runner: _GitRunner) -> tuple[tuple[str, str], ...]:
+    """Decode NUL-delimited tracked, untracked, and ignored working-tree status."""
     output = runner.run(
         ("status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching")
     ).stdout
@@ -550,7 +551,22 @@ def _porcelain_status(runner: _GitRunner) -> tuple[tuple[str, str], ...]:
     return tuple(entries)
 
 
+def _initialize_exact_checkout(runner: _GitRunner) -> None:
+    """Create a checkout whose Git attributes preserve exact repository bytes."""
+    runner.run(("init", "--quiet"))
+    if runner.deadline is not None:
+        runner.deadline.require_remaining()
+    # Review and commit stored blob bytes, not transformations selected by
+    # untrusted repository attributes. In particular, text attributes added
+    # without renormalization can make a fresh checkout appear dirty.
+    # info/attributes takes precedence without changing any tracked file.
+    attributes = runner.path / ".git" / "info" / "attributes"
+    with attributes.open("x", encoding="utf-8") as stream:
+        stream.write("* -text -filter -ident -working-tree-encoding\n")
+
+
 def _validate_regular_tracked_file(root: Path, runner: _GitRunner, relative_path: str) -> None:
+    """Reject links and non-regular paths before accepting a tracked file."""
     current = root
     for index, component in enumerate(PurePosixPath(relative_path).parts):
         current = current / component
@@ -1570,7 +1586,7 @@ def materialize_exact_checkout(
             timeout_seconds=float(timeout_seconds),
             deadline=deadline,
         )
-        runner.run(("init", "--quiet"))
+        _initialize_exact_checkout(runner)
         runner.run(("remote", "add", "origin", validated_remote))
 
         fetch_environment: dict[str, str] = {}
@@ -1665,7 +1681,7 @@ def materialize_historical_checkout(
             timeout_seconds=float(timeout_seconds),
             deadline=deadline,
         )
-        runner.run(("init", "--quiet"))
+        _initialize_exact_checkout(runner)
         runner.run(("remote", "add", "origin", validated_remote))
 
         fetch_environment: dict[str, str] = {}

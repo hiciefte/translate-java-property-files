@@ -735,10 +735,12 @@ def test_build_controller_wires_exact_runtime_policy_and_credentials(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Check runtime wiring for policy, checkout authority, and scoped credentials."""
     config = _config()
     captured: dict[str, object] = {}
 
     def git_environment() -> dict[str, str]:
+        """Yield the isolated Git credential environment used by the runtime fixture."""
         return {"GIT_ASKPASS": "/private/helper"}
 
     github_credential = SimpleNamespace(argv=config.runtime.github_token_command)
@@ -746,11 +748,13 @@ def test_build_controller_wires_exact_runtime_policy_and_credentials(
 
     class FakeCodexDriver:
         def __init__(self, **kwargs: object) -> None:
+            """Record injected test dependencies without accessing external services."""
             captured["codex"] = kwargs
             self.model = str(kwargs["model"])
 
     class FakeController:
         def __init__(self, **kwargs: object) -> None:
+            """Record injected test dependencies without accessing external services."""
             captured["controller"] = kwargs
 
     monkeypatch.setattr(runtime, "CodexDriver", FakeCodexDriver)
@@ -762,6 +766,7 @@ def test_build_controller_wires_exact_runtime_policy_and_credentials(
     )
 
     def resolve_model_key(helper: object) -> str:
+        """Resolve the test model key through the injected credential provider."""
         captured["model_helper"] = helper
         return "model-secret"
 
@@ -828,6 +833,25 @@ def test_build_controller_wires_exact_runtime_policy_and_credentials(
         "credential_environment": git_environment,
         "git_binary": "/opt/bin/git",
         "signing_program": "/opt/bin/gpg",
+        "timeout_seconds": 120.0,
+    }
+    # Read-only PR bases need snapshot materialization even with backfill off.
+    historical = HistoricalRevision(
+        host="github.com", owner="acme", repository="widgets", sha="b" * 40
+    )
+    monkeypatch.setattr(
+        runtime,
+        "materialize_historical_checkout",
+        lambda incoming, **kwargs: (
+            captured.update(readonly_revision=incoming, readonly_kwargs=kwargs)
+            or sentinel
+        ),
+    )
+    assert controller_kwargs["checkout_factory"](historical) is sentinel
+    assert captured["readonly_revision"] == historical
+    assert captured["readonly_kwargs"] == {
+        "credential_environment": git_environment,
+        "git_binary": "/opt/bin/git",
         "timeout_seconds": 120.0,
     }
 

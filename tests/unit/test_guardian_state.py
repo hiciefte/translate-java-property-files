@@ -809,6 +809,48 @@ def _event(
     )
 
 
+def test_policy_rejections_only_resolve_the_same_effective_policy(
+    tmp_path: Path,
+) -> None:
+    """A deterministic rejection is terminal only under its matching policy digest."""
+    with GuardianState(tmp_path / "guardian.sqlite3") as state:
+        revision = state.record_feedback_event(_event())
+        run_id = state.start_run(
+            repository="acme/widgets",
+            locale="ru",
+            mode=GuardianMode.APPLY_OWNED_TRANSLATIONS,
+        )
+        state.record_action(
+            run_id=run_id,
+            event_revision_id=revision.revision_id,
+            action="apply-owned-translations",
+            status="skipped",
+            details={"outcome": "deterministic_policy_rejection"},
+        )
+        assert state.pending_event_revisions() == ()
+        assert state.pending_event_revisions(policy_digest="a" * 64)
+        state.record_action(
+            run_id=run_id,
+            event_revision_id=revision.revision_id,
+            action="apply-owned-translations",
+            status="skipped",
+            details={
+                "outcome": "deterministic_policy_rejection",
+                "policy_digest": "a" * 64,
+            },
+        )
+        assert state.pending_event_revisions(policy_digest="a" * 64) == ()
+        assert state.pending_event_revisions(policy_digest="b" * 64)
+        state.record_action(
+            run_id=run_id,
+            event_revision_id=revision.revision_id,
+            action="apply-owned-translations",
+            status="completed",
+            details={"outcome": "applied"},
+        )
+        assert state.pending_event_revisions(policy_digest="b" * 64) == ()
+
+
 def test_exact_duplicate_is_not_pending_but_edits_and_sha_changes_are(
     tmp_path: Path,
 ) -> None:
@@ -2141,6 +2183,7 @@ def test_historical_completion_rejects_invalid_metadata(
 def test_state_migrates_v1_database_to_historical_completion_schema(
     tmp_path: Path,
 ) -> None:
+    """Preserve released v1 state while introducing historical completion tracking."""
     database = tmp_path / "guardian.sqlite3"
     _create_exact_v1_database(database, populated=True)
 
@@ -2162,7 +2205,7 @@ def test_state_migrates_v1_database_to_historical_completion_schema(
         )
 
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
 
 
 def test_populated_v1_event_remains_idempotent_after_migration(
@@ -2270,6 +2313,7 @@ def test_v1_migration_seals_candidate_against_already_open_writer(
 def test_v2_remediation_edit_table_gains_target_mapping_column(
     tmp_path: Path,
 ) -> None:
+    """Upgrade legacy remediation edits with explicit target identity storage."""
     database = tmp_path / "guardian.sqlite3"
     _create_v2_migration_fixture(database)
 
@@ -2283,12 +2327,13 @@ def test_v2_remediation_edit_table_gains_target_mapping_column(
         assert "target_hash" in columns
 
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
 
 
 def test_v3_pending_retry_survives_upgrade_and_gains_resolution_ledger(
     tmp_path: Path,
 ) -> None:
+    """Keep pending historical retries across the resolution-ledger migration."""
     database = tmp_path / "guardian.sqlite3"
     _create_v3_migration_fixture(database)
 
@@ -2307,7 +2352,7 @@ def test_v3_pending_retry_survives_upgrade_and_gains_resolution_ledger(
         )
 
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
         assert (
             connection.execute(
                 "SELECT COUNT(*) FROM historical_pull_retry_events"
@@ -2322,7 +2367,8 @@ def test_v3_pending_retry_survives_upgrade_and_gains_resolution_ledger(
         )
 
 
-def test_empty_v0_database_upgrades_to_v9(tmp_path: Path) -> None:
+def test_empty_v0_database_upgrades_to_v10(tmp_path: Path) -> None:
+    """Initialize an empty database at the current supported schema version."""
     database = tmp_path / "guardian.sqlite3"
     with sqlite3.connect(database):
         pass
@@ -2332,7 +2378,7 @@ def test_empty_v0_database_upgrades_to_v9(tmp_path: Path) -> None:
         assert state.status_snapshot(mode=GuardianMode.OBSERVE).pending_revisions == 0
 
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
 
 
 def test_assessment_cache_and_cost_settlement_are_one_transaction(
@@ -3986,6 +4032,7 @@ def test_new_prepared_publication_requires_exact_open_authority(
 def test_published_remediation_reply_can_be_terminalized_separately(
     tmp_path: Path,
 ) -> None:
+    """Complete published remediation without inventing a reply on a closed PR."""
     now = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
     with GuardianState(tmp_path / "guardian.sqlite3") as state:
         metadata = _remediation_metadata(state, now=now)
@@ -4089,6 +4136,60 @@ def test_published_remediation_reply_can_be_terminalized_separately(
                 "UPDATE publication_reply_terminal_events SET reason = "
                 "'remediation_merged'"
             )
+
+    # Recreate the released v9 enum with a genuine completed terminal row.
+    database = tmp_path / "guardian.sqlite3"
+    _restore_v9_reply_terminal_table(database)
+    with GuardianState(database) as migrated:
+        assert migrated.publication_reply_terminal_reason(intent.publication_key) == (
+            "remediation_closed_unmerged"
+        )
+        assert migrated.pending_publications() == ()
+        with pytest.raises(sqlite3.IntegrityError, match="reply terminals"):
+            migrated._connection.execute("DELETE FROM publication_reply_terminal_events")
+
+
+def _restore_v9_reply_terminal_table(database: Path) -> None:
+    """Build the previous enum while retaining exact terminal evidence rows."""
+    with sqlite3.connect(database) as connection:
+        connection.execute("ALTER TABLE publication_reply_terminal_events RENAME TO terminals_new")
+        connection.execute("""
+            CREATE TABLE publication_reply_terminal_events (
+                publication_key TEXT PRIMARY KEY,
+                reason TEXT NOT NULL CHECK (reason IN (
+                    'remediation_closed_unmerged', 'remediation_merged'
+                )),
+                occurred_at TEXT NOT NULL
+            )
+        """)
+        connection.execute("INSERT INTO publication_reply_terminal_events SELECT * FROM terminals_new")
+        connection.execute("DROP TABLE terminals_new")
+        connection.execute("PRAGMA user_version = 9")
+
+
+def test_v9_reply_enum_migration_rolls_back_on_later_failure(tmp_path, monkeypatch):
+    """A failed upgrade must retain the old schema without a partial table swap."""
+    database = tmp_path / "guardian.sqlite3"
+    with GuardianState(database):
+        pass
+    _restore_v9_reply_terminal_table(database)
+
+    def fail_after_migration(_self):
+        """Inject a later failure to verify the entire schema upgrade rolls back."""
+        raise RuntimeError("injected migration failure")
+
+    monkeypatch.setattr(GuardianState, "_install_publication_reply_triggers", fail_after_migration)
+    with pytest.raises(RuntimeError, match="injected migration failure"):
+        GuardianState(database)
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
+        sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name='publication_reply_terminal_events'"
+        ).fetchone()[0]
+        assert "trusted_feedback_changed" not in sql
+        assert connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name='publication_reply_terminal_events_v10'"
+        ).fetchone()[0] == 0
 
 
 def test_publication_completion_action_is_exact_and_idempotent(
@@ -4285,6 +4386,7 @@ def test_v1_replied_publication_never_matches_a_current_actor(tmp_path: Path) ->
 def test_v7_publication_actor_migration_is_explicit_and_fails_closed(
     tmp_path: Path,
 ) -> None:
+    """Do not synthesize publication actor authority during legacy migration."""
     database = tmp_path / "guardian.sqlite3"
     now = datetime(2026, 8, 30, 12, 0, tzinfo=UTC)
     with GuardianState(database) as state:
@@ -4363,7 +4465,7 @@ def test_v7_publication_actor_migration_is_explicit_and_fails_closed(
             state._connection.execute(  # noqa: SLF001
                 "PRAGMA user_version"
             ).fetchone()[0]
-            == 9
+            == 10
         )
         for table in (
             "publication_events",
@@ -5809,6 +5911,7 @@ def test_migration_accepts_each_remediation_write_run_mode(
     tmp_path: Path,
     mode: GuardianMode,
 ) -> None:
+    """Retain valid historical publications from either authorized write mode."""
     database = tmp_path / "guardian.sqlite3"
     _create_v4_migration_fixture(database)
     run_id = "00000000-0000-4000-8000-000000000099"
@@ -5865,7 +5968,7 @@ def test_migration_accepts_each_remediation_write_run_mode(
             state._connection.execute(  # noqa: SLF001
                 "PRAGMA user_version"
             ).fetchone()[0]
-            == 9
+            == 10
         )
 
 
@@ -7574,6 +7677,7 @@ def test_remediation_draft_rejects_ambiguous_historical_pull_identities(
 
 
 def test_state_migrates_v1_database_to_remediation_ledger(tmp_path: Path) -> None:
+    """Upgrade released v1 history without granting unattested remediation authority."""
     database = tmp_path / "guardian.sqlite3"
     _create_exact_v1_database(database)
 
@@ -7586,7 +7690,7 @@ def test_state_migrates_v1_database_to_remediation_ledger(tmp_path: Path) -> Non
         assert len(state.pending_remediation_drafts()) == 1
 
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
 
 
 def test_state_migrates_successor_publication_actor_columns_fail_closed(
@@ -9866,6 +9970,7 @@ def test_v1_legacy_authority_sentinel_preserves_evidence_and_draft_identity(
 def test_v4_migration_keeps_unattested_completion_upgradeable_and_is_idempotent(
     tmp_path: Path,
 ) -> None:
+    """Preserve upgradeable legacy completion evidence across repeated migrations."""
     database = tmp_path / "guardian.sqlite3"
     _create_v4_migration_fixture(database)
     (
@@ -9981,7 +10086,7 @@ def test_v4_migration_keeps_unattested_completion_upgradeable_and_is_idempotent(
             state._connection.execute(  # noqa: SLF001
                 "PRAGMA user_version"
             ).fetchone()[0]
-            == 9
+            == 10
         )
         assert "branch_identity_version" in {
             row["name"]

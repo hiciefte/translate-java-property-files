@@ -43,7 +43,7 @@ from localize.guardian.codex import (
     to_guardian_assessments,
 )
 from localize.guardian.deadline import PollDeadline, PollDeadlineExceeded
-from localize.guardian.evidence import EvidenceBundle, build_evidence_bundle
+from localize.guardian.evidence import EVIDENCE_CONTRACT_VERSION, EvidenceBundle, build_evidence_bundle
 from localize.guardian.github import (
     BaseRevisionSnapshot,
     ChangedFile,
@@ -114,6 +114,12 @@ from localize.localization_profiles import (
 
 
 _UTC = timezone.utc
+
+
+class _PublishedFeedbackChanged(PreventionSourceAuthorityError):
+    """The exact published PR is still authorized, but its review text changed."""
+
+
 _SUPPORTED_CHANGED_FILE_STATUSES = frozenset({"added", "modified"})
 _ASSESSMENT_PROMPT = (
     "Read INSTRUCTIONS.md and the complete sanitized evidence bundle. "
@@ -279,7 +285,7 @@ def _rotate_policies_after_repository(
 
 
 _ASSESSMENT_CACHE_VERSION = 1
-_HISTORICAL_CONTROLLER_VERSION = 2
+_HISTORICAL_CONTROLLER_VERSION = 3
 
 
 def _assessment_cache_key(
@@ -289,6 +295,7 @@ def _assessment_cache_key(
     reasoning_effort: str,
     prompt: str,
 ) -> str:
+    """Bind reusable assessments to exact evidence, model, prompt, and schema."""
     schema_hash = hashlib.sha256(RESULT_SCHEMA_PATH.read_bytes()).hexdigest()
     identity = json.dumps(
         {
@@ -320,8 +327,10 @@ class CheckoutFactory(Protocol):
     """Materialize one exact base or head revision."""
 
     def __call__(
-        self, revision: ExactRevision
-    ) -> ContextManager[GuardianWorkspace]: ...
+        self, revision: ExactRevision | HistoricalRevision
+    ) -> ContextManager[GuardianWorkspace | HistoricalWorkspace]:
+        """Materialize a snapshot with the authority carried by its revision type."""
+        ...
 
 
 class HistoricalSnapshotProvider(Protocol):
@@ -790,15 +799,15 @@ def _exact_revisions(
     snapshot: PullRequestFeedbackSnapshot,
     *,
     github_host: str,
-) -> tuple[ExactRevision, ExactRevision]:
+) -> tuple[HistoricalRevision, ExactRevision]:
+    """Pin a read-only historical base and a live-authorized writable head."""
     pull = snapshot.pull_request
     base_owner, base_name = _split_repository(policy.base_repo)
     head_owner, head_name = _split_repository(pull.head_repository)
-    base = ExactRevision(
+    base = HistoricalRevision(
         host=github_host,
         owner=base_owner,
         repository=base_name,
-        ref=f"refs/heads/{pull.base_ref}",
         sha=pull.base_sha,
     )
     head = ExactRevision(
@@ -835,6 +844,7 @@ def _canonical_digest_value(value: object) -> object:
 
 
 def _canonical_digest(value: object) -> str:
+    """Hash a deterministic encoding of the supported authority value types."""
     encoded = json.dumps(
         _canonical_digest_value(value),
         ensure_ascii=True,
@@ -842,6 +852,24 @@ def _canonical_digest(value: object) -> str:
         sort_keys=True,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _patch_policy_digest(
+    config: GuardianConfig, policy: RepositoryPolicy, scope: _TargetScope
+) -> str:
+    """Keep rejected proposals retryable when their trusted policy changes."""
+    return _canonical_digest(
+        {
+            "version": 1,
+            "repository_policy": policy,
+            "mode": config.mode,
+            "max_value_edits": config.limits.max_value_edits_per_run,
+            "minimum_confidence": config.limits.min_apply_confidence,
+            "replacement_locale_authority_version": 1,
+            "evidence_contract_version": EVIDENCE_CONTRACT_VERSION,
+            "pipeline_config_bundle": scope.config_bundle_digest,
+        }
+    )
 
 
 def _historical_pull_revision_digest(
@@ -1817,12 +1845,34 @@ def _localization_values(
     return result
 
 
+def _replacement_target_locales(
+    policy: RepositoryPolicy,
+    events: Sequence[FeedbackEvent],
+    path_locales: Mapping[str, str],
+) -> dict[str, dict[str, str]]:
+    """Bind target locales to the pinned author's per-locale permissions."""
+    authorized: dict[str, dict[str, str]] = {}
+    for event in events:
+        targets: dict[str, str] = {}
+        if event.author_id is not None:
+            for path, locale in path_locales.items():
+                actors = (
+                    policy.trusted_reviewer_by_id(locale, event.author_id),
+                    policy.trusted_bot_by_id(locale, event.author_id),
+                )
+                if any(actor is not None and actor.type == event.author_type for actor in actors):
+                    targets[path] = locale
+        authorized[event.feedback_id] = targets
+    return authorized
+
+
 def _eligible_replacements(
     assessments: Sequence[GuardianAssessment],
     *,
     minimum_confidence: float,
     excluded_feedback_ids: frozenset[str] = frozenset(),
 ) -> tuple[ProposedReplacement, ...]:
+    """Select non-excluded apply verdicts meeting both confidence thresholds."""
     return tuple(
         replacement
         for assessment in assessments
@@ -2974,6 +3024,17 @@ class GuardianController:
             and current.base_sha == source.base_sha
         )
         if not (same_original_authority or same_feedback_after_guardian_push):
+            if (
+                expected_head != source.head_sha
+                and current.repository == source.repository
+                and current.repository_id == source.repository_id
+                and current.pull_id == source.pull_id
+                and current.pr_number == source.pr_number
+                and current.base_sha == source.base_sha
+            ):
+                raise _PublishedFeedbackChanged(
+                    "Trusted feedback changed after the confirmed Guardian push."
+                )
             raise PreventionSourceAuthorityError(
                 "The open prevention source changed after assessment."
             )
@@ -3033,6 +3094,19 @@ class GuardianController:
             final_fresh.pull_request.head_sha != expected_head
             or final_current != current
         ):
+            if (
+                expected_head != source.head_sha
+                and final_fresh.pull_request.head_sha == expected_head
+                and final_current.repository == source.repository
+                and final_current.repository_id == source.repository_id
+                and final_current.pull_id == source.pull_id
+                and final_current.pr_number == source.pr_number
+                and final_current.base_sha == source.base_sha
+                and final_current.feedback_digest != current.feedback_digest
+            ):
+                raise _PublishedFeedbackChanged(
+                    "Trusted feedback changed during final publication validation."
+                )
             raise PreventionSourceAuthorityError(
                 "The open prevention source changed during authority validation."
             )
@@ -4106,6 +4180,7 @@ class GuardianController:
         outcome: _PollAccumulator,
         require_current_base_unchanged: Callable[[], None],
     ) -> _HistoricalAssessment:
+        """Assess closed-PR evidence only against current authorized locale targets."""
         assert self.historical_checkout_factory is not None
         historical_head = intake.historical_head
         self._require_live_lease(lease_owner)
@@ -4308,6 +4383,9 @@ class GuardianController:
                         result,
                         feedback_events=events,
                         source_values=_source_values(bundle),
+                        target_locales_by_feedback=_replacement_target_locales(
+                            policy, events, current_scope.path_locales,
+                        ),
                     )
                     replacements, deferred = _validated_historical_replacements(
                         assessments,
@@ -5242,6 +5320,7 @@ class GuardianController:
             }
 
             def abandon(reason: str) -> None:
+                """Retire a publication whose current PR authority no longer permits recovery."""
                 self._require_live_lease(lease_owner)
                 self.state.finalize_abandoned_publication(
                     publication_key=publication.publication_key,
@@ -5398,6 +5477,15 @@ class GuardianController:
                     require_live_lease=lambda: self._require_live_lease(lease_owner),
                     expected_current_head_sha=publication.commit_sha,
                 )
+            except _PublishedFeedbackChanged:
+                self._require_live_lease(lease_owner)
+                self.state.finalize_publication_reply_terminal(
+                    publication_key=publication.publication_key,
+                    reason="trusted_feedback_changed",
+                    summary="Recovered published correction; changed feedback suppressed reply.",
+                    occurred_at=observed_at,
+                )
+                continue
             except PreventionSourceAuthorityError:
                 abandon("trusted_feedback_changed_before_reply")
                 continue
@@ -5405,6 +5493,7 @@ class GuardianController:
             broker = self.write_broker_factory(policy)
 
             def revalidate_reply_authority() -> None:
+                """Recheck exact PR and feedback authority immediately before a status reply."""
                 self._require_live_lease(lease_owner)
                 if remediation_draft is not None:
                     assert self.remediation_runner is not None
@@ -5436,16 +5525,26 @@ class GuardianController:
                 )
 
             self._require_live_lease(lease_owner)
-            broker.post_commit_reply(
-                pull_number=publication.pr_number,
-                expected_head_sha=publication.commit_sha,
-                expected_base_sha=publication.base_sha,
-                commit_sha=publication.commit_sha,
-                action_id=publication.publication_key,
-                event_revision_id=str(min(publication.event_revision_ids)),
-                expected_actor=publication_actor,
-                before_create=revalidate_reply_authority,
-            )
+            try:
+                broker.post_commit_reply(
+                    pull_number=publication.pr_number,
+                    expected_head_sha=publication.commit_sha,
+                    expected_base_sha=publication.base_sha,
+                    commit_sha=publication.commit_sha,
+                    action_id=publication.publication_key,
+                    event_revision_id=str(min(publication.event_revision_ids)),
+                    expected_actor=publication_actor,
+                    before_create=revalidate_reply_authority,
+                )
+            except _PublishedFeedbackChanged:
+                self._require_live_lease(lease_owner)
+                self.state.finalize_publication_reply_terminal(
+                    publication_key=publication.publication_key,
+                    reason="trusted_feedback_changed",
+                    summary="Recovered published correction; changed feedback suppressed reply.",
+                    occurred_at=observed_at,
+                )
+                continue
             self._require_live_lease(lease_owner)
             self.state.finalize_replied_publication(
                 publication_key=publication.publication_key,
@@ -5462,6 +5561,7 @@ class GuardianController:
         lease_owner: str,
         outcome: _PollAccumulator,
     ) -> None:
+        """Authorize and process one exact PR under the shared poll lease."""
         self._require_live_lease(lease_owner)
         base_revision, head_revision = _exact_revisions(
             policy,
@@ -5473,6 +5573,14 @@ class GuardianController:
             pr_number=snapshot.pull_request.number,
         )
         with self.checkout_factory(base_revision) as base_workspace:
+            base_config_bundle_digest = (
+                _base_pipeline_config_bundle_digest(
+                    config_root=base_workspace.path,
+                    config_relative_path=policy.pipeline_config_path,
+                )
+                if policy.pipeline_config_source is PipelineConfigSource.BASE
+                else None
+            )
             scope = _target_scope(
                 base_root=base_workspace.path,
                 policy=policy,
@@ -5480,6 +5588,7 @@ class GuardianController:
                 operator_pipeline_config=self.operator_pipeline_configs.get(
                     policy.base_repo
                 ),
+                base_config_bundle_digest=base_config_bundle_digest,
             )
             authorized = authorize_feedback(
                 policy=policy,
@@ -5579,6 +5688,7 @@ class GuardianController:
                     repository=policy.base_repo,
                     pr_number=snapshot.pull_request.number,
                     mode=self.config.mode,
+                    policy_digest=_patch_policy_digest(self.config, policy, scope),
                 )
             )
             current_revision_ids = {
@@ -5936,7 +6046,7 @@ class GuardianController:
         policy: RepositoryPolicy,
         snapshot: PullRequestFeedbackSnapshot,
         scope: _TargetScope,
-        base_workspace: GuardianWorkspace,
+        base_workspace: GuardianWorkspace | HistoricalWorkspace,
         head_workspace: GuardianWorkspace,
         actionable: Sequence[tuple[FeedbackEvent, EventRevision]],
         open_source: OpenPullAuthorityReference,
@@ -5947,6 +6057,7 @@ class GuardianController:
         lease_owner: str,
         outcome: _PollAccumulator,
     ) -> None:
+        """Assess trusted feedback and apply only policy-validated replacements."""
         events = tuple(event for event, _revision in actionable)
         revisions = tuple(revision for _event, revision in actionable)
         event_locales = {event.locale for event in events}
@@ -6098,6 +6209,9 @@ class GuardianController:
                     result,
                     feedback_events=events,
                     source_values=_source_values(bundle),
+                    target_locales_by_feedback=_replacement_target_locales(
+                        policy, events, scope.path_locales
+                    ),
                 )
 
             recurrence_candidates = tuple(
@@ -6274,14 +6388,20 @@ class GuardianController:
             outcome.runs_completed += 1
         except (_AuthenticationCircuit, _ModelCircuit):
             raise
-        except PatchPolicyError:
+        except PatchPolicyError as exc:
             for revision in revisions:
                 self.state.record_action(
                     run_id=run_id,
                     event_revision_id=revision.revision_id,
                     action=self.config.mode.value,
                     status="skipped",
-                    details={"outcome": "deterministic_policy_rejection"},
+                    details={
+                        "outcome": "deterministic_policy_rejection",
+                        "reason": str(exc)[:512],
+                        "policy_digest": _patch_policy_digest(
+                            self.config, policy, scope
+                        ),
+                    },
                     occurred_at=observed_at,
                 )
             self.state.finish_run(
@@ -6357,6 +6477,7 @@ class GuardianController:
         lease_owner: str,
         observed_at: datetime | None = None,
     ) -> str:
+        """Publish signed edits and separately account for the authorized status reply."""
         if (
             self.write_broker_factory is None
         ):  # Constructor enforces this mode boundary.
@@ -6411,6 +6532,9 @@ class GuardianController:
             revision.revision_id for _event, revision in selected
         )
         commit = workspace.commit_validated_changes(
+            author_email=(
+                f"{publication_actor.id}+{publication_actor.login}@users.noreply.github.com"
+            ),
             expected_paths=patch_result.changed_files,
             pull_number=snapshot.pull_request.number,
             feedback_urls=feedback_urls,
@@ -6505,6 +6629,7 @@ class GuardianController:
         )
 
         def revalidate_before_push() -> None:
+            """Recheck source authority immediately before the leased branch update."""
             self._require_live_lease(lease_owner)
             broker.verify_pull(
                 pull_number=snapshot.pull_request.number,
@@ -6561,6 +6686,7 @@ class GuardianController:
         marker_revision = min(revision.revision_id for _event, revision in selected)
 
         def revalidate_reply_authority() -> None:
+            """Recheck exact PR and feedback authority immediately before a status reply."""
             if remediation_draft is not None:
                 assert self.remediation_runner is not None
                 self.remediation_runner.revalidate_successor_pull(
@@ -6589,16 +6715,26 @@ class GuardianController:
             )
 
         self._require_live_lease(lease_owner)
-        broker.post_commit_reply(
-            pull_number=snapshot.pull_request.number,
-            expected_head_sha=publication.commit_sha,
-            expected_base_sha=snapshot.pull_request.base_sha,
-            commit_sha=publication.commit_sha,
-            action_id=publication_key,
-            event_revision_id=str(marker_revision),
-            expected_actor=publication_actor,
-            before_create=revalidate_reply_authority,
-        )
+        try:
+            broker.post_commit_reply(
+                pull_number=snapshot.pull_request.number,
+                expected_head_sha=publication.commit_sha,
+                expected_base_sha=snapshot.pull_request.base_sha,
+                commit_sha=publication.commit_sha,
+                action_id=publication_key,
+                event_revision_id=str(marker_revision),
+                expected_actor=publication_actor,
+                before_create=revalidate_reply_authority,
+            )
+        except _PublishedFeedbackChanged:
+            self._require_live_lease(lease_owner)
+            self.state.finalize_publication_reply_terminal(
+                publication_key=publication_key,
+                reason="trusted_feedback_changed",
+                summary="Published correction; changed feedback suppressed reply.",
+                occurred_at=publication_time,
+            )
+            return publication.commit_sha
         self._require_live_lease(lease_owner)
         self.state.finalize_replied_publication(
             publication_key=publication_key,

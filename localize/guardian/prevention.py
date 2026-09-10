@@ -55,7 +55,6 @@ _MAX_TITLE_CHARS = 120
 _MAX_TITLE_BYTES = 256
 _MAX_BODY_BYTES = 60 * 1024
 _MAX_BODY_LIST_BYTES = 16 * 1024
-_MAX_RENDERED_ARGV_BYTES = 4096
 # Full-tree inspection stays finite before tighter changed-file limits apply.
 _MAX_INVENTORY_ENTRIES = 100_000
 _MAX_INVENTORY_BYTES = 2 * 1024 * 1024 * 1024
@@ -946,17 +945,16 @@ def _bounded_code_list(values: Sequence[str], *, max_bytes: int) -> str:
 
 
 def _argv_display(argv: tuple[str, ...]) -> str:
-    rendered = json.dumps(list(argv), ensure_ascii=True)
-    if len(rendered.encode("utf-8")) <= _MAX_RENDERED_ARGV_BYTES:
-        return rendered
-    executable = _truncate_utf8(
-        argv[0],
-        max_bytes=512,
-        max_chars=512,
-    )
+    """Expose only a generic runner label, never private executable paths or args."""
+    executable = _executable_name(argv[0])
+    label = "Configured test runner"
+    if executable in {"pytest", "pytest.exe"}:
+        label = "pytest"
+    elif executable.startswith("python") and argv[1:3] == ("-m", "pytest"):
+        label = "python -m pytest"
     return (
-        f"{json.dumps([executable], ensure_ascii=True)}; "
-        f"{len(argv) - 1} additional argument(s) omitted; argv fingerprint: "
+        f"{label}; executable path and arguments retained in private audit; "
+        "command fingerprint: "
         f"{_sequence_fingerprint(argv)}"
     )
 
@@ -972,6 +970,7 @@ def _draft_text(
     paths: Sequence[str],
     focused_argv: Sequence[tuple[str, ...]],
 ) -> tuple[str, str]:
+    """Render bounded public evidence without disclosing private test commands."""
     title_prefix = "Prevent recurrence: "
     summary = _truncate_utf8(
         root_cause.replace("@", "＠"),
@@ -1002,6 +1001,7 @@ def _draft_text(
         f"{path_lines}\n\n"
         "### Regression proof supplied by the controller\n\n"
         "The same focused argv failed on the exact base and passed on its direct child:\n\n"
+        "Portable runner labels below are display-only; exact commands remain private.\n\n"
         f"{command_lines}\n\n"
         "Publication of this draft requires a separate broker to re-verify current "
         "state and publish only this signed candidate. The Guardian cannot merge or "

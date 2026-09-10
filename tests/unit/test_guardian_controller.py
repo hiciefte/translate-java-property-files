@@ -131,7 +131,7 @@ def _insert_legacy_publication(
     )
     publication_key = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 9
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
         # Restore the pre-v8 table shape while the production connection is
         # closed. The next GuardianState open performs the real v7 -> v8
         # migration and reinstalls every dropped production trigger.
@@ -760,6 +760,43 @@ def _snapshot(
     )
 
 
+def test_open_pull_base_is_read_only_while_head_requires_current_ref() -> None:
+    """A moving base branch must not invalidate the reviewed base snapshot."""
+    snapshot = _snapshot()
+    base, head = guardian_controller._exact_revisions(
+        _policy(), snapshot, github_host="github.com"
+    )
+    assert isinstance(base, HistoricalRevision)
+    assert base.sha == snapshot.pull_request.base_sha
+    assert isinstance(head, guardian_controller.ExactRevision)
+    assert head.sha == snapshot.pull_request.head_sha
+    assert head.ref == f"refs/heads/{snapshot.pull_request.head_ref}"
+
+
+def test_replacement_locales_require_actor_authority_for_each_target() -> None:
+    """Cross-locale comments must not expand a reviewer's locale allowlist."""
+    event = FeedbackEvent(
+        repository="acme/widgets", pr_number=12, kind="review_comment", event_id="44",
+        author="native-reviewer", author_id=101, author_type="User", body="Fix both.",
+        head_sha=HEAD_SHA, base_sha=BASE_SHA, locale="ru",
+    )
+    paths = {"l10n/app_ru.properties": "ru", "l10n/app_cs.properties": "cs"}
+    policy = _policy()
+    assert guardian_controller._replacement_target_locales(policy, (event,), paths) == {
+        event.feedback_id: {"l10n/app_ru.properties": "ru"}
+    }
+    both = replace(policy, trusted_reviewers={
+        "ru": policy.trusted_reviewers["ru"], "cs": policy.trusted_reviewers["ru"]
+    })
+    assert guardian_controller._replacement_target_locales(both, (event,), paths) == {
+        event.feedback_id: paths
+    }
+    for invalid in (replace(event, author_id=None), replace(event, author_type="Bot")):
+        assert guardian_controller._replacement_target_locales(both, (invalid,), paths) == {
+            event.feedback_id: {}
+        }
+
+
 def _authorized_historical_digest(
     policy: RepositoryPolicy,
     snapshot: PullRequestFeedbackSnapshot,
@@ -1339,10 +1376,13 @@ class FakeWorkspace:
     sequence: list[str]
     commits: int = 0
     publications: int = 0
+    author_email: str | None = None
 
     def commit_validated_changes(self, **kwargs) -> CommitResult:
+        """Capture the signing contract and return the deterministic test commit."""
         self.sequence.append("commit")
         self.commits += 1
+        self.author_email = kwargs.get("author_email")
         assert kwargs["sign"] is True
         assert kwargs["expected_paths"] == (TARGET_PATH,)
         return CommitResult(
@@ -1622,10 +1662,12 @@ def test_historical_remediation_repository_order_rotates_after_last_publisher() 
 
 class FakeBroker:
     def __init__(self, sequence: list[str]) -> None:
+        """Record injected test dependencies without accessing external services."""
         self.sequence = sequence
         self.verify_calls = []
         self.verify_error_on_call: int | None = None
         self.reply_calls = []
+        self.posted_replies = []
         self.reply_error: Exception | None = None
 
     def verify_pull(self, **kwargs):
@@ -1636,6 +1678,7 @@ class FakeBroker:
         return _pull()
 
     def post_commit_reply(self, **kwargs):
+        """Separate attempted replies from posts that pass the final authority callback."""
         self.sequence.append("reply")
         self.reply_calls.append(kwargs)
         if self.reply_error is not None:
@@ -1643,6 +1686,7 @@ class FakeBroker:
         kwargs["before_create"]()
         assert kwargs["expected_head_sha"] == COMMIT_SHA
         assert kwargs["commit_sha"] == COMMIT_SHA
+        self.posted_replies.append(kwargs)
         return object()
 
 
@@ -3012,6 +3056,7 @@ def test_recovers_successor_lineage_after_remediation_closes_without_reply(
 def test_refuses_to_infer_actor_or_lineage_for_a_legacy_prepared_push(
     tmp_path: Path,
 ) -> None:
+    """Legacy records must not gain inferred publication or successor authority."""
     sequence: list[str] = []
     broker = FakeBroker(sequence)
     database = tmp_path / "state.sqlite3"
@@ -3059,7 +3104,7 @@ def test_refuses_to_infer_actor_or_lineage_for_a_legacy_prepared_push(
             state._connection.execute(  # noqa: SLF001
                 "PRAGMA user_version"
             ).fetchone()[0]
-            == 9
+            == 10
         )
         installed_triggers = {
             row["name"]
@@ -3125,6 +3170,7 @@ def test_refuses_to_infer_actor_or_lineage_for_a_legacy_prepared_push(
 def test_refuses_to_infer_actor_or_open_authority_for_a_legacy_publication(
     tmp_path: Path,
 ) -> None:
+    """Fail closed when a legacy publication lacks durable actor and PR evidence."""
     sequence: list[str] = []
     broker = FakeBroker(sequence)
     database = tmp_path / "state.sqlite3"
@@ -3169,7 +3215,7 @@ def test_refuses_to_infer_actor_or_open_authority_for_a_legacy_publication(
             state._connection.execute(  # noqa: SLF001
                 "PRAGMA user_version"
             ).fetchone()[0]
-            == 9
+            == 10
         )
         installed_triggers = {
             row["name"]
@@ -3872,6 +3918,7 @@ def test_edited_feedback_is_a_new_revision_and_reassessed(
 def test_mode_escalation_reuses_the_exact_cached_assessment(
     tmp_path: Path, runtime
 ) -> None:
+    """Reuse exact assessments when authorized mode escalation enables writes."""
     _base, _head, checkout, provider, broker, _sequence = runtime
     driver = FakeCodexDriver()
     with GuardianState(tmp_path / "state.sqlite3") as state:
@@ -3900,10 +3947,75 @@ def test_mode_escalation_reuses_the_exact_cached_assessment(
         assert state.pending_event_revisions(mode=GuardianMode.PREPARE) == ()
 
 
+def test_changed_edit_limit_retries_policy_rejection_without_rebilling(
+    tmp_path: Path, runtime
+) -> None:
+    """Reuse a paid assessment when changed policy permits a previously rejected patch."""
+    _base, _head, checkout, provider, broker, _sequence = runtime
+    driver = FakeCodexDriver()
+    config = _config(GuardianMode.APPLY_OWNED_TRANSLATIONS)
+    limited = replace(config, limits=replace(config.limits, max_value_edits_per_run=0))
+    with GuardianState(tmp_path / "state.sqlite3") as state:
+
+        def poll(settings):
+            """Run the same retained evidence under a supplied policy configuration."""
+            return _controller(
+                tmp_path=tmp_path,
+                state=state,
+                config=settings,
+                checkout=checkout,
+                provider=provider,
+                driver=driver,
+                broker=broker,
+            ).poll_once()
+
+        assert poll(limited).applied_commits == ()
+        assert poll(limited).runs_started == 0
+        assert poll(config).applied_commits == (COMMIT_SHA,)
+        assert len(driver.calls) == 1
+
+
+@pytest.mark.parametrize("changed_file", ["config.yaml", "glossary.json"])
+def test_base_bundle_change_reconsiders_deterministic_patch_rejection(
+    tmp_path: Path, runtime, changed_file: str,
+) -> None:
+    """Bind rejected work to the actual trusted base config and glossary bytes."""
+    base, _head, checkout, provider, broker, _sequence = runtime
+    driver = FakeCodexDriver()
+    calls = []
+
+    def reject_first(**kwargs):
+        """Simulate a deterministic constraint that a config change corrects."""
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise guardian_controller.PatchPolicyError("test policy rejection")
+        return apply_replacements(**kwargs)
+
+    with GuardianState(tmp_path / "state.sqlite3") as state:
+        def poll():
+            """Reuse the durable rejection ledger across policy snapshots."""
+            controller = _controller(
+                tmp_path=tmp_path, state=state,
+                config=_config(GuardianMode.APPLY_OWNED_TRANSLATIONS),
+                checkout=checkout, provider=provider, driver=driver, broker=broker,
+                replacement_applier=reject_first,
+            )
+            return controller.poll_once()
+
+        assert poll().applied_commits == ()
+        assert poll().applied_commits == ()
+        assert len(calls) == 1
+        target = base / ".localize" / changed_file
+        target.write_text(target.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        assert poll().applied_commits == (COMMIT_SHA,)
+        assert len(calls) == 2
+
+
 def test_crash_after_model_success_reuses_durable_result_without_rebilling(
     tmp_path: Path,
     runtime,
 ) -> None:
+    """Recover a persisted model result without charging another session."""
     _base, _head, checkout, provider, broker, _sequence = runtime
     driver = FakeCodexDriver()
     with GuardianState(tmp_path / "state.sqlite3") as state:
@@ -4068,6 +4180,7 @@ def test_prepare_validates_in_ephemeral_checkout_without_remote_writes(
 def test_apply_signs_then_reverifies_immediately_before_normal_publish_and_reply(
     tmp_path: Path, runtime
 ) -> None:
+    """Bind signing, publication, and reply to their independent authority checks."""
     _base, _head, checkout, provider, broker, sequence = runtime
     driver = FakeCodexDriver()
     with GuardianState(tmp_path / "state.sqlite3") as state:
@@ -4083,6 +4196,9 @@ def test_apply_signs_then_reverifies_immediately_before_normal_publish_and_reply
 
         assert outcome.applied_commits == (COMMIT_SHA,)
         assert sequence == ["commit", "verify", "verify", "publish", "reply"]
+        assert [item.author_email for item in checkout.workspaces if item.commits] == [
+            "8+translation-service@users.noreply.github.com"
+        ]
         assert broker.verify_calls == [
             {
                 "pull_number": 12,
@@ -4492,11 +4608,14 @@ def test_repository_route_alias_preserves_open_authority_hashes() -> None:
 
 
 @pytest.mark.parametrize("race", ("edited", "deleted", "added"))
+@pytest.mark.parametrize("change_on_read", [1, 2, 3, 4])
 def test_recovery_never_replies_after_trusted_feedback_authority_changes(
     race: str,
+    change_on_read: int,
     tmp_path: Path,
     runtime,
 ) -> None:
+    """Preserve the published result while suppressing a now-unauthorized reply."""
     _base, _head, checkout, provider, broker, _sequence = runtime
     broker.reply_error = RuntimeError("connection dropped after publication")
     with GuardianState(tmp_path / "state.sqlite3") as state:
@@ -4544,7 +4663,21 @@ def test_recovery_never_replies_after_trusted_feedback_authority_changes(
             ),
             feedback=tuple(feedback),
         )
+        original_feedback = provider.snapshots[0].feedback
         provider.snapshots = (raced,)
+        if change_on_read > 1:
+            provider.snapshots = (replace(raced, feedback=original_feedback),)
+            revalidate = provider.revalidate_open_pull_request
+            reads = []
+
+            def change_second_read(*args):
+                """Race the final authority read without changing the pinned PR."""
+                reads.append(None)
+                if len(reads) == change_on_read:
+                    provider.snapshots = (raced,)
+                return revalidate(*args)
+
+            provider.revalidate_open_pull_request = change_second_read
         replies_before_recovery = len(broker.reply_calls)
         broker.reply_error = None
         assert state.acquire_lease(
@@ -4569,13 +4702,65 @@ def test_recovery_never_replies_after_trusted_feedback_authority_changes(
             lease_owner="test-owner",
         )
 
-        assert len(broker.reply_calls) == replies_before_recovery
+        assert len(broker.reply_calls) == replies_before_recovery + int(change_on_read >= 3)
+        assert broker.posted_replies == []
         assert state.pending_publications() == ()
+        assert state.get_run(pending.run_id).status == "completed"
+        assert state.publication_reply_terminal_reason(pending.publication_key) == (
+            "trusted_feedback_changed"
+        )
+
+
+@pytest.mark.parametrize("change_on_read", [1, 2])
+def test_feedback_edit_after_push_completes_commit_without_claiming_reply(
+    tmp_path: Path, runtime, change_on_read: int,
+) -> None:
+    """A bot acknowledgement race must not turn an applied commit into failed work."""
+    _base, _head, checkout, provider, broker, _sequence = runtime
+    original_reply = broker.post_commit_reply
+
+    def change_feedback_before_reply(**kwargs):
+        """Simulate a reviewer acknowledgement arriving after the signed push."""
+        revalidate = provider.revalidate_open_pull_request
+        reads = []
+
+        def changed_read(*args):
+            """Change only the review body on the selected post-push read."""
+            reads.append(None)
+            if len(reads) == change_on_read:
+                snapshot = provider.snapshots[0]
+                provider.snapshots = (replace(
+                    snapshot,
+                    feedback=(replace(snapshot.feedback[0], body="Fixed, thank you."),),
+                ),)
+            return revalidate(*args)
+
+        provider.revalidate_open_pull_request = changed_read
+        return original_reply(**kwargs)
+
+    broker.post_commit_reply = change_feedback_before_reply
+    with GuardianState(tmp_path / "state.sqlite3") as state:
+        outcome = _controller(
+            tmp_path=tmp_path, state=state,
+            config=_config(GuardianMode.APPLY_OWNED_TRANSLATIONS),
+            checkout=checkout, provider=provider,
+            driver=FakeCodexDriver(), broker=broker,
+        ).poll_once()
+        assert outcome.runs_failed == 0
+        assert outcome.applied_commits == (COMMIT_SHA,)
+        assert state.pending_publications() == ()
+        assert state._connection.execute(
+            "SELECT COUNT(*) FROM publication_events WHERE phase='replied'"
+        ).fetchone()[0] == 0
+        assert state._connection.execute(
+            "SELECT reason FROM publication_reply_terminal_events"
+        ).fetchone()[0] == "trusted_feedback_changed"
 
 
 def test_recovery_abandons_publication_when_the_base_revision_moved(
     tmp_path: Path, runtime
 ) -> None:
+    """Keep a changed base fail-closed during publication recovery."""
     _base, _head, checkout, provider, broker, _sequence = runtime
     driver = FakeCodexDriver()
     broker.reply_error = RuntimeError("connection dropped after publication")
@@ -7338,6 +7523,7 @@ def test_open_pull_processing_queries_only_its_pending_feedback_workset(
     runtime,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Avoid cross-PR pending-work scans while processing an exact pull."""
     _base, _head, checkout, provider, broker, _sequence = runtime
     original = GuardianState.pending_event_revisions
     calls: list[int | None] = []
@@ -7349,8 +7535,10 @@ def test_open_pull_processing_queries_only_its_pending_feedback_workset(
         pr_number: int | None = None,
         locale: str | None = None,
         mode: GuardianMode | str | None = None,
+        policy_digest: str | None = None,
         limit: int = 500,
     ):
+        """Record the exact PR boundary used for pending-feedback selection."""
         calls.append(pr_number)
         if repository is not None and pr_number is None:
             raise AssertionError("repository-wide pending feedback was loaded")
@@ -7360,6 +7548,7 @@ def test_open_pull_processing_queries_only_its_pending_feedback_workset(
             pr_number=pr_number,
             locale=locale,
             mode=mode,
+            policy_digest=policy_digest,
             limit=limit,
         )
 
