@@ -6366,7 +6366,10 @@ class GuardianController:
                 excluded_feedback_ids=translation_suppressed_feedback_ids,
             )
             deferred_edits: dict[str, int] = {}
-            if self.config.mode is not GuardianMode.OBSERVE:
+            if self.config.mode in {
+                GuardianMode.APPLY_OWNED_TRANSLATIONS,
+                GuardianMode.PROPOSE_PREVENTION,
+            }:
                 replacements, deferred_edits = _bounded_replacements(
                     replacements, max_changes=self.config.limits.max_value_edits_per_run,
                 )

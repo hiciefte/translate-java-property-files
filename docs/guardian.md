@@ -116,6 +116,10 @@ Partially corrected and wholly deferred comments remain pending, including after
 publication-reply recovery. Duplicate targets still reject the proposal before
 batch selection; all selected edits retain the normal validation and signing gates.
 A zero edit limit disables edits without repeatedly retrying unchanged policy.
+Progressive batching applies only to `apply-owned-translations` and
+`propose-prevention`. `prepare` retains no patch or changed head, so it keeps its
+single-pass bounded validation: an oversized proposal is rejected once under
+the current policy, not repeatedly prepared in identical partial batches.
 
 Poll outcomes and the latest Guardian health record expose `deferred_value_edits`,
 `deferred_feedback_items`, and `translation_policy_rejections` separately from

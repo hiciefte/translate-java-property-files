@@ -4078,6 +4078,32 @@ def test_batch_cutoff_does_not_hide_conflicting_targets() -> None:
         )
 
 
+def test_prepare_does_not_repeat_a_nonretained_partial_batch(tmp_path: Path, runtime) -> None:
+    """Prepare keeps its bounded one-shot validation rather than inventing progress."""
+    base, head, checkout, provider, broker, _sequence = runtime
+    for root in (base, head):
+        with (root / "l10n/messages_en.properties").open("a") as stream:
+            stream.write("alpha=Alpha\n")
+        with (root / TARGET_PATH).open("a") as stream:
+            stream.write("alpha=Старый альфа\n")
+    config = _config(GuardianMode.PREPARE)
+    config = replace(config, limits=replace(config.limits, max_value_edits_per_run=1))
+    driver = TwoReplacementCodexDriver()
+    with GuardianState(tmp_path / "state.sqlite3") as state:
+        controller = _controller(
+            tmp_path=tmp_path, state=state, config=config, checkout=checkout,
+            provider=provider, driver=driver, broker=broker,
+        )
+        first = controller.poll_once()
+        second = controller.poll_once()
+        assert first.prepared_value_edits == 0
+        assert first.deferred_value_edits == 0
+        assert first.translation_policy_rejections == 1
+        assert second.runs_started == 0
+        assert len(driver.calls) == 1
+        assert all(workspace.publications == 0 for workspace in checkout.workspaces)
+
+
 @pytest.mark.parametrize("changed_file", ["config.yaml", "glossary.json"])
 def test_base_bundle_change_reconsiders_deterministic_patch_rejection(
     tmp_path: Path, runtime, changed_file: str,
