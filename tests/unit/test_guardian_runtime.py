@@ -1006,6 +1006,7 @@ def test_explicit_closed_remediation_wires_separate_broker_and_coordinator(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Wire ready remediation publication only under its explicit private policy."""
     config = _config_with_closed_backfill(remediation=True)
     policy = config.repositories[0]
     state = SimpleNamespace()
@@ -1098,6 +1099,7 @@ def test_explicit_closed_remediation_wires_separate_broker_and_coordinator(
     assert broker is captured["remediation_broker"]
     assert captured["remediation_broker"] == {
         "policy": policy,
+        "create_as_draft": False,
         "credential": github_credential,
         "github_host": "github.com",
         "base_url": "https://api.github.com",
@@ -1381,6 +1383,7 @@ def test_propose_mode_wires_credential_separated_prevention_coordinator(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Keep authoring credentials separate from ready prevention publication."""
     captured: dict[str, object] = {}
     config = _config(GuardianMode.PROPOSE_PREVENTION)
     state = SimpleNamespace()
@@ -1458,6 +1461,7 @@ def test_propose_mode_wires_credential_separated_prevention_coordinator(
     assert broker is captured["prevention_broker"]
     assert captured["prevention_broker"] == {
         "policy": prevention,
+        "create_as_draft": False,
         "credential": github_credential,
         "github_host": "github.com",
         "base_url": "https://api.github.com",

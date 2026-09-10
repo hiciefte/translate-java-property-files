@@ -989,7 +989,7 @@ def _draft_text(
         max_bytes=_MAX_BODY_LIST_BYTES,
     )
     body = (
-        "## Localize Guardian prevention draft\n\n"
+        "## Localize Guardian prevention proposal\n\n"
         f"Root cause: {_code(root_cause)}\n\n"
         f"Evidence fingerprint: {_code(evidence_hash)}\n\n"
         "### Review evidence\n\n"
@@ -1003,9 +1003,9 @@ def _draft_text(
         "The same focused argv failed on the exact base and passed on its direct child:\n\n"
         "Portable runner labels below are display-only; exact commands remain private.\n\n"
         f"{command_lines}\n\n"
-        "Publication of this draft requires a separate broker to re-verify current "
+        "Publication of this proposal requires a separate broker to re-verify current "
         "state and publish only this signed candidate. The Guardian cannot merge or "
-        "deploy prevention drafts.\n"
+        "deploy prevention proposals.\n"
     )
     if len(title.encode("utf-8")) > _MAX_TITLE_BYTES:  # pragma: no cover - helper
         raise PreventionPolicyError("generated title exceeds its byte bound")

@@ -25,7 +25,11 @@ from localize.guardian.credentials import (
     CredentialSnapshot,
     SecretCommand,
 )
-from localize.guardian.github import GitHubAuthenticationError, OpenPullPathIdentity
+from localize.guardian.github import (
+    GitHubAuthenticationError,
+    OpenPullPathIdentity,
+    matches_guardian_pr_body,
+)
 from localize.guardian.json_safety import loads_bounded_json
 from localize.guardian.models import (
     HistoricalRemediationPolicy,
@@ -123,6 +127,7 @@ class RemediationDraftResult:
     merged_at: str | None = None
 
     def __post_init__(self) -> None:
+        """Reject inconsistent created, merged, and closed PR result metadata."""
         if self.pull_id is not None and (
             isinstance(self.pull_id, bool)
             or not isinstance(self.pull_id, int)
@@ -135,8 +140,8 @@ class RemediationDraftResult:
             raise ValueError("remediation draft lifecycle flags must be booleans")
         if type(self.merged) is not bool:
             raise ValueError("remediation draft lifecycle flags must be booleans")
-        if self.created and (self.state != "open" or not self.draft):
-            raise ValueError("new remediation pull requests must be open drafts")
+        if self.created and self.state != "open":
+            raise ValueError("new remediation pull requests must be open")
         if self.merged and (self.state != "closed" or self.draft):
             raise ValueError("remediation draft merged lifecycle is inconsistent")
         if self.base_sha is not None and (
@@ -283,7 +288,12 @@ class RemediationGitHubBroker:
         timeout_seconds: float = 30.0,
         token_command_timeout: float = 30.0,
         deadline: PollDeadline | None = None,
+        create_as_draft: bool = True,
     ) -> None:
+        """Bind the authorized remediation target, credentials, and creation state."""
+        if type(create_as_draft) is not bool:
+            raise TypeError("create_as_draft must be a boolean")
+        self.create_as_draft = create_as_draft
         if not isinstance(policy, RepositoryPolicy):
             raise TypeError("policy must be a RepositoryPolicy")
         closed_policy = policy.closed_pr_backfill
@@ -806,6 +816,7 @@ class RemediationGitHubBroker:
         require_new_draft: bool,
         expected_number: int | None,
     ) -> RemediationDraftResult:
+        """Authenticate remote remediation identity without trusting appended notes."""
         pull = _mapping(raw, label="remediation pull request")
         pull_id = _positive_int(pull.get("id"), label="pull request id")
         number = _positive_int(pull.get("number"), label="pull request number")
@@ -830,7 +841,7 @@ class RemediationGitHubBroker:
                 "GitHub returned malformed remediation pull request metadata."
             )
         merged, merged_at, closed_at = _pull_lifecycle(pull, state=state)
-        if require_new_draft and (state != "open" or draft is not True):
+        if require_new_draft and (state != "open" or draft is not self.create_as_draft):
             raise RemediationRuntimeError(
                 "GitHub did not create a draft remediation pull request."
             )
@@ -852,7 +863,7 @@ class RemediationGitHubBroker:
             or _positive_int(base_repo.get("id"), label="base repository id")
             != self.policy.base_repo_id
             or pull.get("title") != expected_title
-            or pull_body != expected_body
+            or not matches_guardian_pr_body(pull_body, expected_body)
             or marker not in pull_body
             or (require_new_draft and base_sha != expected_base_sha)
             or (author_id, author.get("type")) != expected_author
@@ -964,13 +975,20 @@ class RemediationGitHubBroker:
             "GitHub remediation pull request history pagination exceeded its bound."
         )
 
-    @staticmethod
     def _validate_recovery_history(
+        self,
         pull: RemediationDraftResult,
         history: tuple[str, ...],
     ) -> None:
+        """Accept ready creation or legacy drafts, retaining reopen and redraft vetoes."""
         state = "open"
-        draft = True
+        # Ready-created PRs have no ready_for_review event. Legacy drafts may
+        # still be recovered, but a redraft or reopen remains a human veto.
+        draft = not (
+            not self.create_as_draft
+            and not pull.draft
+            and "ready_for_review" not in history
+        )
         merged = False
         valid = True
         for event in history:
@@ -1173,7 +1191,7 @@ class RemediationGitHubBroker:
         before_create: Callable[[], None],
         before_post: Callable[[], None],
     ) -> RemediationDraftResult:
-        """Recover an exact prior PR or create one new human-review draft."""
+        """Recover an exact prior PR or create one in the requested review state."""
 
         if not callable(before_create) or not callable(before_post):
             raise TypeError("draft publication guards must be callable")
@@ -1277,7 +1295,7 @@ class RemediationGitHubBroker:
                         "/", 1
                     )[1],
                     "base": self.policy.base_branch,
-                    "draft": True,
+                    "draft": self.create_as_draft,
                     "maintainer_can_modify": False,
                 },
             )
@@ -1637,6 +1655,7 @@ def _draft_text(
     evidence_hash: str,
     batch_hash: str,
 ) -> tuple[str, str]:
+    """Describe a bot-generated correction proposal using public evidence only."""
     title = "[Localize Guardian bot] Historical translation corrections"
     source_urls = tuple(
         f"https://{base.revision.host}/{policy.base_repo}/pull/{item.pr_number}"
@@ -1644,7 +1663,7 @@ def _draft_text(
     )
     body = "\n".join(
         (
-            "Bot-generated draft for human review only.",
+            "Bot-generated pull request for human review only.",
             "",
             "This current-base candidate does not modify or comment on the closed "
             "source pull requests and is never merged automatically.",

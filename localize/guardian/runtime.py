@@ -1305,6 +1305,7 @@ def _build_controller(
             """Construct the broker bound to the configured prevention repositories."""
             return PreventionGitHubBroker(
                 policy=policy,
+                create_as_draft=False,
                 credential=github_credential,
                 github_host=_GITHUB_HOST,
                 base_url=_GITHUB_API_URL,
@@ -1356,6 +1357,7 @@ def _build_controller(
             """Construct the broker bound to historical-remediation publication policy."""
             return RemediationGitHubBroker(
                 policy=policy,
+                create_as_draft=False,
                 credential=github_credential,
                 github_host=_GITHUB_HOST,
                 base_url=_GITHUB_API_URL,

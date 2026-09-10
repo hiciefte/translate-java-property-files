@@ -554,7 +554,9 @@ def _recovery_broker(
     exact_pull: dict[str, object],
     event_pages: dict[int, list[object]] | None = None,
     listed_pull: dict[str, object] | None = None,
+    create_as_draft: bool = True,
 ) -> PreventionGitHubBroker:
+    """Mock exact remote PR metadata and paginated lifecycle recovery events."""
     pull_number = int((listed_pull or exact_pull)["number"])
     event_pages = event_pages or {1: []}
 
@@ -583,6 +585,7 @@ def _recovery_broker(
         token_command=("credential-helper",),
         base_url="https://api.github.test",
         transport=httpx.MockTransport(handler),
+        create_as_draft=create_as_draft,
     )
 
 
@@ -1437,9 +1440,12 @@ def test_sandboxed_runner_fails_closed_if_parent_cannot_create_canary(
     assert subprocess_calls == 0
 
 
+@pytest.mark.parametrize("create_as_draft", [True, False])
 def test_github_broker_revalidates_numeric_identities_and_opens_draft_only(
     monkeypatch: pytest.MonkeyPatch,
+    create_as_draft: bool,
 ) -> None:
+    """Keep publication guards identical for draft and ready creation."""
     branch = "guardian/prevention-" + "d" * 64
     evidence_hash = "d" * 64
     marker = PreventionGitHubBroker._marker(evidence_hash, CANDIDATE_SHA)
@@ -1462,7 +1468,7 @@ def test_github_broker_revalidates_numeric_identities_and_opens_draft_only(
         if path == "/repos/guardian/pipeline/pulls" and request.method == "POST":
             assert lease_checks == 2
             payload = json.loads(request.content)
-            assert payload["draft"] is True
+            assert payload["draft"] is create_as_draft
             assert payload["maintainer_can_modify"] is False
             assert payload["head"] == f"guardian:{branch}"
             assert marker in payload["body"]
@@ -1472,7 +1478,7 @@ def test_github_broker_revalidates_numeric_identities_and_opens_draft_only(
                     number=17,
                     branch=branch,
                     body=payload["body"],
-                    draft=True,
+                    draft=create_as_draft,
                 ),
                 status=201,
             )
@@ -1488,6 +1494,7 @@ def test_github_broker_revalidates_numeric_identities_and_opens_draft_only(
         token_command=("credential-helper",),
         base_url="https://api.github.test",
         transport=httpx.MockTransport(handler),
+        create_as_draft=create_as_draft,
     )
     base = broker.capture_base()
     assert base.revision == _base_revision()
@@ -1542,8 +1549,8 @@ def test_github_broker_revalidates_numeric_identities_and_opens_draft_only(
 @pytest.mark.parametrize(
     ("state", "draft", "closed_at", "actor_id", "message"),
     [
-        ("closed", True, "2026-09-03T09:00:00Z", PUBLICATION_ACTOR.id, "open draft"),
-        ("open", False, None, PUBLICATION_ACTOR.id, "open draft"),
+        ("closed", True, "2026-09-03T09:00:00Z", PUBLICATION_ACTOR.id, "requested draft state"),
+        ("open", False, None, PUBLICATION_ACTOR.id, "requested draft state"),
         ("open", True, None, 999, "exact policy"),
     ],
     ids=("closed", "ready", "wrong-author"),
@@ -2031,13 +2038,16 @@ def test_github_broker_stable_observation_is_json_type_sensitive(
     ],
     ids=("untouched-draft", "ready", "closed-draft", "ready-then-closed"),
 )
+@pytest.mark.parametrize("create_as_draft", [True, False])
 def test_github_broker_recovers_only_allowed_terminal_lifecycles(
     state: str,
     draft: bool,
     events: list[object],
     closed_at: str | None,
     monkeypatch: pytest.MonkeyPatch,
+    create_as_draft: bool,
 ) -> None:
+    """Recover only exact legacy-draft lifecycle states under either creation mode."""
     branch = "guardian/prevention-" + "1" * 64
     evidence_hash = "1" * 64
     marker = PreventionGitHubBroker._marker(evidence_hash, CANDIDATE_SHA)
@@ -2056,6 +2066,7 @@ def test_github_broker_recovers_only_allowed_terminal_lifecycles(
         branch=branch,
         exact_pull=pull,
         event_pages={1: events},
+        create_as_draft=create_as_draft,
     )
 
     recovered = broker.open_draft(
@@ -2130,6 +2141,7 @@ def test_github_broker_recovers_only_allowed_terminal_lifecycles(
         "merged",
     ),
 )
+@pytest.mark.parametrize("create_as_draft", [True, False])
 def test_github_broker_rejects_modified_or_reopened_lifecycle(
     state: str,
     draft: bool,
@@ -2137,7 +2149,9 @@ def test_github_broker_rejects_modified_or_reopened_lifecycle(
     merged_at: str | None,
     closed_at: str | None,
     monkeypatch: pytest.MonkeyPatch,
+    create_as_draft: bool,
 ) -> None:
+    """Reject redrafted, reopened, or merged prevention PRs in either mode."""
     branch = "guardian/prevention-" + "2" * 64
     evidence_hash = "2" * 64
     marker = PreventionGitHubBroker._marker(evidence_hash, CANDIDATE_SHA)
@@ -2157,6 +2171,7 @@ def test_github_broker_rejects_modified_or_reopened_lifecycle(
         branch=branch,
         exact_pull=pull,
         event_pages={1: events},
+        create_as_draft=create_as_draft,
     )
 
     with pytest.raises(PreventionRemoteConflictError, match="lifecycle"):
@@ -2169,6 +2184,39 @@ def test_github_broker_rejects_modified_or_reopened_lifecycle(
             body="Validated body\n",
             before_create=lambda: pytest.fail("recovery must not create a PR"),
         )
+
+
+@pytest.mark.parametrize("closed", [False, True])
+@pytest.mark.parametrize("annotated", [False, True])
+def test_ready_created_prevention_recovers_without_a_draft_transition(
+    monkeypatch, closed, annotated
+):
+    """Recover a lost ready-creation response without a second publication."""
+    evidence_hash = "1" * 64
+    branch = "guardian/prevention-" + evidence_hash
+    marker = PreventionGitHubBroker._marker(evidence_hash, CANDIDATE_SHA)
+    pull = _pull_payload(
+        number=41, branch=branch, body=f"{marker}\nValidated body\n", draft=False,
+        state="closed" if closed else "open",
+        closed_at="2026-09-03T09:00:00Z" if closed else None,
+    )
+    if annotated:
+        pull["body"] += (
+            "\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai -->"
+            "\n\n## Summary by CodeRabbit\n\n- Clarified translation behavior.\n\n"
+            "<!-- end of auto-generated comment: release notes by coderabbit.ai -->"
+        )
+    broker = _recovery_broker(
+        monkeypatch, branch=branch, exact_pull=pull, create_as_draft=False,
+        event_pages={1: [_issue_event(1, "closed")] if closed else []},
+    )
+    result = broker.open_draft(
+        branch=branch, expected_base_sha=BASE_SHA, candidate_sha=CANDIDATE_SHA,
+        evidence_hash=evidence_hash, title=str(pull["title"]), body="Validated body\n",
+        before_create=lambda: pytest.fail("recovery must not publish"),
+    )
+    assert result.number == 41
+    assert result.created is False
 
 
 @pytest.mark.parametrize(
