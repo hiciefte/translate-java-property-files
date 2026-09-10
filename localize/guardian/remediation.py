@@ -135,8 +135,8 @@ class RemediationDraftResult:
             raise ValueError("remediation draft lifecycle flags must be booleans")
         if type(self.merged) is not bool:
             raise ValueError("remediation draft lifecycle flags must be booleans")
-        if self.created and (self.state != "open" or not self.draft):
-            raise ValueError("new remediation pull requests must be open drafts")
+        if self.created and self.state != "open":
+            raise ValueError("new remediation pull requests must be open")
         if self.merged and (self.state != "closed" or self.draft):
             raise ValueError("remediation draft merged lifecycle is inconsistent")
         if self.base_sha is not None and (
@@ -283,7 +283,11 @@ class RemediationGitHubBroker:
         timeout_seconds: float = 30.0,
         token_command_timeout: float = 30.0,
         deadline: PollDeadline | None = None,
+        create_as_draft: bool = True,
     ) -> None:
+        if type(create_as_draft) is not bool:
+            raise TypeError("create_as_draft must be a boolean")
+        self.create_as_draft = create_as_draft
         if not isinstance(policy, RepositoryPolicy):
             raise TypeError("policy must be a RepositoryPolicy")
         closed_policy = policy.closed_pr_backfill
@@ -829,7 +833,7 @@ class RemediationGitHubBroker:
                 "GitHub returned malformed remediation pull request metadata."
             )
         merged, merged_at, closed_at = _pull_lifecycle(pull, state=state)
-        if require_new_draft and (state != "open" or draft is not True):
+        if require_new_draft and (state != "open" or draft is not self.create_as_draft):
             raise RemediationRuntimeError(
                 "GitHub did not create a draft remediation pull request."
             )
@@ -963,13 +967,19 @@ class RemediationGitHubBroker:
             "GitHub remediation pull request history pagination exceeded its bound."
         )
 
-    @staticmethod
     def _validate_recovery_history(
+        self,
         pull: RemediationDraftResult,
         history: tuple[str, ...],
     ) -> None:
         state = "open"
-        draft = True
+        # Ready-created PRs have no ready_for_review event. Legacy drafts may
+        # still be recovered, but a redraft or reopen remains a human veto.
+        draft = not (
+            not self.create_as_draft
+            and not pull.draft
+            and "ready_for_review" not in history
+        )
         merged = False
         valid = True
         for event in history:
@@ -1276,7 +1286,7 @@ class RemediationGitHubBroker:
                         "/", 1
                     )[1],
                     "base": self.policy.base_branch,
-                    "draft": True,
+                    "draft": self.create_as_draft,
                     "maintainer_can_modify": False,
                 },
             )
@@ -1643,7 +1653,7 @@ def _draft_text(
     )
     body = "\n".join(
         (
-            "Bot-generated draft for human review only.",
+            "Bot-generated pull request for human review only.",
             "",
             "This current-base candidate does not modify or comment on the closed "
             "source pull requests and is never merged automatically.",

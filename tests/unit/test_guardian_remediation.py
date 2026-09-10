@@ -214,6 +214,7 @@ def _broker(
     policy: RepositoryPolicy | None = None,
     actor: object | None = None,
     deadline: PollDeadline | None = None,
+    create_as_draft: bool = True,
 ) -> RemediationGitHubBroker:
     authenticated_actor = (
         {"login": "translator", "id": 7, "type": "User"} if actor is None else actor
@@ -231,6 +232,7 @@ def _broker(
         base_url="https://api.github.test",
         transport=httpx.MockTransport(authenticated_handler),
         deadline=deadline,
+        create_as_draft=create_as_draft,
     )
     return broker
 
@@ -304,8 +306,7 @@ def test_remediation_pagination_reclamps_each_page_to_remaining_deadline() -> No
         ({"created": "yes"}, "flags"),
         ({"draft": 1}, "flags"),
         ({"merged": 1}, "flags"),
-        ({"created": True, "draft": False}, "open drafts"),
-        ({"created": True, "state": "closed"}, "open drafts"),
+        ({"created": True, "state": "closed"}, "must be open"),
         ({"state": "open", "merged": True, "draft": False}, "merged"),
         ({"state": "closed", "merged": True}, "merged"),
         ({"base_sha": "short"}, "base SHA"),
@@ -751,6 +752,16 @@ def test_pull_lookup_rejects_duplicates_on_the_first_page() -> None:
     ("state", "draft", "merged_at", "events", "expected_merged"),
     [
         pytest.param("open", True, None, [], False, id="open-draft"),
+        pytest.param("open", False, None, [], False, id="created-ready"),
+        pytest.param(
+            "closed", False, None, [_issue_event(1, "closed")], False,
+            id="created-ready-closed",
+        ),
+        pytest.param(
+            "closed", False, "2026-09-03T08:00:00Z",
+            [_issue_event(1, "merged"), _issue_event(2, "closed")], True,
+            id="created-ready-merged",
+        ),
         pytest.param(
             "open",
             False,
@@ -792,12 +803,14 @@ def test_pull_lookup_rejects_duplicates_on_the_first_page() -> None:
         ),
     ],
 )
+@pytest.mark.parametrize("create_as_draft", [True, False])
 def test_find_draft_preserves_exact_remote_lifecycle(
     state: str,
     draft: bool,
     merged_at: str | None,
     events: list[object],
     expected_merged: bool,
+    create_as_draft: bool,
 ) -> None:
     policy = replace(
         _policy(),
@@ -833,7 +846,10 @@ def test_find_draft_preserves_exact_remote_lifecycle(
             return _response(request, events)
         raise AssertionError(request.url)
 
-    result = _broker(handler, policy=policy).find_draft(
+    broker = _broker(
+        handler, policy=policy, create_as_draft=create_as_draft
+    )
+    arguments = dict(
         branch=branch,
         expected_base_sha=BASE_SHA,
         candidate_sha=CANDIDATE_SHA,
@@ -841,6 +857,13 @@ def test_find_draft_preserves_exact_remote_lifecycle(
         title="title",
         body="body",
     )
+    if create_as_draft and not draft and not any(
+        event["event"] == "ready_for_review" for event in events
+    ):
+        with pytest.raises(RemediationRemoteConflictError, match="lifecycle"):
+            broker.find_draft(**arguments)
+        return
+    result = broker.find_draft(**arguments)
 
     assert result is not None
     assert result.created is False
@@ -1732,7 +1755,11 @@ def test_rejects_oversized_draft_title_and_body_before_network(
         )
 
 
-def test_opens_exact_human_review_draft_after_two_final_rechecks() -> None:
+@pytest.mark.parametrize("create_as_draft", [True, False])
+def test_opens_exact_human_review_draft_after_two_final_rechecks(
+    create_as_draft: bool,
+) -> None:
+    """Publish ready PRs without relaxing any final authority checks."""
     policy = replace(
         _policy(),
         allowed_pr_authors=(TrustedActor("existing-pr-bot", 77, "Bot"),),
@@ -1765,11 +1792,14 @@ def test_opens_exact_human_review_draft_after_two_final_rechecks() -> None:
                     branch=branch,
                     title=payload["title"],
                     body=payload["body"],
+                    draft=create_as_draft,
                 ),
             )
         raise AssertionError(request.url)
 
-    result = _broker(handler, policy=policy).open_draft(
+    result = _broker(
+        handler, policy=policy, create_as_draft=create_as_draft
+    ).open_draft(
         branch=branch,
         expected_base_sha=BASE_SHA,
         candidate_sha=CANDIDATE_SHA,
@@ -1787,6 +1817,7 @@ def test_opens_exact_human_review_draft_after_two_final_rechecks() -> None:
         created=True,
         pull_id=9_091,
         base_sha=BASE_SHA,
+        draft=create_as_draft,
     )
     assert lease_checks == ["checked", "final"]
     assert post_payloads == [
@@ -1796,7 +1827,7 @@ def test_opens_exact_human_review_draft_after_two_final_rechecks() -> None:
             "head": f"translator:{branch}",
             "head_repo": "translations",
             "base": "main",
-            "draft": True,
+            "draft": create_as_draft,
             "maintainer_can_modify": False,
         }
     ]

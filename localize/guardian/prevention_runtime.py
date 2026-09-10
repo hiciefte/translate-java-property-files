@@ -811,7 +811,11 @@ class PreventionGitHubBroker:
         timeout_seconds: float = 30.0,
         token_command_timeout: float = 30.0,
         deadline: PollDeadline | None = None,
+        create_as_draft: bool = True,
     ) -> None:
+        if type(create_as_draft) is not bool:
+            raise TypeError("create_as_draft must be a boolean")
+        self.create_as_draft = create_as_draft
         if not isinstance(policy, PreventionPolicy):
             raise TypeError("policy must be a PreventionPolicy")
         if (token_command is None) == (credential is None):
@@ -1346,9 +1350,9 @@ class PreventionGitHubBroker:
             self._validated_utc_timestamp(closed_at, label="closed_at")
 
         if require_new_draft:
-            if state != "open" or draft is not True:
+            if state != "open" or draft is not self.create_as_draft:
                 raise PreventionRuntimeError(
-                    "GitHub did not create an open draft prevention pull request."
+                    "GitHub did not create an open prevention pull request with the requested draft state."
                 )
             if recovery_history is not None:
                 raise RuntimeError(
@@ -1365,7 +1369,12 @@ class PreventionGitHubBroker:
             expected_history = ("closed",)
         else:
             expected_history = ("ready_for_review", "closed")
-        if recovery_history != expected_history:
+        allowed_histories = {expected_history}
+        if not self.create_as_draft and draft is False:
+            # A PR created ready has no synthetic ready_for_review event.
+            # Keep the old draft-to-ready sequence valid for upgrade recovery.
+            allowed_histories.add(expected_history[1:])
+        if recovery_history not in allowed_histories:
             raise PreventionRemoteConflictError(
                 "Prevention pull request lifecycle was modified or reopened."
             )
@@ -1715,7 +1724,7 @@ class PreventionGitHubBroker:
         before_create: Callable[[], None],
         before_post: Callable[[], None] | None = None,
     ) -> PreventionDraftResult:
-        """Find an exact prior Guardian draft or create one with ``draft=true``."""
+        """Recover an exact prior PR or create one in the requested review state."""
 
         if not callable(before_create):
             raise TypeError("before_create must be callable")
@@ -1868,7 +1877,7 @@ class PreventionGitHubBroker:
                     "body": draft_body,
                     "head": f"{push_owner}:{branch}",
                     "base": self.policy.target_base_branch,
-                    "draft": True,
+                    "draft": self.create_as_draft,
                     "maintainer_can_modify": False,
                 },
             )

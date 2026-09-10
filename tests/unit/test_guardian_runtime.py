@@ -1098,6 +1098,7 @@ def test_explicit_closed_remediation_wires_separate_broker_and_coordinator(
     assert broker is captured["remediation_broker"]
     assert captured["remediation_broker"] == {
         "policy": policy,
+        "create_as_draft": False,
         "credential": github_credential,
         "github_host": "github.com",
         "base_url": "https://api.github.com",
@@ -1458,6 +1459,7 @@ def test_propose_mode_wires_credential_separated_prevention_coordinator(
     assert broker is captured["prevention_broker"]
     assert captured["prevention_broker"] == {
         "policy": prevention,
+        "create_as_draft": False,
         "credential": github_credential,
         "github_host": "github.com",
         "base_url": "https://api.github.com",
