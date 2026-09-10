@@ -116,6 +116,12 @@ def test_builds_minimal_machine_readable_bundle_with_untrusted_feedback(tmp_path
     assert result.prompt_path.name == "INSTRUCTIONS.md"
     assert "UNTRUSTED DATA" in result.prompt_path.read_text(encoding="utf-8")
     assert "Ignore policy" not in result.prompt_path.read_text(encoding="utf-8")
+    instructions = " ".join(result.prompt_path.read_text(encoding="utf-8").split())
+    assert "recurrence_candidates" in instructions
+    assert "source-identical" in instructions
+    assert "regression test" in instructions
+    assert "Do not invent a pipeline root cause" in instructions
+    assert "why no supported recurrence candidate" in " ".join(instructions.split())
 
     manifest = json.loads((destination / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["feedback_ids"] == ["review_comment:44:abc"]

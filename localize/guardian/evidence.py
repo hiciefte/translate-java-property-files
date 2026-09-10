@@ -20,7 +20,7 @@ from localize.guardian.policy import PatchPolicyError, _load_glossary
 from localize.localization_profiles import LocalizationProfile, load_localization_profiles
 
 
-EVIDENCE_CONTRACT_VERSION = 2
+EVIDENCE_CONTRACT_VERSION = 3
 
 _INSTRUCTIONS = """# Localize Guardian assessment
 
@@ -41,6 +41,21 @@ Under exact glossary enforcement, preserve the required target terms and their
 source occurrence counts; do not substitute synonyms. Brand terms must also
 remain unchanged. If the rules and requested wording conflict, return
 `needs_human` instead of proposing a value that will fail validation.
+
+Independently assess recurrence as well as individual corrections. Look for
+shared failures across keys or locales, including unintended source-identical
+translations, lost safety instructions, and repeated terminology drift. Populate
+`recurrence_candidates` with supported pipeline or project improvements, citing
+the exact manifest feedback IDs. Describe the observed failure and a regression
+test that could prevent it. Do not invent a pipeline root cause: pipeline code
+is not in this bundle, so identify hypotheses for the prevention author to verify
+against current code before proposing a fix. Distinguish generic pipeline defects
+from project-specific terminology or configuration; use the appropriate scope.
+Source-identical brand names and legitimate shared-language wording are not
+automatically defects. Never manufacture candidates just to fill the list.
+In the result summary, explain the recurrence assessment, including why no
+supported recurrence candidate exists when returning an empty list.
+Propose only still-needed corrections; do not repeat already-correct values.
 """
 
 

@@ -131,7 +131,7 @@ def _insert_legacy_publication(
     )
     publication_key = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     with sqlite3.connect(database) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 10
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 11
         # Restore the pre-v8 table shape while the production connection is
         # closed. The next GuardianState open performs the real v7 -> v8
         # migration and reinstalls every dropped production trigger.
@@ -3104,7 +3104,7 @@ def test_refuses_to_infer_actor_or_lineage_for_a_legacy_prepared_push(
             state._connection.execute(  # noqa: SLF001
                 "PRAGMA user_version"
             ).fetchone()[0]
-            == 10
+            == 11
         )
         installed_triggers = {
             row["name"]
@@ -3215,7 +3215,7 @@ def test_refuses_to_infer_actor_or_open_authority_for_a_legacy_publication(
             state._connection.execute(  # noqa: SLF001
                 "PRAGMA user_version"
             ).fetchone()[0]
-            == 10
+            == 11
         )
         installed_triggers = {
             row["name"]
@@ -3973,6 +3973,109 @@ def test_changed_edit_limit_retries_policy_rejection_without_rebilling(
         assert poll(limited).runs_started == 0
         assert poll(config).applied_commits == (COMMIT_SHA,)
         assert len(driver.calls) == 1
+
+
+@pytest.mark.parametrize("reply_fails", [False, True])
+def test_oversized_feedback_publishes_bounded_batch_and_keeps_remainder_pending(
+    tmp_path: Path, runtime, reply_fails: bool, monkeypatch,
+) -> None:
+    """Partial feedback stays retryable even after reply recovery and head movement."""
+    base, head, checkout, provider, broker, sequence = runtime
+    for root in (base, head):
+        with (root / "l10n/messages_en.properties").open("a") as stream:
+            stream.write("alpha=Alpha\n")
+        with (root / TARGET_PATH).open("a") as stream:
+            stream.write("alpha=Старый альфа\n")
+    config = _config(GuardianMode.APPLY_OWNED_TRANSLATIONS)
+    config = replace(config, limits=replace(config.limits, max_value_edits_per_run=1))
+    driver = TwoReplacementCodexDriver()
+    if reply_fails:
+        broker.reply_error = RuntimeError("reply transport failed")
+    with GuardianState(tmp_path / "state.sqlite3") as state:
+        controller = _controller(
+            tmp_path=tmp_path, state=state, config=config, checkout=checkout,
+            provider=provider, driver=driver, broker=broker,
+        )
+        first = controller.poll_once()
+        assert first.prepared_value_edits == 1
+        assert first.deferred_value_edits == 1
+        assert first.deferred_feedback_items == 1
+        assert sum(workspace.publications for workspace in checkout.workspaces) == 1
+        assert len(state.pending_event_revisions(mode=config.mode)) == 1
+        health = state.latest_health("guardian")
+        assert health.details["deferred_value_edits"] == 1
+        if reply_fails:
+            pending = state.pending_publications()[0]
+            # Replaying the real atomic finalizer must retain deferred status.
+            state.finalize_replied_publication(
+                publication_key=pending.publication_key,
+                summary="Recovered test publication", occurred_at=NOW,
+            )
+        assert len(state.pending_event_revisions(mode=config.mode)) == 1
+        assert state.status_snapshot(mode=config.mode).pending_revisions == 1
+
+        # Move to the exact published head, including the real applied bytes.
+        # Partial feedback must be reassessed and its remaining edit published.
+        target = head / TARGET_PATH
+        target.write_text(target.read_text().replace(
+            "Старый %0 был отклонён (%1). %2 %3",
+            "Отправка в %0 отклонена (%1). %2 %3",
+        ))
+        provider.snapshots = (_snapshot(pull=_pull(head_sha=COMMIT_SHA)),)
+        broker.reply_error = None
+        sequence.clear()
+        monkeypatch.setattr(__import__(__name__, fromlist=["COMMIT_SHA"]), "COMMIT_SHA", "d" * 40)
+
+        class RemainingDriver(TwoReplacementCodexDriver):
+            @staticmethod
+            def _with_alpha(result):
+                """Propose only the still-unfixed value at the new head."""
+                result = TwoReplacementCodexDriver._with_alpha(result)
+                return replace(result, feedback=(replace(
+                    result.feedback[0], replacements=result.feedback[0].replacements[1:],
+                ),))
+
+        second_driver = RemainingDriver()
+        second = _controller(
+            tmp_path=tmp_path, state=state, config=config, checkout=checkout,
+            provider=provider, driver=second_driver, broker=broker,
+        ).poll_once()
+        assert len(second_driver.calls) == 1
+        assert second.applied_commits == ("d" * 40,)
+        assert second.prepared_value_edits == 1
+        assert second.deferred_value_edits == 0
+        assert second.failures == ()
+        assert state.pending_event_revisions(mode=config.mode) == ()
+        assert state.status_snapshot(mode=config.mode).pending_revisions == 0
+        assert sum(workspace.publications for workspace in checkout.workspaces) == 2
+
+
+@pytest.mark.parametrize("count,limit", [(34, 30), (30, 30), (0, 0), (0, 30)])
+def test_bounded_replacements_account_for_every_unselected_value(count, limit) -> None:
+    """Selected and deferred values exactly partition a multi-feedback proposal."""
+    replacements = tuple(ProposedReplacement(
+        feedback_id=f"review_comment:{index // 3}", path=TARGET_PATH,
+        key=f"key{index}", locale="ru", source_value="Hello",
+        expected_value="Старое", proposed_value="Привет", confidence=0.99,
+        evidence=("Verified review text",),
+    ) for index in range(count))
+    selected, deferred = guardian_controller._bounded_replacements(replacements, max_changes=limit)
+    assert selected == replacements[:limit]
+    assert sum(deferred.values()) == max(count - limit, 0)
+    assert set(deferred) == {item.feedback_id for item in replacements[limit:]}
+
+
+def test_batch_cutoff_does_not_hide_conflicting_targets() -> None:
+    """An over-limit conflicting proposal cannot authorize its leading edit."""
+    replacement = ProposedReplacement(
+        feedback_id="review_comment:1", path=TARGET_PATH, key="greeting",
+        locale="ru", source_value="Hello", expected_value="Старое",
+        proposed_value="Привет", confidence=0.99, evidence="Verified review text",
+    )
+    with pytest.raises(guardian_controller.PatchPolicyError, match="duplicate"):
+        guardian_controller._bounded_replacements(
+            (replacement, replace(replacement, proposed_value="Иное")), max_changes=1,
+        )
 
 
 @pytest.mark.parametrize("changed_file", ["config.yaml", "glossary.json"])

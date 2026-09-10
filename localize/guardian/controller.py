@@ -530,6 +530,9 @@ class PollOutcome:
     runs_completed: int = 0
     runs_failed: int = 0
     prepared_value_edits: int = 0
+    deferred_value_edits: int = 0
+    deferred_feedback_items: int = 0
+    translation_policy_rejections: int = 0
     applied_commits: tuple[str, ...] = ()
     prevention_drafts_created: int = 0
     prevention_items_skipped: int = 0
@@ -559,6 +562,9 @@ class _PollAccumulator:
     runs_completed: int = 0
     runs_failed: int = 0
     prepared_value_edits: int = 0
+    deferred_value_edits: int = 0
+    deferred_feedback_items: int = 0
+    translation_policy_rejections: int = 0
     applied_commits: list[str] = field(default_factory=list)
     prevention_drafts_created: int = 0
     prevention_items_skipped: int = 0
@@ -589,6 +595,9 @@ class _PollAccumulator:
             runs_completed=self.runs_completed,
             runs_failed=self.runs_failed,
             prepared_value_edits=self.prepared_value_edits,
+            deferred_value_edits=self.deferred_value_edits,
+            deferred_feedback_items=self.deferred_feedback_items,
+            translation_policy_rejections=self.translation_policy_rejections,
             applied_commits=tuple(self.applied_commits),
             prevention_drafts_created=self.prevention_drafts_created,
             prevention_items_skipped=self.prevention_items_skipped,
@@ -1884,6 +1893,29 @@ def _eligible_replacements(
     )
 
 
+def _bounded_replacements(
+    replacements: Sequence[ProposedReplacement], *, max_changes: int,
+) -> tuple[tuple[ProposedReplacement, ...], dict[str, int]]:
+    """Take one bounded batch without hiding duplicate targets past its cutoff."""
+    seen: set[tuple[str, str]] = set()
+    changes: list[ProposedReplacement] = []
+    for replacement in replacements:
+        identity = (replacement.path, replacement.key)
+        if identity in seen:
+            raise PatchPolicyError("Replacement batch contains duplicate targets.")
+        seen.add(identity)
+        if replacement.expected_value != replacement.proposed_value:
+            changes.append(replacement)
+    if max_changes < 0:
+        raise PatchPolicyError("Replacement limit must not be negative.")
+    if max_changes == 0 and changes:
+        raise PatchPolicyError("Translation edits are disabled by the configured zero limit.")
+    deferred: dict[str, int] = {}
+    for replacement in changes[max_changes:]:
+        deferred[replacement.feedback_id] = deferred.get(replacement.feedback_id, 0) + 1
+    return tuple(changes[:max_changes]), deferred
+
+
 def _validated_historical_replacements(
     assessments: Sequence[GuardianAssessment],
     *,
@@ -2639,6 +2671,10 @@ class GuardianController:
                                 outcome.historical_policy_rejections
                             ),
                             "runs_failed": outcome.runs_failed,
+                            "prepared_value_edits": outcome.prepared_value_edits,
+                            "deferred_value_edits": outcome.deferred_value_edits,
+                            "deferred_feedback_items": outcome.deferred_feedback_items,
+                            "translation_policy_rejections": outcome.translation_policy_rejections,
                             "prevention_drafts_created": (
                                 outcome.prevention_drafts_created
                             ),
@@ -5632,7 +5668,12 @@ class GuardianController:
                     and publication_mode is GuardianMode.APPLY_OWNED_TRANSLATIONS
                     else addressed_signatures
                 )
+                deferred_revisions = self.state.publication_deferred_revision_ids(
+                    replied_publication
+                )
                 for revision_id in replied_publication.event_revision_ids:
+                    if revision_id in deferred_revisions:
+                        continue
                     prior_revision = self.state.get_event_revision(revision_id)
                     if prior_revision is not None:
                         signature_target.add(
@@ -6324,6 +6365,11 @@ class GuardianController:
                 minimum_confidence=self.config.limits.min_apply_confidence,
                 excluded_feedback_ids=translation_suppressed_feedback_ids,
             )
+            deferred_edits: dict[str, int] = {}
+            if self.config.mode is not GuardianMode.OBSERVE:
+                replacements, deferred_edits = _bounded_replacements(
+                    replacements, max_changes=self.config.limits.max_value_edits_per_run,
+                )
             patch_result = PatchResult(changed_files=(), changed_keys=())
             if self.config.mode is not GuardianMode.OBSERVE and replacements:
                 patch_result = self.replacement_applier(
@@ -6337,6 +6383,9 @@ class GuardianController:
                     expected_source_locale=policy.source_locale,
                 )
                 outcome.prepared_value_edits += len(patch_result.changed_keys)
+
+            outcome.deferred_value_edits += sum(deferred_edits.values())
+            outcome.deferred_feedback_items += len(deferred_edits)
 
             commit_sha: str | None = None
             if (
@@ -6362,6 +6411,7 @@ class GuardianController:
                     run_id=run_id,
                     lease_owner=lease_owner,
                     observed_at=observed_at,
+                    deferred_edits=deferred_edits,
                 )
                 outcome.applied_commits.append(commit_sha)
 
@@ -6376,6 +6426,7 @@ class GuardianController:
                         translation_suppressed_feedback_ids
                     ),
                     observed_at=observed_at,
+                    deferred_edits=deferred_edits,
                 )
                 self.state.finish_run(
                     run_id,
@@ -6389,6 +6440,7 @@ class GuardianController:
         except (_AuthenticationCircuit, _ModelCircuit):
             raise
         except PatchPolicyError as exc:
+            outcome.translation_policy_rejections += 1
             for revision in revisions:
                 self.state.record_action(
                     run_id=run_id,
@@ -6476,6 +6528,7 @@ class GuardianController:
         run_id: str,
         lease_owner: str,
         observed_at: datetime | None = None,
+        deferred_edits: Mapping[str, int] | None = None,
     ) -> str:
         """Publish signed edits and separately account for the authorized status reply."""
         if (
@@ -6549,6 +6602,7 @@ class GuardianController:
             changed_keys=patch_result.changed_keys,
             commit_sha=commit.commit_sha,
             translation_suppressed_feedback_ids=(translation_suppressed_feedback_ids),
+            deferred_edits=deferred_edits,
         )
         publication_metadata = {
             "run_id": run_id,
@@ -6771,6 +6825,7 @@ class GuardianController:
         commit_sha: str | None,
         translation_suppressed_feedback_ids: frozenset[str],
         observed_at: datetime,
+        deferred_edits: Mapping[str, int] | None = None,
     ) -> None:
         for revision_id, status, details in self._completion_action_details(
             actionable=actionable,
@@ -6778,6 +6833,7 @@ class GuardianController:
             changed_keys=changed_keys,
             commit_sha=commit_sha,
             translation_suppressed_feedback_ids=(translation_suppressed_feedback_ids),
+            deferred_edits=deferred_edits,
         ):
             self.state.record_action(
                 run_id=run_id,
@@ -6796,6 +6852,7 @@ class GuardianController:
         changed_keys: Sequence[tuple[str, str]],
         commit_sha: str | None,
         translation_suppressed_feedback_ids: frozenset[str],
+        deferred_edits: Mapping[str, int] | None = None,
     ) -> tuple[tuple[int, str, Mapping[str, object]], ...]:
         """Build exact action rows for normal and atomic publication completion."""
 
@@ -6817,13 +6874,16 @@ class GuardianController:
                 for replacement in assessment.replacements
             }
             applied_keys = changed_key_set & assessment_keys if eligible else set()
+            remaining = (deferred_edits or {}).get(event.feedback_id, 0)
             completion_actions.append(
                 (
                     revision.revision_id,
-                    "completed",
+                    "skipped" if remaining else "completed",
                     {
                         "outcome": (
-                            "applied"
+                            "translation_batch_deferred"
+                            if remaining
+                            else "applied"
                             if commit_sha is not None and applied_keys
                             else "prepared"
                             if applied_keys
@@ -6838,6 +6898,7 @@ class GuardianController:
                         "changed_keys": len(applied_keys),
                         "commit_sha": commit_sha if applied_keys else None,
                         "recurrence_candidates": len(assessment.recurrence_candidates),
+                        **({"deferred_value_edits": remaining} if remaining else {}),
                     },
                 )
             )
