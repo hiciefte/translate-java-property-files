@@ -48,7 +48,7 @@ from localize.guardian.credentials import (
     CredentialSnapshot,
     SecretCommand,
 )
-from localize.guardian.github import GitHubAuthenticationError
+from localize.guardian.github import GitHubAuthenticationError, matches_guardian_pr_body
 from localize.guardian.json_safety import loads_bounded_json
 from localize.guardian.models import (
     CodexAuthMode,
@@ -1445,7 +1445,7 @@ class PreventionGitHubBroker:
             != self.policy.target_repository.id
             or pull.get("title") != expected_title
             or not isinstance(pull_body, str)
-            or pull_body != expected_body
+            or not matches_guardian_pr_body(pull_body, expected_body)
             or marker not in pull_body
             or pull.get("maintainer_can_modify") is not False
             or (author_id, author.get("type")) != expected_author

@@ -38,6 +38,15 @@ all new publications. Low-level broker callers retain draft creation by default;
 the runtime explicitly selects ready creation. This does not implement automatic
 review follow-up on pipeline prevention PRs, nor enable automatic merging.
 
+Review bots may append release notes to a PR description. Recovery still requires
+every byte of the Guardian-authored body and its evidence marker to match the
+private ledger. It additionally permits one appended CodeRabbit release-note
+block of at most 8 KiB, bounded by its standard start/end markers. This suffix
+is untrusted commentary, not proof of its author's identity or authority for
+any edit. Rewritten original text, nested markers, arbitrary trailing text, and
+oversized annotations remain conflicts; repository, actor, head, and lifecycle
+checks still apply. The complete remediation body retains its existing size cap.
+
 The Guardian does not merge pull requests, approve reviews, resolve review
 threads, delete or edit reviewer comments, overwrite an existing remote ref, or
 broaden its own policy. A human remains responsible for accepting translations
@@ -669,7 +678,8 @@ marker, and preserved private durable state provide crash recovery without
 creating a duplicate branch or draft. Recovery requires the canonical GitHub
 URL, publication actor, head and base identities, candidate commit,
 `maintainer_can_modify: false`, exact generated title, and full generated body
-including the embedded marker. Current open-draft, open-ready, closed-unmerged,
+including the embedded marker, except for the bounded untrusted annotation
+described above. Current open-draft, open-ready, closed-unmerged,
 and merged states are accepted when all of that metadata remains exact;
 malformed or rewritten metadata and ambiguous or duplicate remote identities
 fail closed. The Guardian never rewrites or reopens the PR.
@@ -814,7 +824,7 @@ Do not use prevention PRs for project terminology or locale style that belongs
 in the consuming project's own config or glossary.
 
 Prevention recovery also requires the canonical GitHub URL; exact generated
-title and full body including its marker; exact head, base, and candidate; and
+title and Guardian-authored body including its marker; exact head, base, and candidate; and
 `maintainer_can_modify: false`. Ready-created PRs, untouched legacy open drafts,
 their one-way draft-to-ready transition, and a terminal close-unmerged from either
 draft or ready state are accepted. A reopen, redraft, rewritten metadata, or over-bound

@@ -353,7 +353,10 @@ def test_guardian_guide_documents_audit_cost_retention_and_safe_prevention():
     assert "raw_retention_days" in guide
     assert "logically deleted from the active sqlite tables" in lowered
     assert "not a secure-erasure guarantee" in lowered
-    assert "draft pull request" in lowered
+    assert "pull request ready for review" in lowered
+    assert "never reopens or converts an existing pr" in lowered
+    assert "at most 8 kib" in lowered
+    assert "not proof of its author's identity or authority" in lowered
     assert "regression test" in lowered
     assert "failing on the base" in lowered
     assert "passing with the draft" in lowered
@@ -445,10 +448,10 @@ def test_guardian_guide_documents_bounded_closed_pr_history_without_legacy_write
     assert "conflicting proposals for the same target" in normalized
     assert "unsafe cases remain deferred" in normalized
     assert "uncovered and selected for remediation" in normalized
-    assert "published only through a new bot-marked draft correction pr" in normalized
+    assert "published only through a new bot-marked, ready-for-review correction pr" in normalized
     assert "closed source pr and validated feedback" in normalized
     assert "leaves the historical pr and its branch untouched" in normalized
-    assert "separate from any optional pipeline-prevention draft" in normalized
+    assert "separate from any optional pipeline-prevention proposal" in normalized
     assert "observe` and `prepare` perform no github writes" in normalized
     assert "nested remediation policy may remain configured" in normalized
     assert "changing mode is the authority ceiling" in normalized
@@ -456,7 +459,7 @@ def test_guardian_guide_documents_bounded_closed_pr_history_without_legacy_write
     assert "zero is also the schema default" in normalized
     assert "one remediation batch per repository per poll" in normalized
     assert "global per-poll cap" in normalized
-    assert "new bot-marked draft pull request" in normalized
+    assert "new bot-marked pull request ready for human and automated review" in normalized
     assert "`[localize guardian bot]`" in normalized
     assert "title prefix and body text identify it as bot-generated" in normalized
     assert "signed commit" in normalized

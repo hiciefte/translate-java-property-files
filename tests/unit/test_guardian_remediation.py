@@ -804,6 +804,7 @@ def test_pull_lookup_rejects_duplicates_on_the_first_page() -> None:
     ],
 )
 @pytest.mark.parametrize("create_as_draft", [True, False])
+@pytest.mark.parametrize("annotated", [False, True])
 def test_find_draft_preserves_exact_remote_lifecycle(
     state: str,
     draft: bool,
@@ -811,6 +812,7 @@ def test_find_draft_preserves_exact_remote_lifecycle(
     events: list[object],
     expected_merged: bool,
     create_as_draft: bool,
+    annotated: bool,
 ) -> None:
     policy = replace(
         _policy(),
@@ -829,6 +831,12 @@ def test_find_draft_preserves_exact_remote_lifecycle(
         draft=draft,
         merged_at=merged_at,
     )
+    if annotated:
+        pull["body"] += (
+            "\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai -->"
+            "\n\n## Summary by CodeRabbit\n\n- Updated a translated label.\n\n"
+            "<!-- end of auto-generated comment: release notes by coderabbit.ai -->"
+        )
     exact_reads = 0
 
     def handler(request: httpx.Request) -> httpx.Response:

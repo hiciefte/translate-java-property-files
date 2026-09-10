@@ -2184,8 +2184,9 @@ def test_github_broker_rejects_modified_or_reopened_lifecycle(
 
 
 @pytest.mark.parametrize("closed", [False, True])
+@pytest.mark.parametrize("annotated", [False, True])
 def test_ready_created_prevention_recovers_without_a_draft_transition(
-    monkeypatch, closed
+    monkeypatch, closed, annotated
 ):
     """Recover a lost ready-creation response without a second publication."""
     evidence_hash = "1" * 64
@@ -2196,6 +2197,12 @@ def test_ready_created_prevention_recovers_without_a_draft_transition(
         state="closed" if closed else "open",
         closed_at="2026-09-03T09:00:00Z" if closed else None,
     )
+    if annotated:
+        pull["body"] += (
+            "\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai -->"
+            "\n\n## Summary by CodeRabbit\n\n- Clarified translation behavior.\n\n"
+            "<!-- end of auto-generated comment: release notes by coderabbit.ai -->"
+        )
     broker = _recovery_broker(
         monkeypatch, branch=branch, exact_pull=pull, create_as_draft=False,
         event_pages={1: [_issue_event(1, "closed")] if closed else []},

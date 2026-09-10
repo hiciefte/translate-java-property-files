@@ -70,6 +70,37 @@ _SKIP_MARKERS = (
 )
 
 
+def matches_guardian_pr_body(actual: object, expected: str) -> bool:
+    """Match exact Guardian text, optionally followed by bounded untrusted notes.
+
+    CodeRabbit appends release notes after starting review. Its marker is not
+    author authentication: the entire suffix is ignored, never used as evidence
+    or authority. Every byte of the ledger-bound original body must remain intact.
+    """
+    if actual == expected:
+        return True
+    if not isinstance(actual, str) or not expected or not actual.startswith(expected):
+        return False
+    suffix = actual[len(expected):]
+    if len(suffix) > 8192 or "\x00" in suffix:
+        return False
+    try:
+        if len(suffix.encode("utf-8")) > 8192:
+            return False
+    except UnicodeEncodeError:
+        return False
+    notes = suffix.lstrip("\n")
+    if not 1 <= len(suffix) - len(notes) <= 3:
+        return False
+    start = "<!-- This is an auto-generated comment: release notes by coderabbit.ai -->"
+    end = "<!-- end of auto-generated comment: release notes by coderabbit.ai -->"
+    notes = notes.removesuffix("\n")
+    if not notes.startswith(start + "\n") or not notes.endswith(end):
+        return False
+    content = notes[len(start):-len(end)]
+    return not any(marker in content for marker in (start, end, "<!-- localize-guardian"))
+
+
 def _valid_repository_name(value: object) -> bool:
     return bool(
         isinstance(value, str)

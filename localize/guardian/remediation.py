@@ -25,7 +25,11 @@ from localize.guardian.credentials import (
     CredentialSnapshot,
     SecretCommand,
 )
-from localize.guardian.github import GitHubAuthenticationError, OpenPullPathIdentity
+from localize.guardian.github import (
+    GitHubAuthenticationError,
+    OpenPullPathIdentity,
+    matches_guardian_pr_body,
+)
 from localize.guardian.json_safety import loads_bounded_json
 from localize.guardian.models import (
     HistoricalRemediationPolicy,
@@ -856,7 +860,7 @@ class RemediationGitHubBroker:
             or _positive_int(base_repo.get("id"), label="base repository id")
             != self.policy.base_repo_id
             or pull.get("title") != expected_title
-            or pull_body != expected_body
+            or not matches_guardian_pr_body(pull_body, expected_body)
             or marker not in pull_body
             or (require_new_draft and base_sha != expected_base_sha)
             or (author_id, author.get("type")) != expected_author
