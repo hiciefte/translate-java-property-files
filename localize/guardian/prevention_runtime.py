@@ -813,6 +813,7 @@ class PreventionGitHubBroker:
         deadline: PollDeadline | None = None,
         create_as_draft: bool = True,
     ) -> None:
+        """Bind explicit publication state and credential-separated GitHub authority."""
         if type(create_as_draft) is not bool:
             raise TypeError("create_as_draft must be a boolean")
         self.create_as_draft = create_as_draft
@@ -1396,6 +1397,7 @@ class PreventionGitHubBroker:
         recovery_history: tuple[str, ...] | None = None,
         expected_number: int | None = None,
     ) -> PreventionDraftResult:
+        """Validate exact PR identity, authority, body, and permitted lifecycle."""
         pull = _mapping(raw, label="prevention pull request")
         try:
             number = _positive_int(pull.get("number"), label="pull request number")

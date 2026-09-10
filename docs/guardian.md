@@ -25,7 +25,7 @@ authority granted by the operator-owned config.
 | --- | --- |
 | `observe` | Report-only intake, assessment, audit records, and local status. It creates no commits, pushes, comments, or other GitHub writes. This is the default. |
 | `prepare` | Everything in `observe`, plus validation of eligible value-only replacements in a disposable local checkout. It stores the outcome and a changed-key count in private action state, but retains no patch or reviewable plan. It cannot push or comment. |
-| `apply-owned-translations` | Advance an allowed, Guardian-owned translation PR with validated value replacements, then post one concise status reply. An independently configured closed-PR remediation policy may also create bounded current-base correction drafts. |
+| `apply-owned-translations` | Advance an allowed, Guardian-owned translation PR with validated value replacements, then post one concise status reply. An independently configured closed-PR remediation policy may also create bounded current-base correction PRs ready for review. |
 | `propose-prevention` | Everything above, plus at most the configured number of prevention PRs per poll, shared across repositories, for recurring pipeline defects. It never merges either kind of PR. |
 
 The CLI creates new prevention and historical-correction PRs **ready for review**

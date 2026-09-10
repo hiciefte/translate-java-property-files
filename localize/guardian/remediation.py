@@ -127,6 +127,7 @@ class RemediationDraftResult:
     merged_at: str | None = None
 
     def __post_init__(self) -> None:
+        """Reject inconsistent created, merged, and closed PR result metadata."""
         if self.pull_id is not None and (
             isinstance(self.pull_id, bool)
             or not isinstance(self.pull_id, int)
@@ -289,6 +290,7 @@ class RemediationGitHubBroker:
         deadline: PollDeadline | None = None,
         create_as_draft: bool = True,
     ) -> None:
+        """Bind the authorized remediation target, credentials, and creation state."""
         if type(create_as_draft) is not bool:
             raise TypeError("create_as_draft must be a boolean")
         self.create_as_draft = create_as_draft
@@ -814,6 +816,7 @@ class RemediationGitHubBroker:
         require_new_draft: bool,
         expected_number: int | None,
     ) -> RemediationDraftResult:
+        """Authenticate remote remediation identity without trusting appended notes."""
         pull = _mapping(raw, label="remediation pull request")
         pull_id = _positive_int(pull.get("id"), label="pull request id")
         number = _positive_int(pull.get("number"), label="pull request number")
@@ -1652,6 +1655,7 @@ def _draft_text(
     evidence_hash: str,
     batch_hash: str,
 ) -> tuple[str, str]:
+    """Describe a bot-generated correction proposal using public evidence only."""
     title = "[Localize Guardian bot] Historical translation corrections"
     source_urls = tuple(
         f"https://{base.revision.host}/{policy.base_repo}/pull/{item.pr_number}"
